@@ -225,3 +225,26 @@ All test output above is clean (no unexplained warnings).
 
 **Next step:** Task 2 (Phase 0 documentation — requirements, ADRs, CLAUDE.md, README
 skeleton).
+
+### 2026-09-17 — Task 1 fix round 1 (post-review)
+
+Review found the unhandled-exception 500 path logged through stdlib `logging` instead of
+structlog, so it never went through the JSON pipeline, `trace_id`, or redaction from
+`app/logging.py`. Fixed `app/api/errors.py` to use `structlog.get_logger("app.errors")` and to
+bind `trace_id` explicitly (the context variable is already reset by the time this handler
+runs, same as the earlier `X-Request-Id` header issue). While adding a
+`structlog.testing.capture_logs()` test for this, found and fixed a second bug:
+`app/logging.py` had `cache_logger_on_first_use=True`, which permanently caches a logger's
+resolved processors on first use and ignores later `structlog.configure()` calls (including
+`capture_logs()`'s) — changed to `False` (structlog's own default). Also fixed the optional
+Minor item: `scripts/dev-db.sh`'s `ensure_role` interpolated the password directly into SQL
+text (a `'` in the password would break the string literal); rewrote it to use psql variables
+(`:"role"`/`:'password'`) via a heredoc (psql only substitutes those with a script, not `-c`).
+Verified against the real cluster with a password containing a `'`, and rebuilt
+`.local/pgdata` from scratch to exercise the actual role-creation code path.
+
+Commands: `uv run pytest tests/unit/test_errors.py -q` (6 passed), `uv run pytest -q` (12
+passed), `make lint` (clean), `make typecheck` (clean), `bash scripts/dev-db.sh stop && rm -rf
+.local && bash scripts/dev-db.sh init` then `init` again (both exit 0), `make test` (10 passed,
+2 deselected), `make test-integration` (2 passed, 10 deselected). Full detail in
+`.superpowers/sdd/2026-09-17-linesense-build/task-1-report.md`.

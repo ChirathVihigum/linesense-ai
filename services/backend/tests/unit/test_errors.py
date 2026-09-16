@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+import structlog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
@@ -70,6 +71,26 @@ async def test_unhandled_exception_returns_500_without_leaking_detail(
     body = response.json()
     assert body["error"]["code"] == "INTERNAL_ERROR"
     assert body["error"]["trace_id"] == response.headers["X-Request-Id"]
+
+
+async def test_unhandled_exception_logs_via_structlog_with_trace_id(
+    error_client: AsyncClient,
+) -> None:
+    """The 500 path must log through structlog (JSON pipeline, redaction,
+    trace_id), not bypass it via stdlib `logging`. `capture_logs` intercepts
+    structlog's configured processors directly, so a captured event here
+    proves the log call actually went through `structlog.get_logger(...)`.
+    """
+    with structlog.testing.capture_logs() as captured_logs:
+        response = await error_client.post("/__test/boom")
+
+    trace_id = response.headers["X-Request-Id"]
+    events = [entry for entry in captured_logs if entry.get("event") == "unhandled_exception"]
+
+    assert len(events) == 1
+    assert events[0]["trace_id"] == trace_id
+    assert events[0]["log_level"] == "error"
+    assert "secret detail" not in response.text
 
 
 async def test_validation_error_returns_field_errors(error_client: AsyncClient) -> None:

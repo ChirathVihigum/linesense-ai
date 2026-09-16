@@ -91,7 +91,16 @@ ensure_role() {
   if role_exists "$role"; then
     log "role $role already exists"
   else
-    psql_super postgres -c "CREATE ROLE $role LOGIN PASSWORD '$password'"
+    # Use psql variables (:"role" / :'password') rather than interpolating
+    # into the SQL text directly, so a password containing a single quote
+    # can't break out of the string literal. Note: psql only performs this
+    # substitution when reading a script (stdin/file), not with `-c`, hence
+    # the heredoc; the quoted delimiter keeps bash from touching ':role'/
+    # ':password' itself.
+    PGPASSWORD="$SUPERUSER_PASSWORD" "$PG_BIN/psql" -h "$HOST" -p "$PORT" -U "$SUPERUSER" -d postgres \
+      -v ON_ERROR_STOP=1 -v role="$role" -v password="$password" <<'SQL'
+CREATE ROLE :"role" LOGIN PASSWORD :'password';
+SQL
     log "created role $role"
   fi
 }
