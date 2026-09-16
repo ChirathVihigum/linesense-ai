@@ -9,8 +9,9 @@ It is updated at the end of every task.
 Phases from `LINESENSE_IMPLEMENTATION_PLAN.md` section 14 ("Implementation sequence and
 milestones"):
 
-- [ ] Phase 0: requirements and contracts — domain glossary, policies, threat model, data
-      contracts, ADRs, official dependency check, synthetic fixtures
+- [~] Phase 0: requirements and contracts — domain glossary, policies, threat model, data
+      contracts, ADRs, official dependency check, synthetic fixtures.
+      **Documented** (formulas/fixtures pending test implementation in Task 4).
 - [ ] Phase 1: walking skeleton — repository, Compose, migrations, OIDC/session, membership
       policies, CI, order list/create/detail, generated client
 - [ ] Phase 2: durable two-agent slice — jobs/leases, orchestrator, RM and planning agents,
@@ -248,3 +249,152 @@ passed), `make lint` (clean), `make typecheck` (clean), `bash scripts/dev-db.sh 
 .local && bash scripts/dev-db.sh init` then `init` again (both exit 0), `make test` (10 passed,
 2 deselected), `make test-integration` (2 passed, 10 deselected). Full detail in
 `.superpowers/sdd/2026-09-17-linesense-build/task-1-report.md`.
+
+### 2026-09-17 — Task 2: Phase 0 documentation — requirements, ADRs, CLAUDE.md, README skeleton
+
+**Built:**
+
+- `docs/requirements.md` — product statement; roles; assumptions (spec §1 plus this
+  environment's no-Docker/no-Java/no-LLM-key/no-report-template/no-approved-domain-list gaps);
+  21 numbered functional requirements (`REQ-01`…`REQ-21`) covering orders/import, the four
+  agents, the agent protocol, orchestration/recovery, recommendations/approvals, transactional
+  apply, quality hold/release/shipment eligibility, the document pipeline, hybrid retrieval with
+  citations, NLP extraction/classification/summarization, audit, notifications, dashboards,
+  authn/authz, and application security controls — each with acceptance criteria and a "Where
+  implemented" pointer; 5 non-functional requirements (security, tenancy — including the
+  documented, deferred row-level-security requirement, reliability, performance targets,
+  accessibility); an assignment-traceability table reproducing spec §2 with an added "Where
+  implemented" column; an explicit out-of-scope list (spec §14 cut list plus live ERP, OCR,
+  purchasing, machine control).
+- `docs/adr/README.md` plus eight one-page ADRs (`0001`–`0008`), each with Status/Context/
+  Decision/Consequences/Alternatives considered: modular monolith + worker (0001); PostgreSQL +
+  pgvector single store, exact search first (0002); PostgreSQL job table with
+  `FOR UPDATE SKIP LOCKED`/leases/fencing/at-least-once delivery (0003); OIDC + PKCE + opaque
+  sessions + CSRF double-check + development-only OIDC provider (Keycloak realm kept for
+  Compose, unverified here) (0004); custom versioned HTTP/JSON agent protocol, explicitly not
+  A2A/MCP (0005); LLM boundary — `LLMClient` interface, Anthropic `claude-opus-5` default with
+  server-side refusal fallbacks (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`,
+  confirmed current via the `claude-api` skill), deterministic `fixture` provider for CI, and
+  `disabled` degraded mode (0006); single style per order (no `order_items`), ledger + lockable
+  `material_balances` row with `version`, embeddings stored on `chunks`, one `approvals` row per
+  recommendation (0007); local environment without Docker/Java — project-local PG cluster on
+  55432, dev IdP, Compose files provided but not verified locally (0008).
+- `docs/architecture/formulas.md` — every formula from spec §6 (planning standard
+  minutes/utilization, materials availability/demand/projected balance/reorder point, IE
+  effective cycle/bottleneck/throughput/line balance index, quality defective rate/DHU) with
+  units, assumptions, and rounding rules, plus worked arithmetic for all six spec §6 reference
+  fixtures (one-shift capacity shortfall; material shortage; bottleneck/balance index;
+  defect rate/DHU; concurrent-reservation conflict; stale-proposal rejection) — verified by hand
+  against the plan's stated expected results (e.g. 12,000 vs 6,300 standard minutes; 160-meter
+  shortage; 60-second bottleneck / 83.33% balance index; 7% defective rate / 12 DHU).
+- `docs/architecture/glossary.md` — SAM, DHU (vs. defective rate), AQL (with the "demo policy,
+  not certified" caveat tied to `quality_policy_versions.is_demo`), line balance index,
+  supermarket, BOM, lot, reservation, allocation, standard minutes, shift slot.
+- `CLAUDE.md` (61 lines) — what the repo is; make commands (existing Task-1 targets vs. those
+  marked "(added in later tasks)"); critical invariants copied from Global Constraints; pointers
+  to the spec, contracts, status file, and ADRs; "never claim live-LLM success without a
+  recorded run".
+- `README.md` skeleton — title, one-paragraph description, architecture summary with the spec
+  §3 mermaid diagram, prerequisites (Homebrew `postgresql@16`, the exact pgvector 0.8.6
+  build/install commands, `uv`, Node ≥ 20), a quick-start using existing `make` targets, and
+  placeholder headings for Setup/Usage/Testing/Limitations (filled in by later tasks) and a
+  Contributors table (placeholder rows for the team to fill; no fabricated names) and License.
+- `scripts/check-doc-links.sh` (new) — scans every `*.md` file under `docs/`, `README.md`, and
+  `CLAUDE.md` for markdown link targets, skips absolute URLs/`mailto:`/pure fragments, resolves
+  every remaining relative target against the linking file's directory, and exits non-zero
+  listing each `BROKEN LINK` found. Wired into the root `Makefile` as `make docs-check`.
+
+**TDD evidence for `scripts/check-doc-links.sh`:**
+
+RED — a throwaway fixture tree (`README.md` linking to an existing `docs/adr/0001-example.md`
+and a deliberately missing `docs/adr/0002-missing.md`) was created under the scratch directory
+and run as `scripts/check-doc-links.sh <fixture-dir>`:
+
+```
+BROKEN LINK: README.md -> docs/adr/0002-missing.md (resolved: ./docs/adr/0002-missing.md)
+check-doc-links: checked 2 relative link target(s) across 2 file(s)
+exit=1
+```
+
+Expected and correct: the script must fail with a clear, specific reason (which file, which
+link, which resolved path) when a relative doc link is broken.
+
+GREEN — the fixture's broken link was pointed at the existing file and the script re-run against
+the same fixture, then against the real repository as it stood before this task's new docs were
+added (only `docs/IMPLEMENTATION_STATUS.md`, `docs/architecture/backend-contracts.md`, and
+`docs/superpowers/plans/2026-09-17-linesense-build.md` existed, none containing markdown links):
+
+```
+check-doc-links: checked 2 relative link target(s) across 2 file(s)
+exit=0
+check-doc-links: checked 0 relative link target(s) across 3 file(s)
+exit=0
+```
+
+**Verification commands and results (in order, after writing all documents):**
+
+```
+$ make docs-check
+bash scripts/check-doc-links.sh
+check-doc-links: checked 32 relative link target(s) across 17 file(s)
+
+$ make lint
+cd services/backend && uv run ruff check .
+All checks passed!
+cd services/backend && uv run ruff format --check .
+17 files already formatted
+
+$ make typecheck
+cd services/backend && uv run mypy app
+Success: no issues found in 11 source files
+
+$ make test
+cd services/backend && uv run pytest -m "not integration" -q
+..........                                                               [100%]
+10 passed, 2 deselected in 0.08s
+
+$ bash scripts/dev-db.sh start   # already running
+$ make test-integration
+cd services/backend && uv run pytest -m integration -q
+..                                                                       [100%]
+2 passed, 10 deselected in 0.60s
+```
+
+All test/check output above is clean (no unexplained warnings); no backend source changed in
+this task, so the unchanged pass counts (10/2 unit, 2 integration) match Task 1's baseline.
+
+**Files changed:** new — `docs/requirements.md`, `docs/adr/README.md`,
+`docs/adr/0001-modular-monolith-and-worker.md` … `docs/adr/0008-local-environment-without-docker.md`,
+`docs/architecture/formulas.md`, `docs/architecture/glossary.md`, `CLAUDE.md`, `README.md`,
+`scripts/check-doc-links.sh`. Modified — `Makefile` (new `docs-check` target),
+`docs/IMPLEMENTATION_STATUS.md` (this entry; Phase 0 checklist line marked documented).
+
+**Self-review:**
+
+- Confirmed the Anthropic model/fallback terminology in ADR-0006 (`claude-opus-5`,
+  `fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) against the `claude-api`
+  skill's current reference rather than only the brief, since it names a specific model/beta
+  string; it matches exactly.
+- No fabricated results, scores, or team member names: the Contributors table is an explicit
+  placeholder; formula fixtures are hand-verified arithmetic reproducing the plan's own stated
+  expected results, not invented numbers; every "unverified locally" claim (Keycloak/Compose,
+  live LLM) is stated as such rather than implied to work.
+- `docs/requirements.md`'s tenancy NFR explicitly records row-level security as a deferred,
+  documented pre-pilot requirement rather than silently omitting it or claiming it is done.
+- Re-ran `make docs-check` after every new document was added (not only once at the end) to
+  catch a broken link close to its cause; none were found in the final documents as written.
+- Scope kept to exactly the brief's file list; no backend code, migrations, or tests were
+  touched (this is a documentation-only task per the brief's Step markers).
+
+**Known issues / external blockers:**
+
+- No official report template or lecturer-approved manufacturing-domain list has been supplied;
+  recorded as an assumption/blocker in `docs/requirements.md` §3, not fabricated.
+- Formula/fixture arithmetic in `docs/architecture/formulas.md` is verified by hand in this
+  document; the corresponding automated domain unit tests are Task 4's responsibility (Phase 0
+  is marked "documented", not "tested", in the phase checklist above).
+- The Keycloak/Compose identity path and any live-Anthropic-provider path remain unverified in
+  this environment, as recorded in ADR-0004, ADR-0006, and ADR-0008.
+
+**Next step:** Task 3 (or the next task in the SDD plan — see
+`docs/superpowers/plans/2026-09-17-linesense-build.md`).
