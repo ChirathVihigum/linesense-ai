@@ -25,11 +25,16 @@ from, so `CREATE EXTENSION vector` resolves to `0.8.6` in both
 `linesense_dev` and `linesense_test`. Identity uses a development-only OIDC
 provider (ADR-0004) instead of a Keycloak container. Compose files
 (`infra/compose/`) and the Keycloak realm configuration (`infra/identity/`)
-are still written and kept in the repository for any environment that does
-have Docker/Java, but they are explicitly **not verified** in this
-environment — every status report and README instruction distinguishes
-"works here, verified" (the native `scripts/dev-db.sh` + dev IdP path) from
-"provided, unverified" (Compose/Keycloak).
+are **planned deliverables of a later deployment task** (plan Task 26:
+"Deployment artefacts and CI") for any environment that does have
+Docker/Java — the `infra/compose/` and `infra/identity/` directories exist
+today only as empty placeholders, with no Compose/Keycloak files written
+yet. When Task 26 writes them, they will be validated **statically only**
+(schema/lint checks, `make infra-check`) in this environment, never by
+actually running them, because Docker/Java remain unavailable. Every
+status report and README instruction distinguishes "works here, verified"
+(the native `scripts/dev-db.sh` + dev IdP path) from "planned, not yet
+written / validated only statically" (Compose/Keycloak).
 
 ## Consequences
 
@@ -41,8 +46,9 @@ environment — every status report and README instruction distinguishes
   cluster, and `reset-test` refuses any target database other than
   `linesense_test`.
 - A contributor with Docker/Java can instead use Compose/Keycloak once
-  those paths are exercised and confirmed in that environment; until then,
-  README/CLAUDE.md must not claim the Compose path has been run.
+  Task 26 has written those artefacts and they are exercised and confirmed
+  in that environment; until then, README/CLAUDE.md must not claim the
+  Compose path has been written, let alone run.
 - Production deployment still targets the Compose-based (or equivalent)
   configuration with a real OIDC provider — the dev IdP and project-local
   cluster are development/test-only, and `Settings`' production validator
