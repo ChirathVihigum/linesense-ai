@@ -66,8 +66,9 @@ Carried from spec §1, plus assumptions specific to this build environment:
 - **This development environment has no Docker, no Java, and no Anthropic
   API key.** Consequences: identity uses a development-only OIDC provider
   instead of a Keycloak container ([ADR-0004](adr/0004-oidc-server-sessions-and-dev-idp.md));
-  the Compose/Keycloak path is provided but unverified locally
-  ([ADR-0008](adr/0008-local-environment-without-docker.md)); the LLM
+  the Compose/Keycloak path is a planned deliverable of a later deployment
+  task (not yet written), to be validated statically only, never run,
+  in this environment ([ADR-0008](adr/0008-local-environment-without-docker.md)); the LLM
   boundary is exercised only through the deterministic `fixture` provider,
   never a live Anthropic call, until a key is provisioned
   ([ADR-0006](adr/0006-llm-boundary-and-fixture-provider.md)). No live-LLM
@@ -322,24 +323,26 @@ screen (spec §9); desktop-first responsive layout.
 
 ## 6. Assignment traceability
 
-Reproduced from `LINESENSE_IMPLEMENTATION_PLAN.md` §2, with an added
-"Where implemented" column naming the planned module(s):
+The first three columns are a verbatim reproduction of
+`LINESENSE_IMPLEMENTATION_PLAN.md` §2 (including its assessment marks
+where the brief states them); the fourth column, "Where implemented", is
+added here and names the planned module(s) or document:
 
-| Brief requirement | Concrete implementation | Where implemented |
-|---|---|---|
-| At least two interacting intelligent agents | Four domain agents exchanging typed tasks/results through an orchestrated protocol | `app/agents/`, `app/orchestration/` |
-| LLM use | Tool selection, exception interpretation, grounded action explanations | `app/llm/`, `app/agents/*/` |
-| NLP | Entity extraction, exception classification, summarization | `app/nlp/` |
-| Information retrieval | Lexical + vector SOP retrieval with citations | `app/retrieval/` |
-| Security | OIDC login, server sessions, resource authorization, validated uploads, encrypted transport | `app/auth/`, `app/api/`, `app/ingestion/` |
-| Defined agent protocol | Versioned JSON messages over private HTTP with durable task IDs | `app/orchestration/protocol.py` |
-| Responsible AI | Evidence, abstention, worker privacy, review of consequential actions | `app/agents/*/`, `docs/adr/0006-*` |
-| Commercialization | Target factories, proposed tiers, cost model, deployment options | `LINESENSE_IMPLEMENTATION_PLAN.md` §16 (assessment package, Phase 6) |
-| Week 6 mid evaluation | Architecture, roles/communication, progress demo, RAI check, business pitch | Phase 2 exit gate |
-| Week 10 Gen AI video | 3–5-minute explanation using a generative-video tool | Phase 6 |
-| Week 10 report | Design, methodology, RAI, commercialization, evaluation | Phase 6 |
-| Week 10 repository | Setup, usage, contributors, tests, documentation | This document, `README.md`, `CLAUDE.md` |
-| Week 11 viva | Each member explains code, decisions, protocols, results | Contribution log (`README.md` Contributors section) |
+| Brief requirement | Concrete implementation | Evidence for assessment | Where implemented |
+|---|---|---|---|
+| At least two interacting intelligent agents | Four domain agents exchanging typed tasks/results through an orchestrated protocol | Run trace showing planning reacting to RM and IE findings | `app/agents/`, `app/orchestration/` |
+| LLM use | Tool selection, exception interpretation, grounded action explanations | Redacted real-provider run with model and prompt versions | `app/llm/`, `app/agents/*/` |
+| NLP | Entity extraction for order/style/line/material/defect references; exception classification and summarization | Labeled extraction/classification dataset and measured scores | `app/nlp/` |
+| Information retrieval | Authorized SOP retrieval using lexical plus vector search, with citations | Lexical/vector/hybrid comparison and Recall@5 | `app/retrieval/` |
+| Security | OIDC login, server sessions, resource authorization, validated uploads, encrypted transport | Negative access tests, threat model, scan results | `app/auth/`, `app/api/`, `app/ingestion/` |
+| Defined agent protocol | Versioned JSON messages over private HTTP with durable task IDs | OpenAPI, schemas, sequence diagram, retry demo | `app/orchestration/protocol.py` |
+| Responsible AI | Evidence, abstention, worker privacy, review of consequential actions | Model/data cards, adversarial tests, fairness limitations | `app/agents/*/`, `docs/adr/0006-*` |
+| Commercialization | Target factories, proposed tiers, cost model, deployment options | Pricing assumptions and pilot measurement plan | `LINESENSE_IMPLEMENTATION_PLAN.md` §16 (assessment package, Phase 6) |
+| Week 6 mid evaluation: 20 marks | Architecture, roles/communication, progress demo, RAI check, business pitch | Slides and a working two-agent vertical slice | Phase 2 exit gate |
+| Week 10 Gen AI video: 25 marks | 3–5-minute explanation using a generative-video tool | Final video with accurate claims and identifiable synthetic scenes | Phase 6 |
+| Week 10 report: 30 marks | Design, methodology, RAI, commercialization, evaluation | Official template populated with actual results | Phase 6 |
+| Week 10 repository: 5 marks | Setup, usage, contributors, tests, documentation | Reproducible README and repository | This document, `README.md`, `CLAUDE.md` |
+| Week 11 viva: 20 marks | Each member explains code, decisions, protocols, results | Contribution log and individual rehearsals | Contribution log (`README.md` Contributors section) |
 
 ## 7. Explicit out-of-scope list
 

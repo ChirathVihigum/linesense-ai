@@ -70,8 +70,9 @@ flowchart TB
 - No Docker or Java is required for local development (see
   [ADR-0004](docs/adr/0004-oidc-server-sessions-and-dev-idp.md) and
   [ADR-0008](docs/adr/0008-local-environment-without-docker.md)); Compose
-  and Keycloak configuration is provided for environments that have them,
-  but is not verified as part of this build.
+  and Keycloak configuration are planned deliverables of a later deployment
+  task, not yet written, and will be validated only statically (never run)
+  in this environment once they exist.
 
 ## Quick start
 

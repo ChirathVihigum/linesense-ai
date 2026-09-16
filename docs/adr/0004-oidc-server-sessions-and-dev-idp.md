@@ -25,11 +25,14 @@ Keycloak cannot run locally, add a minimal, development-only OIDC provider
 at `services/backend/devtools/dev_oidc` that implements just enough of the
 protocol (authorization endpoint, token endpoint, JWKS, the seeded demo
 identities in `docs/architecture/backend-contracts.md` §9) to exercise the
-full client-side flow end-to-end, including browser E2E tests. The
-Keycloak realm configuration is kept under `infra/identity/` for Compose-
-based environments where Docker/Java are available, but it is **not**
-verified in this environment — that is recorded as an explicit gap, not a
-claimed pass.
+full client-side flow end-to-end, including browser E2E tests. A Keycloak
+realm configuration for Compose-based environments where Docker/Java are
+available is a **planned deliverable of a later deployment task** (plan
+Task 26: "Deployment artefacts and CI"), to be written to
+`infra/identity/keycloak/linesense-realm.json`; it does not exist yet.
+Because this environment has neither Docker nor Java, that realm — once
+written — will be validated **statically only** (e.g. JSON schema/lint
+checks, `make infra-check`), never by actually running Keycloak here.
 
 ## Consequences
 
@@ -40,8 +43,10 @@ claimed pass.
   (`LS_ENVIRONMENT`); production startup must fail if it is configured as
   the issuer in production, matching the plan's "no live-provider claim
   without evidence" discipline applied here to identity as well as LLMs.
-- The Keycloak realm/Compose path is unverified until a Docker+Java
-  environment is available; this is tracked as a known limitation in
+- The Keycloak realm/Compose path does not exist yet (planned in Task 26)
+  and, once written, remains unverified by actually running it until a
+  Docker+Java environment is available — only static validation is
+  possible here. This is tracked as a known limitation in
   `docs/IMPLEMENTATION_STATUS.md`, not silently dropped from scope.
 - Cookie/session mechanics (Secure/HttpOnly/SameSite, rotation on login,
   revocation on logout) are identical regardless of which IdP issued the
@@ -56,8 +61,9 @@ claimed pass.
   E2E login tests meaningless.
 - **Skip Docker-dependent identity work entirely until a Docker host is
   available**: rejected — blocks all authenticated-flow development and
-  testing for the whole assignment; the dev IdP unblocks it now while
-  keeping the Keycloak path documented for later verification.
+  testing for the whole assignment; the dev IdP unblocks it now while the
+  Keycloak realm remains a scheduled later-task deliverable, validated
+  only statically until Docker/Java are available.
 - **Use a public/hosted OIDC test provider**: rejected — introduces an
   external network dependency for every test run and cannot host the
   project's specific seeded demo identities/roles.
