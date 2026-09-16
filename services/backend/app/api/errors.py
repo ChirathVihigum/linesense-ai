@@ -9,9 +9,9 @@ Every non-2xx response follows the shape documented in
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -19,7 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.middleware import trace_id_var
 
-logger = logging.getLogger("app.errors")
+logger = structlog.get_logger("app.errors")
 
 _STRIPPED_LOC_PREFIXES = {"body", "query"}
 
@@ -140,8 +140,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("unhandled_exception", exc_info=exc)
     trace_id = _trace_id_for(request)
+    # Bind trace_id explicitly rather than relying on app.logging's
+    # trace_id_var-reading processor: TraceIdMiddleware's `finally` block has
+    # already reset that context variable by the time this handler runs (see
+    # `_trace_id_for`'s docstring), so the processor would see it empty.
+    logger.exception("unhandled_exception", trace_id=trace_id, exc_info=exc)
     return JSONResponse(
         status_code=500,
         content=_error_body("INTERNAL_ERROR", "An unexpected error occurred.", trace_id=trace_id),

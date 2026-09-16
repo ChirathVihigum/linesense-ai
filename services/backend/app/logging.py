@@ -63,5 +63,12 @@ def configure_logging(settings: Settings) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
+        # False (structlog's own default): a logger obtained via
+        # `structlog.get_logger(...)` at import time must pick up
+        # `configure_logging()` being called again later (e.g. once per test
+        # app) and must respect `structlog.testing.capture_logs()`, which
+        # works by temporarily reconfiguring the processor chain. Caching
+        # would bake in whichever processors were active the first time a
+        # given logger name was used and ignore later reconfiguration.
+        cache_logger_on_first_use=False,
     )
