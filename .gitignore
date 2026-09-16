@@ -1,0 +1,25 @@
+# Supplied course material (not ours to redistribute) and scratch
+Group Assignment Brief (1).pdf
+tmp/
+# Local runtime state
+.local/
+.env
+*.env.local
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# Node
+node_modules/
+apps/web/dist/
+apps/web/test-results/
+apps/web/playwright-report/
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
