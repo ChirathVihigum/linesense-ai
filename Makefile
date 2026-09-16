@@ -1,5 +1,5 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
-        lint format typecheck test test-integration test-all
+        lint format typecheck test test-integration test-all docs-check
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -51,3 +51,6 @@ test-integration:
 	cd services/backend && uv run pytest -m integration -q
 
 test-all: test test-integration
+
+docs-check:
+	bash scripts/check-doc-links.sh
