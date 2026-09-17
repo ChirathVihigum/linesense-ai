@@ -857,3 +857,74 @@ correction and a note that Task 4 implements these formulas), `docs/IMPLEMENTATI
 - Scoped `ruff check` and `ruff format --check` are clean. `make docs-check` passes.
 - Whole-repo `make typecheck` currently reports 4 errors, all in the concurrently written,
   uncommitted `app/jobs/` (Task 10). None of them are in this task's files.
+
+### 2026-09-17 — Task 10: durable job queue, worker runtime, heartbeats, fencing, reconciliation
+
+**Built:**
+
+- `app/jobs/queue.py` implements the contract §7 functions `enqueue`, `claim`, `heartbeat`,
+  `complete` and `fail`, plus `ClaimedJob`, `LeaseLostError`, `RetryableJobError`,
+  `PermanentJobError`, `backoff_seconds` and `format_error`.
+  - `claim` is a single `UPDATE ... WHERE id = (SELECT ... ORDER BY available_at, created_at
+    LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING ...` statement that uses the database `now()`.
+  - A reclaimed job that has used up its attempts is marked FAILED in the same transaction, and
+    the exhaustion hook runs after the commit.
+  - Every state change is fenced by `lease_token` and `status = 'LEASED'`. Error text is capped
+    at 2,000 characters.
+- `app/jobs/worker.py` provides `Worker`, `HandlerRegistry`, `JobContext` and
+  `finish_in_transaction`.
+  - Handlers run under `concurrency` asyncio slots, with a heartbeat task that cancels the
+    handler when the lease is lost.
+  - Outcome mapping: permanent errors and unknown job types fail the job; other errors retry with
+    backoff; a lost lease only logs `job.lease_lost`.
+  - A handler that returns without completing is completed by the worker in a fenced
+    transaction.
+  - Shutdown is graceful: claiming stops and running handlers get 20 s to finish.
+  - Logs: `job.claimed/completed/failed/lease_lost`, plus `worker.alive` every 30 s.
+  - Outside production, the worker touches `.local/worker-<id>.alive` (setting
+    `LS_WORKER_ALIVE_DIR`, default `../../.local` relative to `services/backend`). Loop errors
+    back off exponentially, up to 5 s.
+- `app/jobs/reconcile.py` provides `reconcile_once` and `ReconcileReport`. It deletes expired
+  `idempotency_keys` and marks overdue PROPOSED/APPROVED `recommendations` as EXPIRED (with
+  `SKIP LOCKED`, a `version` increment and a SYSTEM `recommendation.expire` audit event). The
+  worker runs it every 15 s.
+- `app/jobs/handlers.py`: `build_registry(settings)` registers `maintenance.reconcile` and
+  `maintenance.purge_idempotency`. Both commit their writes and the job completion in one
+  transaction.
+- `app/jobs/__main__.py` is the `python -m app.jobs --queues ... --concurrency N [--worker-id]`
+  entry point. It installs SIGINT/SIGTERM handlers. `make worker` runs it.
+- `tests/factories.py` gains `make_run` and `make_recommendation`.
+- `docs/architecture/jobs.md` covers the state diagram, claiming, fencing, retries and the
+  at-least-once caveat.
+- Contract change in backend-contracts.md §7: `claim` and `fail` take an optional `on_exhausted`
+  callback. The queue module has no registry, so this callback is how the worker's exhaustion
+  hook runs.
+
+**Commands and results (2026-09-17):**
+
+- `make test-integration`: `98 passed, 342 deselected`. This includes 13 tests in
+  `test_job_queue.py` and 17 in `test_worker_runtime.py`, all against real PostgreSQL. The
+  concurrency test runs 20 jobs × 4 claimers over separate pooled connections with
+  `asyncio.gather`.
+- `make test`: `342 passed, 98 deselected`. `make lint`: clean. `make typecheck`:
+  `Success: no issues found in 58 source files`. `uv run mypy` on the two new test modules and
+  `tests/factories.py`: clean. `make docs-check`: 37 links resolve.
+- Manual smoke test against `linesense_test`:
+  1. `LS_DATABASE_URL=...linesense_test uv run python -m app.jobs --queues maintenance
+     --concurrency 2 --worker-id smoke` claimed and completed an enqueued
+     `maintenance.reconcile` job.
+  2. The worker created `.local/worker-smoke.alive`.
+  3. On `SIGTERM` it logged `worker.stopping`/`worker.stopped`, exited with 0 and removed the
+     liveness file.
+  4. `--queues bogus` is rejected by argparse.
+
+**Known issues / limitations:**
+
+- `linesense_dev` has no migrations applied, so running `make worker` against the default dev
+  database fails with `UndefinedTable` until `make migrate` is run. The worker logs the error and
+  backs off. This task did not migrate the dev database.
+- Delivery is at least once. Handlers must keep external side effects idempotent (see
+  `docs/architecture/jobs.md`).
+- Handlers still running after the 20 s shutdown grace period are cancelled. Their jobs are
+  recovered only when the lease expires (30 s by default).
+- `CANCELLED` job status is not set by any code path yet.

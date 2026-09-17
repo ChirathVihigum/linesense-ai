@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-5"
 
     document_storage_dir: str = "../../.local/documents"
+    # Directory for worker liveness files (non-production only); relative
+    # paths resolve against services/backend, so the default is the repo's
+    # git-ignored `.local/`.
+    worker_alive_dir: str = "../../.local"
 
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedder: str = "fastembed"
@@ -115,6 +119,12 @@ class Settings(BaseSettings):
         if errors:
             raise ValueError("; ".join(errors))
         return self
+
+
+def resolve_backend_path(value: str) -> Path:
+    """Resolve ``value`` against ``services/backend`` unless it is absolute."""
+    path = Path(value)
+    return path if path.is_absolute() else (_BACKEND_ROOT / path).resolve()
 
 
 @lru_cache
