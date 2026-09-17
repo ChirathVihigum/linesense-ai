@@ -33,6 +33,7 @@ rewrites the text it is scanning; it only ever slices the original string.
 
 from __future__ import annotations
 
+import bisect
 import re
 from typing import Any
 
@@ -41,13 +42,15 @@ REDACTED = "[REDACTED]"
 # Emails are found by a linear scan (`_email_spans`), not a regex: an
 # unbounded regex backtracks quadratically on long non-matching runs, and a
 # length-bounded one matches only a suffix/prefix of an over-long address,
-# leaking the rest. Neither character set contains "@", so the per-"@"
+# leaking the rest. Neither character class admits "@", so the per-"@"
 # expansions below never cross another "@" and total work is O(n).
-_EMAIL_LOCAL_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
-)
-_EMAIL_DOMAIN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-")
-_EMAIL_DOMAIN_TRAILING = ".-"
+#
+# Character classes (Unicode-aware, so non-ASCII addresses are covered whole):
+# - local part: any Unicode letter/digit (``str.isalnum()``) or one of
+#   ``._%+-``;
+# - domain: any Unicode letter/digit or one of ``.-``.
+_EMAIL_LOCAL_PUNCT = frozenset("._%+-")
+_EMAIL_DOMAIN_PUNCT = frozenset(".-")
 _API_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 
@@ -64,6 +67,12 @@ _ISO_DATETIME_RE = re.compile(
 )
 # A bare "HH:MM(:SS)" not already consumed as part of a date above.
 _BARE_TIME_RE = re.compile(r"(?<!\d)\d{2}:\d{2}(?::\d{2})?(?!\d)")
+# An 8-4-4-4-12 hex UUID. An all-digit one (``11111111-2222-...``) otherwise
+# contains a phone-shaped "4-4-4" run; fixed-width, so O(1) per position.
+_UUID_RE = re.compile(
+    r"(?<![0-9A-Za-z])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+    r"[0-9A-Fa-f]{12}(?![0-9A-Za-z])"
+)
 
 # A phone-shaped digit grouping: optional "+<country code> " (needs its own
 # trailing separator), optional "(<area code>) ", then 2-4 groups of 2-4
@@ -96,34 +105,77 @@ def _is_phone_like(candidate: str) -> bool:
     return _PHONE_MIN_DIGITS <= digits <= _PHONE_MAX_DIGITS
 
 
+def _is_local_char(char: str) -> bool:
+    return char.isalnum() or char in _EMAIL_LOCAL_PUNCT
+
+
+def _is_domain_char(char: str) -> bool:
+    return char.isalnum() or char in _EMAIL_DOMAIN_PUNCT
+
+
 def _expand_left(text: str, index: int, floor: int) -> int:
     """First index of the local-part run ending just before ``index``."""
-    while index > floor and text[index - 1] in _EMAIL_LOCAL_CHARS:
+    while index > floor and _is_local_char(text[index - 1]):
         index -= 1
     return index
 
 
 def _expand_right(text: str, index: int) -> int:
     """End index (exclusive) of the domain run starting at ``index``, with
-    trailing dots/hyphens (e.g. a sentence-ending period) excluded."""
+    trailing dots/hyphens (e.g. a sentence-ending period) excluded. Used for
+    chained ``@domain`` pieces, which are swallowed whole."""
     length = len(text)
     end = index
-    while end < length and text[end] in _EMAIL_DOMAIN_CHARS:
+    while end < length and _is_domain_char(text[end]):
         end += 1
-    while end > index and text[end - 1] in _EMAIL_DOMAIN_TRAILING:
+    while end > index and text[end - 1] in _EMAIL_DOMAIN_PUNCT:
         end -= 1
     return end
 
 
-def _is_email_domain(domain: str) -> bool:
-    """A dotted domain whose final label is at least two ASCII letters.
-    Dotless hosts (``user@localhost``) are deliberately not treated as
-    emails: they are far more often handles or host names."""
-    dot = domain.rfind(".")
-    if dot < 1:
-        return False
-    label = domain[dot + 1 :]
-    return len(label) >= 2 and label.isascii() and label.isalpha()
+def _valid_domain_end(text: str, index: int) -> int:
+    """End (exclusive) of the longest valid domain starting at ``index``, or
+    ``index`` itself if there is none.
+
+    A valid domain is a prefix of the domain-character run starting at
+    ``index`` that contains at least one dot, has no empty labels, and ends
+    in a final label (after the last dot) of at least two letters
+    (``str.isalpha()``, so Unicode letters count) that is not followed by
+    another letter. Taking the *longest valid prefix* rather than rejecting
+    the whole run means trailing junk glued onto an address
+    (``x@y.io2026-09-17``, ``a@b.co.uk2026``) does not hide the address.
+    Dotless hosts (``user@localhost``) are deliberately never valid: they are
+    far more often handles or host names. One pass over the run: O(run).
+    """
+    length = len(text)
+    best = index
+    label_start = index
+    seen_dot = False
+    alpha_run = True  # every char of the current label so far is a letter
+    position = index
+    while position < length:
+        char = text[position]
+        if char == ".":
+            if position == label_start:
+                break  # empty label: no longer prefix can be valid
+            seen_dot = True
+            label_start = position + 1
+            alpha_run = True
+        elif char.isalpha():
+            pass
+        elif _is_domain_char(char):
+            alpha_run = False
+        else:
+            break
+        position += 1
+        if (
+            seen_dot
+            and alpha_run
+            and position - label_start >= 2
+            and (position == length or not text[position].isalpha())
+        ):
+            best = position
+    return best
 
 
 def _email_spans(text: str) -> list[tuple[int, int]]:
@@ -138,8 +190,8 @@ def _email_spans(text: str) -> list[tuple[int, int]]:
     while at != -1:
         if at >= cursor:
             start = _expand_left(text, at, cursor)
-            end = _expand_right(text, at + 1)
-            if start < at and _is_email_domain(text[at + 1 : end]):
+            end = _valid_domain_end(text, at + 1)
+            if start < at and end > at + 1:
                 # Extend over chained "local@" pieces to the left ...
                 while start > cursor and text[start - 1] == "@":
                     start = _expand_left(text, start - 1, cursor)
@@ -164,15 +216,31 @@ def _redact_emails(text: str) -> str:
 
 
 def _protected_spans(text: str) -> list[tuple[int, int]]:
-    """Character-offset spans of ISO dates/datetimes and bare times in
-    ``text``. A phone candidate overlapping any of these is not redacted."""
-    spans = [match.span() for match in _ISO_DATETIME_RE.finditer(text)]
-    spans.extend(match.span() for match in _BARE_TIME_RE.finditer(text))
-    return spans
+    """Sorted, disjoint character-offset spans of ISO dates/datetimes, bare
+    times, and UUIDs in ``text``. A phone candidate overlapping any of these
+    is not redacted."""
+    raw = [match.span() for match in _ISO_DATETIME_RE.finditer(text)]
+    raw.extend(match.span() for match in _BARE_TIME_RE.finditer(text))
+    raw.extend(match.span() for match in _UUID_RE.finditer(text))
+    raw.sort()
+    merged: list[tuple[int, int]] = []
+    for start, end in raw:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _overlaps_any(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
-    return any(start < span_end and span_start < end for span_start, span_end in spans)
+    """``spans`` is sorted and disjoint (see `_protected_spans`), so a binary
+    search finds the only span that can overlap: O(log n) per candidate."""
+    # ``index`` is the first span starting after ``start``: the span before
+    # it may reach into the candidate, and it may itself start inside it.
+    index = bisect.bisect_right(spans, start, key=lambda span: span[0])
+    if index > 0 and spans[index - 1][1] > start:
+        return True
+    return index < len(spans) and spans[index][0] < end
 
 
 def redact_text(text: str) -> str:

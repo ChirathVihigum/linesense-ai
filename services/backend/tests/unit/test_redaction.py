@@ -238,3 +238,45 @@ def test_redact_text_is_linear_on_long_emails_and_mixed_text() -> None:
     assert "123 4567" not in result
     assert "2026-09-17 08:30" in result
     assert elapsed < 1.0, f"redact_text on 200k mixed text took {elapsed:.3f}s"
+
+
+def test_email_followed_by_digits_is_redacted_via_longest_valid_domain_prefix() -> None:
+    # Regression: the greedy domain run swallowed trailing digits, so the
+    # whole candidate failed the "alphabetic final label" check and the
+    # address leaked. The longest valid domain prefix is redacted instead.
+    assert redact_text("x@y.io2026-09-17") == f"{REDACTED}2026-09-17"
+    assert redact_text("a@b.co.uk2026 trailing") == f"{REDACTED}2026 trailing"
+    assert (
+        redact_text("a@sub.factory-01.example.com9 trailing digit") == f"{REDACTED}9 trailing digit"
+    )
+    assert redact_text("a@b.io0771234567") == f"{REDACTED}0771234567"
+
+
+def test_repeated_emails_glued_to_dates_are_all_redacted_quickly() -> None:
+    chunk = "contact ops@factory.io2026-09-17 "
+    text = chunk * (200_000 // len(chunk) + 1)
+    start = time.perf_counter()
+    result = redact_text(text)
+    elapsed = time.perf_counter() - start
+    assert "@" not in result
+    assert "ops" not in result
+    assert result == f"contact {REDACTED}2026-09-17 " * (200_000 // len(chunk) + 1)
+    assert elapsed < 1.0, f"redact_text on 200k glued emails took {elapsed:.3f}s"
+
+
+def test_unicode_emails_are_redacted_in_full() -> None:
+    assert redact_text("mail héllo@example.com now") == f"mail {REDACTED} now"
+    assert redact_text("mail user@héllo.com now") == f"mail {REDACTED} now"
+    assert redact_text("mail 用户@例子.公司 now") == f"mail {REDACTED} now"
+
+
+def test_empty_domain_labels_are_not_valid() -> None:
+    assert redact_text("mail a@.io now") == "mail a@.io now"
+
+
+def test_numeric_uuid_shaped_tokens_survive() -> None:
+    text = "id 11111111-2222-3333-4444-555555555555 done"
+    assert redact_text(text) == text
+    assert redact_text("11111111-2222-3333-4444-555555555555") == (
+        "11111111-2222-3333-4444-555555555555"
+    )
