@@ -1206,3 +1206,100 @@ does not check.)
   states they will); a schema property with neither is simply omitted from the constructed
   arguments rather than raising, since Task 11 has no way to validate Task 12's not-yet-written
   schemas.
+## 2026-09-17 — Task 6: Deterministic synthetic seed data (identity, master data, operations, demo scenario)
+
+Implemented `services/backend/app/seed/generator.py` (`async def seed_demo(session, *,
+anchor_date, issuer, rng_seed=20260917) -> SeedSummary`, idempotent on the `demo-apparel` org
+slug), `app/seed/scenario.py` (the fixed `PO-DEMO-001` walkthrough scenario constants), and
+`app/seed/__main__.py` (`python -m app.seed [--anchor-date YYYY-MM-DD]` / `make seed`, refuses
+`LS_ENVIRONMENT=production` with exit 2, prints the `SeedSummary` as JSON, never deletes data).
+Moved the demo identity list out of `tests/helpers/auth.py` into `app/seed/identities.py`
+(pure data, re-exported from `generator.py` per the brief), so the generator, the test helper,
+and the dev OIDC provider's user list share exactly one definition — the existing
+`test_users_json_matches_demo_identities` consistency test (Task 5) still passes unchanged.
+Reused `app/seed/vocabulary.py` (Task 16) as-is for every fixed string (order refs, materials,
+operation catalog, defect catalog, lines, styles) and the domain calc functions from Task 4
+(`app.domain.inventory.calc`, `app.domain.planning.calc`, `app.domain.quality.calc`,
+`app.domain.ie.calc`) for every derived quantity (gross demand, reservations, capacity
+allocation via `plan_earliest_slots` restricted to one rng-chosen compatible line per order,
+inspection disposition, the demo order's IE bottleneck).
+
+Every random choice comes from one `random.Random(rng_seed)` seeded once at the top of
+`seed_demo`; every date is relative to the caller's `anchor_date`; nothing reads the wall
+clock. Dataset (one live `make seed` run against `linesense_dev`, seed `20260917`): 1 org, 2
+factories, 10 users/memberships/role assignments, 26 customers, 12 styles (88 style
+operations), 20 materials, 16 BOM versions (61 lines; 4 styles carry a superseded version), 9
+lines (KTN `L1`-`L6`, BYG `B1`-`B3`; `L6` deliberately lacks the `BH` skill), 540 capacity
+slots (9 × 30 days × 2 shifts), 101 orders (80 `PO-KTN-*`, 20 `PO-BYG-*`, `PO-DEMO-001`), 174
+allocations, 20 material lots / 300 stock movements / 20 balances, 55 reservations, 6 open
+expected receipts, 150 operator aliases (25 per KTN line) / 302 skill records, 144 operation
+staffing rows, 720 cycle observations (2 flagged outliers) / 108 line measurements, 1 quality
+policy version (`QP-DEMO`), 40 inspections / 32 defect observations / 1 active hold / 18
+releases. `docs/evaluation/synthetic-data.md` records the full design, sizes, and demo
+scenario, plus the "not real factory data" statement.
+
+The `PO-DEMO-001` scenario (customer `C07`, style `ST-03`, quantity 1000, due `anchor+5`,
+`M01` BOM line 1.2 m/unit, 5% wastage) reproduces the brief's exact reference numbers via the
+real domain functions: `available_now(1500, 400) == 1100`, `gross_demand(1000, 1.2, 0.05) ==
+1260`, `shortage(1100, 1260) == 160`, `coverable_units(1100, 1.2, 0.05) == 873`; `M01`'s ledger
+(one 2760 m receipt lot, 14 daily 90 m `ISSUE` movements) makes `on_hand_accepted == 1500` and
+the 14-day average issue rate exactly 90 m/day by construction, not chance. Fixed (not random)
+cycle observations and staffing for `ST-03` on line `L2` make `OP-04` (sleeve set)
+deterministically the bottleneck at exactly 60s effective (median 120s / 2 parallel
+operators), inside the required 58-62s tolerance.
+
+**TDD evidence:**
+- RED: `services/backend/tests/integration/test_seed.py` was written against the not-yet-existing
+  `app.seed.generator` module; running it first failed with `ModuleNotFoundError:
+  No module named 'app.seed.generator'` (expected — the module did not exist yet).
+- GREEN, this task's integration tests (isolated per-agent database `linesense_test_d`, per this
+  task's dispatch):
+  ```
+  $ LS_TEST_DATABASE_URL=postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test_d \
+    LS_TEST_MIGRATION_DATABASE_URL=postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test_d \
+    uv run pytest -m integration tests/integration/test_seed.py -q
+  8 passed
+  ```
+- GREEN, full suite (same isolated database):
+  ```
+  $ uv run pytest -m "not integration" -q
+  398 passed, 146 deselected
+  $ LS_TEST_DATABASE_URL=...linesense_test_d LS_TEST_MIGRATION_DATABASE_URL=...linesense_test_d \
+    uv run pytest -m integration -q
+  146 passed, 398 deselected
+  ```
+  (the `tests/unit/test_dev_oidc.py::test_users_json_matches_demo_identities` consistency test
+  from Task 5 is among the 398 and still passes against the moved `DEMO_IDENTITIES`.)
+- `uv run ruff check app/seed tests/integration/test_seed.py tests/helpers/auth.py` and
+  `uv run ruff format --check` the same files — all checks passed / already formatted. (Whole-repo
+  `make lint` currently fails on one pre-existing, unrelated, uncommitted file from an
+  in-progress concurrent task, `tests/unit/test_datasets.py` (Task 16) — not touched by this
+  task; see Task 11's log entry above for the same situation.)
+- `uv run mypy app` — `Success: no issues found in 79 source files`.
+- `make migrate && make seed` against `linesense_dev` (never dropped/truncated — only inserted
+  into): first run printed `"created": true` with the counts above; a second `make seed` run
+  printed identical counts, the same `organization_id`/`demo_order_id`, and `"created": false`,
+  confirming idempotency against a real (not just test) database.
+
+**Files changed:** new — `services/backend/app/seed/identities.py`, `app/seed/generator.py`,
+`app/seed/scenario.py`, `app/seed/__main__.py`, `tests/integration/test_seed.py`,
+`docs/evaluation/synthetic-data.md`. Modified — `services/backend/tests/helpers/auth.py`
+(imports `DEMO_IDENTITIES`/org constants from `app.seed.generator` instead of defining them),
+`services/backend/app/seed/__init__.py` (docstring), `services/backend/pyproject.toml`
+(`app/seed/**` added to the `S311` per-file-ignore, matching the existing `scripts/**` rule —
+non-cryptographic synthetic data generation), `Makefile` (`seed` target), `README.md` (Setup /
+seed data section).
+
+**Known limitations:**
+- Inventory (lots, movements, balances, reservations, expected receipts) is only seeded for
+  the KTN factory, matching the demo scenario; BYG orders exist with capacity allocations but
+  no material ledger of their own. A future task adding BYG-specific inventory screens would
+  need to extend `_seed_inventory` rather than assuming it already covers BYG.
+- Capacity allocation picks one rng-chosen compatible line per order and fills it via
+  `plan_earliest_slots` from `anchor_date` to the order's own due date; it is a plausible
+  planning simulation for demo purposes, not a claim that it matches what Task 8's real
+  allocation service would have produced for the same orders.
+- Quality dispositions for the ~100 random orders follow a simple deterministic pattern (first
+  `PRODUCTION_COMPLETE` order fails with a hold, second passes with no release, the rest pass
+  and get released) rather than a fully independent random distribution per order; the two
+  named special cases the brief calls for are still guaranteed to exist.

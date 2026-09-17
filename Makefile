@@ -1,5 +1,5 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
-        lint format typecheck test test-integration test-all docs-check idp worker datasets-check
+        lint format typecheck test test-integration test-all docs-check idp worker datasets-check seed
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -63,3 +63,6 @@ datasets-check:
 
 worker:
 	cd services/backend && uv run python -m app.jobs
+
+seed:
+	cd services/backend && uv run python -m app.seed
