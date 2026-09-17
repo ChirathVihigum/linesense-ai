@@ -15,9 +15,20 @@ is, on its own, indistinguishable from an ISO date (``2026-09-17`` is
 "4 digits - 2 digits - 2 digits", exactly the shape of a country code plus
 two more groups) or a date followed by a time (``2026-09-17 08:30``, whose
 leading "date + hour" span alone is 10 digits with hyphen/space separators
--- phone-shaped by digit count and punctuation alone). So dates/timestamps
-are matched and set aside *before* phone detection runs, and restored
-afterward untouched; phone detection then only ever sees what is left.
+-- phone-shaped by digit count and punctuation alone).
+
+To keep dates/timestamps untouched, this module finds their spans in the
+*original* text first and then only accepts a phone-candidate match that
+does not overlap any of those spans -- a position-based approach, not a
+textual one. An earlier version of this module replaced protected spans
+with NUL-wrapped placeholder text and restored it afterward; that is
+unsafe against untrusted input (agent tool output, user-entered notes) that
+happens to already contain a NUL byte followed by digits and another NUL --
+such input either collided with an unrelated protected span (silent
+corruption) or indexed past the end of the protected list (a crash). Since
+tool output is exactly the kind of text this module redacts, "the input
+never contains our sentinel" is not a safe assumption, so this module never
+rewrites the text it is scanning; it only ever slices the original string.
 """
 
 from __future__ import annotations
@@ -27,23 +38,25 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}")
 _API_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 
 # ISO 8601 dates and datetimes: 2026-09-17, 2026-09-17T08:30:00Z,
-# 2026-09-17 08:30, 2026-09-17T08:30:00+05:30. Matched and temporarily
-# replaced by a placeholder (see `_protect_dates_and_times`) so a phone
-# candidate can never span into or across one.
+# 2026-09-17 08:30, 2026-09-17T08:30:00+05:30. Every quantifier in this
+# pattern (and in `_BARE_TIME_RE`/`_PHONE_CANDIDATE_RE` below) is fixed-width
+# or bounded, and each optional segment is gated by a literal character
+# (`-`, `T`/` `, `:`) that must appear first, so a failed match at any
+# position fails in O(1) rather than backtracking -- this module never scans
+# with an unbounded quantifier over untrusted input (see `_EMAIL_RE` above,
+# which is bounded for the same reason: an unbounded local-part/domain would
+# make a long run of non-matching characters, e.g. attacker-supplied text
+# with no "@" at all, cost O(n^2) instead of O(n)).
 _ISO_DATETIME_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
 )
 # A bare "HH:MM(:SS)" not already consumed as part of a date above.
 _BARE_TIME_RE = re.compile(r"(?<!\d)\d{2}:\d{2}(?::\d{2})?(?!\d)")
-# Sentinel wrapper for protected spans: NUL is never a digit, phone
-# separator, or "\w", so it can never be absorbed into a phone match, and
-# it cannot occur in real input text (JSON/text payloads don't carry NULs).
-_PLACEHOLDER_RE = re.compile("\x00(\\d+)\x00")
 
 # A phone-shaped digit grouping: optional "+<country code> " (needs its own
 # trailing separator), optional "(<area code>) ", then 2-4 groups of 2-4
@@ -76,21 +89,16 @@ def _is_phone_like(candidate: str) -> bool:
     return _PHONE_MIN_DIGITS <= digits <= _PHONE_MAX_DIGITS
 
 
-def _protect_dates_and_times(text: str) -> tuple[str, list[str]]:
-    """Replace ISO dates/datetimes and bare times with NUL-wrapped indices.
+def _protected_spans(text: str) -> list[tuple[int, int]]:
+    """Character-offset spans of ISO dates/datetimes and bare times in
+    ``text``. A phone candidate overlapping any of these is not redacted."""
+    spans = [match.span() for match in _ISO_DATETIME_RE.finditer(text)]
+    spans.extend(match.span() for match in _BARE_TIME_RE.finditer(text))
+    return spans
 
-    Returns the rewritten text and the list of original spans to restore
-    afterward (index in the list == the number embedded in the placeholder).
-    """
-    protected: list[str] = []
 
-    def _protect(match: re.Match[str]) -> str:
-        protected.append(match.group(0))
-        return f"\x00{len(protected) - 1}\x00"
-
-    working = _ISO_DATETIME_RE.sub(_protect, text)
-    working = _BARE_TIME_RE.sub(_protect, working)
-    return working, protected
+def _overlaps_any(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start < span_end and span_start < end for span_start, span_end in spans)
 
 
 def redact_text(text: str) -> str:
@@ -99,18 +107,23 @@ def redact_text(text: str) -> str:
     text = _BEARER_RE.sub(REDACTED, text)
     text = _EMAIL_RE.sub(REDACTED, text)
 
-    working, protected = _protect_dates_and_times(text)
+    protected = _protected_spans(text)
 
-    def _phone_sub(match: re.Match[str]) -> str:
-        candidate = match.group(0)
-        return REDACTED if _is_phone_like(candidate) else candidate
-
-    working = _PHONE_CANDIDATE_RE.sub(_phone_sub, working)
-
-    def _restore(match: re.Match[str]) -> str:
-        return protected[int(match.group(1))]
-
-    return _PLACEHOLDER_RE.sub(_restore, working)
+    pieces: list[str] = []
+    cursor = 0
+    for match in _PHONE_CANDIDATE_RE.finditer(text):
+        start, end = match.span()
+        if start < cursor:
+            continue  # overlaps a phone match already redacted
+        if _overlaps_any(start, end, protected):
+            continue  # part of a date/time, not a phone number
+        if not _is_phone_like(match.group(0)):
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append(REDACTED)
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def redact_payload(value: Any) -> Any:

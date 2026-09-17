@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from app.llm.redaction import REDACTED, redact_payload, redact_text
 
 
@@ -114,3 +116,47 @@ def test_date_and_time_combinations_survive() -> None:
 def test_phone_number_redacted_alongside_a_surviving_date() -> None:
     text = "Call +94 77 123 4567 before 2026-09-17 08:30"
     assert redact_text(text) == f"Call {REDACTED} before 2026-09-17 08:30"
+
+
+def test_nul_placeholder_shaped_input_does_not_crash_or_corrupt() -> None:
+    # Regression: an earlier implementation masked protected date/time spans
+    # with NUL-wrapped placeholder text and restored it afterward. Untrusted
+    # input (tool output, user notes) that happens to already contain that
+    # exact shape either crashed (index past the end of the protected list)
+    # or silently substituted unrelated protected content. This module must
+    # never rewrite the text it scans -- only slice the original string --
+    # so input shaped like the old placeholder scheme is inert, ordinary text.
+    assert redact_text("call \x000\x00 me") == "call \x000\x00 me"
+    assert redact_text("\x0099\x00 and 2026-09-17") == "\x0099\x00 and 2026-09-17"
+    assert (
+        redact_text("value \x005\x00 plus phone 077-123-4567")
+        == f"value \x005\x00 plus phone {REDACTED}"
+    )
+
+
+def test_nul_placeholder_shaped_input_is_not_replaced_by_unrelated_content() -> None:
+    # The specific silent-corruption case: a "\x00<N>\x00" span in the input
+    # must never be swapped for the Nth protected date/time span found
+    # elsewhere in the same text.
+    text = "ORIGINAL[\x000\x00]FIELD then a real date 2026-09-17 appears"
+    assert redact_text(text) == text
+
+
+def test_redact_text_is_fast_on_pathological_inputs() -> None:
+    # A long run of digits/separators with no valid phone/email anywhere,
+    # and a long run of "@" characters with no valid email anywhere. Both
+    # used to take ~15s under an unbounded-quantifier email regex (O(n^2)
+    # backtracking); each must now complete in well under a second.
+    digits_and_separators = "9" * 200_000
+    start = time.perf_counter()
+    result = redact_text(digits_and_separators)
+    elapsed = time.perf_counter() - start
+    assert result == digits_and_separators
+    assert elapsed < 1.0, f"redact_text on 200k digits took {elapsed:.3f}s"
+
+    many_at_signs = "a@" * 100_000
+    start = time.perf_counter()
+    result = redact_text(many_at_signs)
+    elapsed = time.perf_counter() - start
+    assert result == many_at_signs
+    assert elapsed < 1.0, f"redact_text on 200k '@' chars took {elapsed:.3f}s"
