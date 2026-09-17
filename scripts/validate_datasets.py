@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +112,14 @@ NOTE_LABELS = {"planning", "materials", "ie", "quality", "unknown"}
 ENTITY_LABELS = {"ORDER", "LINE", "STYLE", "MATERIAL", "OPERATION", "DEFECT"}
 MIN_CLASS_FRACTION = 0.15
 MIN_UNKNOWN_FRACTION = 0.08
+
+# A "frame" is a note's text with every labelled entity span replaced by
+# its label placeholder, lowercased, and whitespace-collapsed. Two notes
+# built from the same underlying sentence template (with different entity
+# values) normalize to the same frame; this catches disguised repetition
+# that a raw-text or per-note check would miss.
+MAX_FRAME_USES = 3
+MIN_UNIQUE_FRAME_FRACTION = 0.6
 
 DEFECT_CODE_RE = re.compile(r"\bDEF-[A-Z]{2,4}\b")
 KNOWN_DEFECT_CODES = {code for code, _, _ in vocab.DEFECT_CATALOG}
@@ -605,6 +614,56 @@ def check_label_distribution(notes: list[dict[str, Any]], *, context: str) -> li
     return problems
 
 
+def normalize_frame(note: dict[str, Any]) -> str:
+    """Return `note`'s text with every labelled entity span replaced by its
+    label placeholder, lowercased and whitespace-collapsed. Two notes built
+    from the same underlying sentence template (only entity *values*
+    differing) normalize to the same frame."""
+    text = note.get("text", "")
+    raw_entities = note.get("entities", [])
+    entities = sorted(
+        (e for e in raw_entities if isinstance(e, dict) and "start" in e and "end" in e),
+        key=lambda e: e["start"],
+    )
+    parts: list[str] = []
+    cursor = 0
+    for ent in entities:
+        start, end = ent["start"], ent["end"]
+        if not (isinstance(start, int) and isinstance(end, int) and 0 <= start <= end <= len(text)):
+            continue
+        parts.append(text[cursor:start])
+        parts.append(f"<{str(ent.get('label', '')).lower()}>")
+        cursor = end
+    parts.append(text[cursor:])
+    frame = "".join(parts).lower()
+    return re.sub(r"\s+", " ", frame).strip()
+
+
+def check_frame_diversity(notes: list[dict[str, Any]], *, context: str) -> list[str]:
+    """Detect disguised repetition: notes that differ only in entity values
+    but share the same underlying sentence frame. Fails if any frame is
+    used more than `MAX_FRAME_USES` times, or if fewer than
+    `MIN_UNIQUE_FRAME_FRACTION` of the notes have a unique frame."""
+    problems: list[str] = []
+    total = len(notes)
+    if total == 0:
+        return problems
+    frames = [normalize_frame(note) for note in notes]
+    counts = Counter(frames)
+    unique = len(counts)
+    if unique < MIN_UNIQUE_FRAME_FRACTION * total:
+        problems.append(
+            f"{context}: only {unique} unique entity-normalized sentence frames out of "
+            f"{total} notes (minimum {MIN_UNIQUE_FRAME_FRACTION * 100:.0f}%)"
+        )
+    for frame, count in counts.items():
+        if count > MAX_FRAME_USES:
+            problems.append(
+                f"{context}: sentence frame used {count} times (max {MAX_FRAME_USES}): {frame!r}"
+            )
+    return problems
+
+
 def check_notes_file(path: Path, *, min_lines: int) -> tuple[list[dict[str, Any]], list[str]]:
     """Parse and validate a notes JSONL file. Returns (valid_notes, problems)."""
     records, problems = _parse_jsonl(path)
@@ -632,6 +691,7 @@ def check_notes_file(path: Path, *, min_lines: int) -> tuple[list[dict[str, Any]
             valid_notes.append(note)
 
     problems.extend(check_label_distribution(records, context=str(context_label)))
+    problems.extend(check_frame_diversity(valid_notes, context=str(context_label)))
 
     return valid_notes, problems
 

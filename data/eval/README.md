@@ -90,6 +90,33 @@ pair is at or above `0.8`. Train and test notes were generated from
 disjoint template sets with different phrasing conventions specifically
 so this holds by construction, not by accident.
 
+## Sentence-frame diversity
+
+A note built from a sentence template with only its entity *values*
+swapped (for example the same "`{ORDER} is behind schedule on {LINE}`"
+skeleton with a different order/line each time) is not genuinely a new
+example — it inflates classifier/NER scores without adding real
+diversity. `scripts/validate_datasets.py::normalize_frame` collapses each
+note to its **entity-normalized sentence frame** (every labelled span
+replaced by its `<label>` placeholder, lowercased, whitespace-collapsed)
+and `check_frame_diversity` fails the build if any frame is used more
+than `MAX_FRAME_USES` (3) times within a split, or if fewer than
+`MIN_UNIQUE_FRAME_FRACTION` (60%) of a split's notes have a unique frame.
+`scripts/build_notes_dataset.py` enforces the same per-template cap (3
+uses) at generation time from a bank of at least 20 genuinely distinct
+sentence templates per label per split (240 templates in total: 5 labels
+× 2 splits × ≥24 templates each), mixing short fragments, one-clause and
+multi-clause sentences, 0–3 entity mentions, and a few notes that mention
+a second domain's entity while staying dominantly about their own label.
+
+Actual counts for the committed files (regenerate and re-check with
+`make datasets-check` if the generator or its seed ever changes):
+
+| Split | Notes | Unique frames | Unique fraction | Max reuse of one frame |
+|---|---|---|---|---|
+| `notes_train.jsonl` | 150 | 92 | 61.3% | 3 |
+| `notes_test.jsonl`  | 110 | 77 | 70.0% | 3 |
+
 ## Licence
 
 These files are covered by this repository's project licence (see the
