@@ -105,7 +105,10 @@ async def owner_engine(settings: Settings, migrated_db: None) -> AsyncGenerator[
 
 @pytest_asyncio.fixture
 async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    session_factory = get_session_factory(str(db_engine.url))
+    # `str(url)` masks the password (renders it as `***`); this fixture needs
+    # the real credentials to open a new connection against the same target
+    # `db_engine` is bound to.
+    session_factory = get_session_factory(db_engine.url.render_as_string(hide_password=False))
     async with session_factory() as session:
         yield session
 

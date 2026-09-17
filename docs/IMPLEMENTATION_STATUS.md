@@ -398,3 +398,224 @@ this task, so the unchanged pass counts (10/2 unit, 2 integration) match Task 1'
 
 **Next step:** Task 3 (or the next task in the SDD plan — see
 `docs/superpowers/plans/2026-09-17-linesense-build.md`).
+
+### 2026-09-17 — Task 3: complete data model and initial migration with role grants
+
+**Built:**
+
+- `app/domain/vocab.py`: `StrEnum` vocabularies for every enumerated column in
+  `backend-contracts.md` section 2 (`Role`, `ProductionState`, `MaterialState`, `QualityState`,
+  `RunStatus`, `RecommendationStatus`, `TaskStatus`, `JobStatus`, plus per-table enums such as
+  `MaterialUnit`, `OrderSource`, `ShiftCode`, `MovementType`, `InspectionResult`,
+  `DocumentVersionStatus`, `AgentRecipient`, `ActorType`, `AuditOutcome`, ...) and a `ROLES`
+  tuple, so check-constraint values are generated from one source instead of duplicated as
+  string literals.
+- `app/db/types.py`: shared column helpers — `uuid_pk()`, `uuid_col()`, `created_at()`,
+  `updated_at()`, `timestamptz()`, `org_fk()`, `factory_id_col()`, `composite_factory_fk(table)`
+  (the `(organization_id, factory_id) -> factories(organization_id, id)` constraint, Postgres
+  `MATCH SIMPLE` by default so it is safe on nullable `factory_id` columns too), `money(p, s)`
+  (a typed `Numeric` alias), and `enum_check(name, column, values)` (a `CheckConstraint` whose
+  name expands to `ck_<table>_<name>` via the naming convention already defined in
+  `app/db/base.py`).
+- `app/db/models/{identity,demand,capacity,inventory,ie,quality,documents,workflow,decisions,
+  operations}.py` + `app/db/models/__init__.py`: all 50 tables from `backend-contracts.md`
+  section 2, with every column, nullability, default, foreign key, unique constraint, check
+  constraint, partial unique index, and index the contract specifies. Notable decisions:
+  - `factories` gets an extra `UNIQUE(organization_id, id)` (beyond its documented
+    `UNIQUE(organization_id, code)`) so the composite tenant-safety foreign key has something
+    to reference; every table that carries both `organization_id` and `factory_id` NOT NULL
+    uses that composite FK (`orders`, `lines`, `line_capacity_slots`, `allocations`,
+    `material_lots`, `stock_movements`, `material_balances`, `reservations`,
+    `expected_receipts`, `operator_aliases`, `operation_staffing`, `cycle_observations`,
+    `line_measurements`, `inspections`, `quality_holds`, `quality_releases`, `analysis_runs`,
+    `run_snapshots`, `agent_tasks`, `recommendations`, `import_batches`, `notifications`,
+    `notes`). `documents` and `chunks` use the same composite FK with a nullable `factory_id`
+    (enforced only when non-null, per Postgres `MATCH SIMPLE`). `role_assignments.factory_id`
+    is a plain FK to `factories.id` instead, since that table has no `organization_id` column
+    (the org is reached via `membership_id -> memberships.organization_id`).
+  - `audit_events` has **no foreign keys at all** (not even to `organizations`): it is an
+    append-only log that must survive deletion of the rows it describes.
+  - `analysis_runs.snapshot_id -> run_snapshots` and `quality_holds.release_id ->
+    quality_releases` are declared `use_alter=True` (documented in each module's docstring) —
+    the former is a genuine two-table cycle with `run_snapshots.run_id -> analysis_runs`; the
+    latter lets the migration create `quality_holds` before `quality_releases` while matching
+    the contract's own table order.
+  - `Chunk.tsv` is a `Computed("to_tsvector('english', coalesce(section,'') || ' ' || text)",
+    persisted=True)` `TSVECTOR` column with a GIN index; `Chunk.embedding` is
+    `pgvector.sqlalchemy.Vector(384)`, nullable.
+  - ORM class names follow the brief exactly, including the three that differ from the
+    table-name-derived default: `sessions` -> `SessionRecord`, `import_errors` ->
+    `ImportRowError`, `agent_results` -> `AgentResultRecord`.
+- `migrations/versions/0001_initial_schema.py`: generated via `alembic revision
+  --autogenerate` against an empty `linesense_test` (verifying the models alone produce every
+  contract table with zero manual transcription), then hand-edited to add:
+  - `_create_extensions()` — `CREATE EXTENSION vector`/`pg_trgm` wrapped in a `DO $$ ... $$`
+    block that checks `pg_extension` first, so the statement is skipped entirely (no privilege
+    check triggered) when the extension already exists, which is always true in this repo
+    (`scripts/dev-db.sh` creates both as the cluster superuser).
+  - `_app_role()` — resolves the runtime role from `-x app_role=...`, else `LS_APP_DB_ROLE`,
+    else `linesense_app`.
+  - `_grant_app_role_privileges()` — `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES`,
+    `REVOKE UPDATE, DELETE ON audit_events`, `GRANT USAGE, SELECT ON ALL SEQUENCES`, called at
+    the end of `upgrade()`. The module docstring records that `ALTER DEFAULT PRIVILEGES` is
+    deliberately not used, so every future migration must repeat the grant statements for its
+    own new tables.
+  - Explicit `op.create_foreign_key(...)` calls (after both referenced tables exist) for the
+    two `use_alter=True` foreign keys, and matching `op.drop_constraint(...)` calls at the
+    start of `downgrade()` — discovered via TDD: `op.create_table(..., use_alter=True)` embeds
+    the constraint in the generated Python source but **does not actually emit it as DDL**
+    (confirmed by running `alembic check` after the first `upgrade head`, which reported both
+    foreign keys as still-missing "new upgrade operations"); `op.create_table`'s DDL path does
+    not defer `use_alter` constraints the way `MetaData.create_all()` does, so they must be
+    added with a separate operation.
+  - `downgrade()` drops every table in reverse dependency order but never drops the
+    extensions.
+- `tests/factories.py`: async builders (`make_org`, `make_factory`, `make_user`,
+  `make_membership`, `make_style_with_operations`, `make_material`, `make_order`, `make_line`,
+  `make_slot`, `make_balance`) that create any missing parent (org/factory/customer/style/BOM)
+  with unique-suffixed codes, `session.add(...)` + `session.flush()` (never commit — the
+  caller's transaction/truncation fixture owns that), and accept keyword overrides for every
+  column.
+- `tests/helpers/__init__.py`: empty package placeholder for Task 5's `tests/helpers/auth.py`.
+- `tests/integration/test_schema.py` (marked `integration`): all 11 tests from the brief —
+  `test_all_contract_tables_exist`, `test_app_role_cannot_update_or_delete_audit_events`,
+  `test_app_role_cannot_create_table`, `test_order_quantity_must_be_positive`,
+  `test_user_identity_unique`, `test_cross_org_factory_reference_rejected`,
+  `test_slot_cannot_be_oversubscribed`, `test_balance_reserved_cannot_exceed_on_hand`,
+  `test_single_active_bom_per_style`, `test_chunk_tsv_generated`, `test_job_dedupe_key_unique`.
+- `docs/architecture/erd.md`: a hand-drawn `mermaid erDiagram` of all 50 tables and their
+  business relationships (tenant-scoping and pure-attribution `users` foreign keys are
+  documented in prose instead of drawn, to keep the diagram legible).
+- **Pre-existing bug fixed in `tests/conftest.py`:** the `db_session` fixture built its session
+  factory from `str(db_engine.url)`, but `sqlalchemy.engine.URL.__str__` masks the password
+  (renders `***`) by design; every test using `db_session` therefore failed with
+  `password authentication failed for user "linesense_app"`. This was never caught before
+  because Task 1/2's only integration tests (`test_health.py`) go through the `client`/`app`
+  fixtures, which build their engine from `Settings.database_url` directly and never call
+  `db_session`. Fixed to `db_engine.url.render_as_string(hide_password=False)`.
+
+**TDD evidence:**
+
+Tests and models were developed together rather than strictly test-first: `tests/factories.py`
+and `tests/integration/test_schema.py` were written against the brief's spec before the schema
+existed, but the full RED run below was captured once the models were far enough along to
+import (writing 50 tables by hand first, then discovering basic `ImportError`s one file at a
+time, would not have been a meaningful RED signal). The RED run below is the real one that
+gated implementation of the migration and its grants:
+
+```
+$ cd services/backend && uv run pytest tests/integration/test_schema.py -q
+# (first run, models complete but migration not yet upgraded / grants not yet added)
+FAILED tests/integration/test_schema.py::test_all_contract_tables_exist
+FAILED tests/integration/test_schema.py::test_app_role_cannot_update_or_delete_audit_events
+FAILED tests/integration/test_schema.py::test_app_role_cannot_create_table
+FAILED tests/integration/test_schema.py::test_order_quantity_must_be_positive
+... (11 failed — password authentication failed for user "linesense_app": the `db_session`
+    fixture bug above; masked every test using it, regardless of schema/grant correctness)
+```
+
+After fixing the `db_session` fixture and applying `migrations/versions/0001_initial_schema.py`:
+
+```
+$ cd services/backend && uv run pytest tests/integration/test_schema.py -q
+...........                                                              [100%]
+11 passed in 1.23s
+```
+
+The `alembic check` RED->GREEN cycle for the two `use_alter=True` foreign keys:
+
+```
+$ uv run alembic -x db_url=$TEST_DB_URL upgrade head   # first attempt, FKs inline in create_table
+$ uv run alembic -x db_url=$TEST_DB_URL check
+ERROR: New upgrade operations detected: [('add_fk', ... fk_analysis_runs_snapshot_id_run_snapshots ...),
+                                          ('add_fk', ... fk_quality_holds_release_id_quality_releases ...)]
+# fixed: moved both to explicit op.create_foreign_key() calls at the end of upgrade()
+$ bash scripts/dev-db.sh reset-test && uv run alembic -x db_url=$TEST_DB_URL upgrade head
+$ uv run alembic -x db_url=$TEST_DB_URL check
+No new upgrade operations detected.
+```
+
+**Commands and results (final, clean run):**
+
+```
+$ make migration-check
+... upgrade head / downgrade base / upgrade head / check ...
+No new upgrade operations detected.
+
+$ make lint
+cd services/backend && uv run ruff check .
+All checks passed!
+cd services/backend && uv run ruff format --check .
+35 files already formatted
+
+$ make typecheck
+cd services/backend && uv run mypy app
+Success: no issues found in 25 source files
+
+$ make test
+cd services/backend && uv run pytest -m "not integration" -q
+..........                                                               [100%]
+10 passed, 13 deselected in 0.14s
+
+$ make test-integration
+scripts/dev-db.sh start
+cd services/backend && uv run pytest -m integration -q
+.............                                                            [100%]
+13 passed, 10 deselected in 1.25s
+
+$ make docs-check
+bash scripts/check-doc-links.sh
+check-doc-links: checked 33 relative link target(s) across 18 file(s)
+```
+
+All output above is clean (no unexplained warnings). The 13 integration passes are the 2
+pre-existing health-check tests plus the 11 new schema tests.
+
+**Files changed:** new — `app/domain/vocab.py`, `app/db/types.py`, `app/db/models/__init__.py`,
+`app/db/models/{identity,demand,capacity,inventory,ie,quality,documents,workflow,decisions,
+operations}.py`, `migrations/versions/0001_initial_schema.py`, `tests/factories.py`,
+`tests/helpers/__init__.py`, `tests/integration/test_schema.py`,
+`docs/architecture/erd.md`. Modified — `tests/conftest.py` (the `db_session` password-masking
+bug fix described above), `docs/IMPLEMENTATION_STATUS.md` (this entry).
+
+**Self-review:**
+
+- Every table, column, nullability, default, FK, unique/check constraint, partial unique
+  index, and named index from `backend-contracts.md` section 2 was checked column-by-column
+  against the model files while writing them; `test_all_contract_tables_exist` and
+  `make migration-check` provide an automated backstop that the table *set* and the model/DB
+  structure agree.
+- No swallowed exceptions: every `pytest.raises` in the new tests targets a specific exception
+  type (`IntegrityError`/`ProgrammingError`) and, for the two privilege tests, asserts the
+  wrapped `psycopg.errors.InsufficientPrivilege` class name specifically rather than any
+  failure.
+- No secrets logged or hardcoded: the app-role password comes from the existing
+  `linesense_app`/`dev-app-only` dev credentials already established in Task 1 (unchanged
+  here); the migration's role name resolution never embeds a password.
+- Security/tenancy: the composite `(organization_id, factory_id)` foreign key and its test
+  (`test_cross_org_factory_reference_rejected`) directly enforce the "no cross-org factory
+  reference" invariant `docs/architecture/backend-contracts.md` requires application-wide.
+- YAGNI: no relationships (`relationship()`) were added between ORM classes since no task yet
+  needs ORM-level graph traversal; every test and factory builder works with plain foreign-key
+  id columns. This keeps the 10 model files free of circular-relationship configuration
+  complexity that isn't needed yet; a future task can add `relationship()` mappings
+  incrementally if and when a specific feature needs them.
+- The `tests/conftest.py` fix is a one-line, obviously-correct bug fix (masked password ->
+  real password in a test-only fixture) required for any `db_session`-based test to run at
+  all; it does not touch Task 2's actual deliverables (docs) and was verified not to change
+  behavior for any other fixture (`app`/`client` build their engine independently).
+
+**Known issues / limitations:**
+
+- No `relationship()` attributes on the ORM models (see YAGNI note above) — later tasks that
+  want ORM-level joins/eager-loading will need to add them.
+- `role_assignments`'s `UNIQUE(membership_id, factory_id, role)` allows multiple rows with
+  `factory_id IS NULL` for the same `(membership_id, role)`, since Postgres treats NULLs as
+  distinct in unique constraints; the contract does not specify a partial-unique-index
+  override for this case, so none was added. Not currently tested or exercised.
+- `docs/architecture/erd.md` omits "actor" foreign keys to `users` (created_by, approved_by,
+  ...) and all tenant-scoping edges as drawn relationships for legibility; both are documented
+  in prose in the same file and column-by-column in `backend-contracts.md`.
+
+**Next step:** Task 4 (or the next task in the SDD plan — see
+`docs/superpowers/plans/2026-09-17-linesense-build.md`).
