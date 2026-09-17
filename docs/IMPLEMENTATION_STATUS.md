@@ -1496,3 +1496,22 @@ Success: no issues found in 4 source files
   `__init__.py` (and `__init__.py` was ultimately *not* committed by this task either, since Task 6
   had already rewritten its docstring — see Files changed above), and every subsequent command in
   this fix round targeted exact file paths, never the shared directory.
+
+## 2026-09-17 — Task 11 fix round 4: email redaction covers over-long addresses in full
+
+- `app/llm/redaction.py`: replaced the length-bounded `_EMAIL_RE` (round 3) with a linear
+  per-"@" scan (`_email_spans`). It expands left over local-part characters and right over
+  domain characters, drops trailing dots/hyphens, and requires a dotted domain whose last label
+  has at least 2 letters. It also covers chained `a@b@c.io` tokens, then redacts the whole span
+  by slicing. The old regex left parts of long addresses visible, for example
+  `reach a[REDACTED] now` for a 65-character local part and a readable tail on a 300-character
+  domain. `user@localhost` (no dot) is deliberately left unredacted.
+- Tests: `tests/unit/test_redaction.py` +8 (long local parts and domains, punctuation next to
+  the address, dotless hosts, chained addresses, mixed text, and speed on 200k-character inputs).
+- Commands: `uv run pytest tests/unit/test_redaction.py tests/unit/test_llm_factory.py
+  tests/unit/test_fixture_client.py tests/unit/test_anthropic_client.py -q` → 55 passed;
+  `uv run pytest -m "not integration" -q --ignore=tests/integration` → 414 passed;
+  `uv run ruff check app/llm tests/unit/test_redaction.py` and `ruff format --check` → clean; `uv run mypy app/llm` → no issues.
+- Limitation: a plain `pytest -m "not integration"` currently fails at collection because Task 8's
+  in-progress `tests/integration/test_inventory_api.py` and `test_reservation_concurrency.py`
+  cannot import `app.domain.inventory.service` yet. Nothing in this change affects them.
