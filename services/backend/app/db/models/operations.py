@@ -18,6 +18,7 @@ from app.db.types import (
     created_at,
     enum_check,
     factory_id_col,
+    org_factory_index,
     org_fk,
     uuid_pk,
 )
@@ -28,6 +29,7 @@ class ImportBatch(Base):
     __tablename__ = "import_batches"
     __table_args__ = (
         composite_factory_fk("import_batches"),
+        org_factory_index("import_batches"),
         sa.Index(
             "uq_import_batches_organization_id_kind_file_sha256",
             "organization_id",
@@ -92,7 +94,10 @@ class IdempotencyKey(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
-    __table_args__ = (composite_factory_fk("notifications"),)
+    __table_args__ = (
+        composite_factory_fk("notifications"),
+        org_factory_index("notifications"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = org_fk()
@@ -109,7 +114,10 @@ class Notification(Base):
 
 class Note(Base):
     __tablename__ = "notes"
-    __table_args__ = (composite_factory_fk("notes"),)
+    __table_args__ = (
+        composite_factory_fk("notes"),
+        org_factory_index("notes"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = org_fk()

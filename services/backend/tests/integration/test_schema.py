@@ -7,6 +7,7 @@ Task 3 brief.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -14,10 +15,52 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import BomVersion, Chunk, Document, DocumentVersion, Job, Line
+from app.db.models import (
+    BomVersion,
+    Chunk,
+    Document,
+    DocumentVersion,
+    Job,
+    Line,
+    RoleAssignment,
+)
 from tests import factories
 
 pytestmark = pytest.mark.integration
+
+# Every table that carries both `organization_id` and `factory_id` (per
+# backend-contracts.md section 2: "Indexes: every (organization_id,
+# factory_id) pair") must have an index whose *leading* columns are exactly
+# `(organization_id, factory_id)`, in addition to any other unique
+# constraint/index it has.
+ORG_FACTORY_INDEXED_TABLES = [
+    "agent_tasks",
+    "allocations",
+    "analysis_runs",
+    "audit_events",
+    "chunks",
+    "cycle_observations",
+    "documents",
+    "expected_receipts",
+    "import_batches",
+    "inspections",
+    "line_capacity_slots",
+    "line_measurements",
+    "lines",
+    "material_balances",
+    "material_lots",
+    "notes",
+    "notifications",
+    "operation_staffing",
+    "operator_aliases",
+    "orders",
+    "quality_holds",
+    "quality_releases",
+    "recommendations",
+    "reservations",
+    "run_snapshots",
+    "stock_movements",
+]
 
 CONTRACT_TABLES = {
     # Identity
@@ -150,6 +193,46 @@ async def test_cross_org_factory_reference_rejected(db_session: AsyncSession) ->
         await db_session.flush()
 
 
+async def test_cross_org_chunk_factory_reference_rejected(db_session: AsyncSession) -> None:
+    org_a = await factories.make_org(db_session)
+    factory_a1 = await factories.make_factory(db_session, organization=org_a)
+    org_b = await factories.make_org(db_session)
+
+    document = Document(
+        organization_id=org_b.id,
+        slug="cross-org-doc",
+        title="Cross-org doc",
+        doc_type="SOP",
+    )
+    db_session.add(document)
+    await db_session.flush()
+
+    document_version = DocumentVersion(
+        document_id=document.id,
+        version_no=1,
+        status="ACTIVE",
+        sha256="1" * 64,
+        storage_key="docs/cross-org.pdf",
+        media_type="application/pdf",
+        size_bytes=10,
+    )
+    db_session.add(document_version)
+    await db_session.flush()
+
+    db_session.add(
+        Chunk(
+            document_version_id=document_version.id,
+            organization_id=org_b.id,
+            factory_id=factory_a1.id,
+            chunk_index=0,
+            text="a chunk whose factory belongs to a different organization",
+            token_count=10,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
 async def test_slot_cannot_be_oversubscribed(db_session: AsyncSession) -> None:
     slot = await factories.make_slot(
         db_session, available_operator_minutes=100, planned_efficiency=0.5
@@ -235,5 +318,48 @@ async def test_job_dedupe_key_unique(db_session: AsyncSession) -> None:
             dedupe_key="dupe-key",
         )
     )
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+def _leading_index_columns(indexdef: str) -> list[str]:
+    """Extract the parenthesized column list of a ``pg_indexes.indexdef``."""
+    match = re.search(r"\(([^)]*)\)", indexdef)
+    assert match, f"could not parse column list out of: {indexdef!r}"
+    return [column.strip().split()[0] for column in match.group(1).split(",")]
+
+
+async def test_org_factory_pair_indexed_everywhere(db_session: AsyncSession) -> None:
+    for table in ORG_FACTORY_INDEXED_TABLES:
+        result = await db_session.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = :table"
+            ),
+            {"table": table},
+        )
+        index_defs = [row[0] for row in result.all()]
+        assert any(
+            _leading_index_columns(index_def)[:2] == ["organization_id", "factory_id"]
+            for index_def in index_defs
+        ), f"{table} has no index leading with (organization_id, factory_id): {index_defs}"
+
+
+async def test_orders_indexed_by_factory_and_due_date(db_session: AsyncSession) -> None:
+    result = await db_session.execute(
+        text("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'orders'")
+    )
+    index_defs = [row[0] for row in result.all()]
+    assert any(
+        _leading_index_columns(index_def)[:2] == ["factory_id", "due_date"]
+        for index_def in index_defs
+    ), index_defs
+
+
+async def test_role_assignments_org_wide_duplicate_rejected(db_session: AsyncSession) -> None:
+    membership = await factories.make_membership(db_session)
+    db_session.add(RoleAssignment(membership_id=membership.id, factory_id=None, role="org_admin"))
+    await db_session.flush()
+
+    db_session.add(RoleAssignment(membership_id=membership.id, factory_id=None, role="org_admin"))
     with pytest.raises(IntegrityError):
         await db_session.flush()

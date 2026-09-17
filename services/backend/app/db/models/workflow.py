@@ -23,6 +23,7 @@ from app.db.types import (
     created_at,
     enum_check,
     factory_id_col,
+    org_factory_index,
     org_fk,
     uuid_pk,
 )
@@ -33,6 +34,7 @@ class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
     __table_args__ = (
         composite_factory_fk("analysis_runs"),
+        org_factory_index("analysis_runs"),
         enum_check("status_valid", "status", [s.value for s in RunStatus]),
     )
 
@@ -79,7 +81,10 @@ class RunSnapshot(Base):
     """Immutable: no update path is ever exposed."""
 
     __tablename__ = "run_snapshots"
-    __table_args__ = (composite_factory_fk("run_snapshots"),)
+    __table_args__ = (
+        composite_factory_fk("run_snapshots"),
+        org_factory_index("run_snapshots"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     run_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("analysis_runs.id"), nullable=False)
@@ -95,6 +100,7 @@ class AgentTask(Base):
     __tablename__ = "agent_tasks"
     __table_args__ = (
         composite_factory_fk("agent_tasks"),
+        org_factory_index("agent_tasks"),
         sa.Index("ix_agent_tasks_run_id", "run_id"),
         enum_check("recipient_valid", "recipient", [r.value for r in AgentRecipient]),
         enum_check("status_valid", "status", [s.value for s in TaskStatus]),

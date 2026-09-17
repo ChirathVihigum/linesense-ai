@@ -42,8 +42,10 @@ Every tenant table has `org`; plant tables also have `fac`. Check constraints ar
 - `users(id, issuer, subject, email, display_name, is_active bool default true, ts; unique(issuer, subject))`
 - `memberships(id, org, user_id fk, is_active bool default true, ts; unique(organization_id, user_id))`
 - `role_assignments(id, membership_id fk cascade, factory_id uuid null fk factories, role text, ts;
-  unique(membership_id, factory_id, role); check role in ROLES)`. `factory_id IS NULL` means the role
-  applies to every factory in the organization.
+  unique NULLS NOT DISTINCT (membership_id, factory_id, role); check role in ROLES)`. `factory_id
+  IS NULL` means the role applies to every factory in the organization; `NULLS NOT DISTINCT`
+  (PostgreSQL 15+) makes two org-wide (`factory_id IS NULL`) rows for the same
+  `(membership_id, role)` collide just like two rows naming the same factory would.
 - `sessions(id, token_hash text unique, user_id fk, csrf_token text, ts, expires_at, last_seen_at,
   revoked_at null)`. The cookie holds the raw token; only `sha256(token)` hex is stored.
 

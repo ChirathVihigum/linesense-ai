@@ -23,6 +23,7 @@ from app.db.types import (
     created_at,
     enum_check,
     factory_id_col,
+    org_factory_index,
     org_fk,
     uuid_pk,
 )
@@ -40,6 +41,7 @@ class Recommendation(Base):
     __tablename__ = "recommendations"
     __table_args__ = (
         composite_factory_fk("recommendations"),
+        org_factory_index("recommendations"),
         sa.Index("ix_recommendations_factory_id_status", "factory_id", "status"),
         enum_check("kind_valid", "kind", [k.value for k in RecommendationKind]),
         enum_check("status_valid", "status", [s.value for s in RecommendationStatus]),
@@ -91,6 +93,7 @@ class AuditEvent(Base):
 
     __tablename__ = "audit_events"
     __table_args__ = (
+        org_factory_index("audit_events"),
         sa.Index("ix_audit_events_organization_id_created_at", "organization_id", "created_at"),
         enum_check("actor_type_valid", "actor_type", [t.value for t in ActorType]),
         enum_check("outcome_valid", "outcome", [o.value for o in AuditOutcome]),

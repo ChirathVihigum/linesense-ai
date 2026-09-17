@@ -23,6 +23,7 @@ from app.db.types import (
     created_at,
     enum_check,
     factory_id_col,
+    org_factory_index,
     org_fk,
     uuid_pk,
 )
@@ -63,6 +64,7 @@ class Inspection(Base):
     __tablename__ = "inspections"
     __table_args__ = (
         composite_factory_fk("inspections"),
+        org_factory_index("inspections"),
         enum_check("inspection_type_valid", "inspection_type", [t.value for t in InspectionType]),
         enum_check("result_valid", "result", [r.value for r in InspectionResult]),
         sa.CheckConstraint("inspected_units >= 0", name="inspected_units_non_negative"),
@@ -112,6 +114,7 @@ class QualityHold(Base):
     __tablename__ = "quality_holds"
     __table_args__ = (
         composite_factory_fk("quality_holds"),
+        org_factory_index("quality_holds"),
         enum_check("status_valid", "status", [s.value for s in QualityHoldStatus]),
     )
 
@@ -135,7 +138,10 @@ class QualityHold(Base):
 
 class QualityRelease(Base):
     __tablename__ = "quality_releases"
-    __table_args__ = (composite_factory_fk("quality_releases"),)
+    __table_args__ = (
+        composite_factory_fk("quality_releases"),
+        org_factory_index("quality_releases"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = org_fk()

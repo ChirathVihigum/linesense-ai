@@ -104,6 +104,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_audit_events")),
     )
     op.create_index(
+        "ix_audit_events_organization_id_factory_id",
+        "audit_events",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
+    op.create_index(
         "ix_audit_events_organization_id_created_at",
         "audit_events",
         ["organization_id", "created_at"],
@@ -457,6 +463,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_documents")),
         sa.UniqueConstraint("organization_id", "slug", name="uq_documents_organization_id_slug"),
     )
+    op.create_index(
+        "ix_documents_organization_id_factory_id",
+        "documents",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "expected_receipts",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -494,6 +506,12 @@ def upgrade() -> None:
             name=op.f("fk_expected_receipts_organization_id_organizations"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_expected_receipts")),
+    )
+    op.create_index(
+        "ix_expected_receipts_organization_id_factory_id",
+        "expected_receipts",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "import_batches",
@@ -533,6 +551,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_import_batches")),
     )
     op.create_index(
+        "ix_import_batches_organization_id_factory_id",
+        "import_batches",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
+    op.create_index(
         "uq_import_batches_organization_id_kind_file_sha256",
         "import_batches",
         ["organization_id", "kind", "file_sha256"],
@@ -567,6 +591,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_lines")),
         sa.UniqueConstraint("factory_id", "code", name="uq_lines_factory_id_code"),
+    )
+    op.create_index(
+        "ix_lines_organization_id_factory_id",
+        "lines",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "material_balances",
@@ -613,6 +643,12 @@ def upgrade() -> None:
             "factory_id", "material_id", name="uq_material_balances_factory_id_material_id"
         ),
     )
+    op.create_index(
+        "ix_material_balances_organization_id_factory_id",
+        "material_balances",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "material_lots",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -648,6 +684,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_material_lots")),
         sa.UniqueConstraint("factory_id", "lot_code", name="uq_material_lots_factory_id_lot_code"),
     )
+    op.create_index(
+        "ix_material_lots_organization_id_factory_id",
+        "material_lots",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "notes",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -675,6 +717,12 @@ def upgrade() -> None:
             name=op.f("fk_notes_organization_id_organizations"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_notes")),
+    )
+    op.create_index(
+        "ix_notes_organization_id_factory_id",
+        "notes",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "notifications",
@@ -709,6 +757,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_notifications")),
     )
+    op.create_index(
+        "ix_notifications_organization_id_factory_id",
+        "notifications",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "role_assignments",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -741,6 +795,7 @@ def upgrade() -> None:
             "factory_id",
             "role",
             name="uq_role_assignments_membership_id_factory_id_role",
+            postgresql_nulls_not_distinct=True,
         ),
     )
     op.create_table(
@@ -933,6 +988,12 @@ def upgrade() -> None:
             name="uq_line_capacity_slots_line_id_slot_date_shift_code",
         ),
     )
+    op.create_index(
+        "ix_line_capacity_slots_organization_id_factory_id",
+        "line_capacity_slots",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "line_measurements",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -970,6 +1031,12 @@ def upgrade() -> None:
             ["style_id"], ["styles.id"], name=op.f("fk_line_measurements_style_id_styles")
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_line_measurements")),
+    )
+    op.create_index(
+        "ix_line_measurements_organization_id_factory_id",
+        "line_measurements",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "operation_staffing",
@@ -1012,6 +1079,12 @@ def upgrade() -> None:
             name="uq_operation_staffing_line_id_style_id_operation_id",
         ),
     )
+    op.create_index(
+        "ix_operation_staffing_organization_id_factory_id",
+        "operation_staffing",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "operator_aliases",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -1043,6 +1116,12 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "factory_id", "alias_code", name="uq_operator_aliases_factory_id_alias_code"
         ),
+    )
+    op.create_index(
+        "ix_operator_aliases_organization_id_factory_id",
+        "operator_aliases",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "orders",
@@ -1128,6 +1207,15 @@ def upgrade() -> None:
             "organization_id", "external_ref", name="uq_orders_organization_id_external_ref"
         ),
     )
+    op.create_index(
+        "ix_orders_factory_id_due_date", "orders", ["factory_id", "due_date"], unique=False
+    )
+    op.create_index(
+        "ix_orders_organization_id_factory_id",
+        "orders",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "analysis_runs",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -1181,6 +1269,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_analysis_runs")),
     )
+    op.create_index(
+        "ix_analysis_runs_organization_id_factory_id",
+        "analysis_runs",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "chunks",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -1213,10 +1307,21 @@ def upgrade() -> None:
             ["organizations.id"],
             name=op.f("fk_chunks_organization_id_organizations"),
         ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "factory_id"],
+            ["factories.organization_id", "factories.id"],
+            name="fk_chunks_organization_id_factory_id_factories",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_chunks")),
         sa.UniqueConstraint(
             "document_version_id", "chunk_index", name="uq_chunks_document_version_id_chunk_index"
         ),
+    )
+    op.create_index(
+        "ix_chunks_organization_id_factory_id",
+        "chunks",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_index("ix_chunks_tsv", "chunks", ["tsv"], unique=False, postgresql_using="gin")
     op.create_table(
@@ -1277,6 +1382,12 @@ def upgrade() -> None:
             ["style_id"], ["styles.id"], name=op.f("fk_cycle_observations_style_id_styles")
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_cycle_observations")),
+    )
+    op.create_index(
+        "ix_cycle_observations_organization_id_factory_id",
+        "cycle_observations",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "inspections",
@@ -1341,6 +1452,12 @@ def upgrade() -> None:
             name=op.f("fk_inspections_policy_version_id_quality_policy_versions"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_inspections")),
+    )
+    op.create_index(
+        "ix_inspections_organization_id_factory_id",
+        "inspections",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "skill_records",
@@ -1419,6 +1536,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_stock_movements")),
     )
     op.create_index(
+        "ix_stock_movements_organization_id_factory_id",
+        "stock_movements",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
+    op.create_index(
         "ix_stock_movements_factory_id_material_id_created_at",
         "stock_movements",
         ["factory_id", "material_id", "created_at"],
@@ -1480,6 +1603,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_agent_tasks")),
         sa.UniqueConstraint("idempotency_key", name=op.f("uq_agent_tasks_idempotency_key")),
         sa.UniqueConstraint("message_id", name=op.f("uq_agent_tasks_message_id")),
+    )
+    op.create_index(
+        "ix_agent_tasks_organization_id_factory_id",
+        "agent_tasks",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_index("ix_agent_tasks_run_id", "agent_tasks", ["run_id"], unique=False)
     op.create_table(
@@ -1556,6 +1685,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_quality_holds")),
     )
+    op.create_index(
+        "ix_quality_holds_organization_id_factory_id",
+        "quality_holds",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "quality_releases",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -1594,6 +1729,12 @@ def upgrade() -> None:
             ["released_by"], ["users.id"], name=op.f("fk_quality_releases_released_by_users")
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_quality_releases")),
+    )
+    op.create_index(
+        "ix_quality_releases_organization_id_factory_id",
+        "quality_releases",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "recommendations",
@@ -1663,6 +1804,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_recommendations")),
     )
     op.create_index(
+        "ix_recommendations_organization_id_factory_id",
+        "recommendations",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
+    op.create_index(
         "ix_recommendations_factory_id_status",
         "recommendations",
         ["factory_id", "status"],
@@ -1719,6 +1866,12 @@ def upgrade() -> None:
             ["run_id"], ["analysis_runs.id"], name=op.f("fk_run_snapshots_run_id_analysis_runs")
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_run_snapshots")),
+    )
+    op.create_index(
+        "ix_run_snapshots_organization_id_factory_id",
+        "run_snapshots",
+        ["organization_id", "factory_id"],
+        unique=False,
     )
     op.create_table(
         "agent_results",
@@ -1796,6 +1949,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_allocations")),
     )
+    op.create_index(
+        "ix_allocations_organization_id_factory_id",
+        "allocations",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     op.create_table(
         "approvals",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -1867,6 +2026,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_reservations")),
     )
+    op.create_index(
+        "ix_reservations_organization_id_factory_id",
+        "reservations",
+        ["organization_id", "factory_id"],
+        unique=False,
+    )
     # ### end Alembic commands ###
 
     # Deferred foreign keys for the two genuine table-creation cycles
@@ -1905,34 +2070,58 @@ def downgrade() -> None:
         "fk_quality_holds_release_id_quality_releases", "quality_holds", type_="foreignkey"
     )
     # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_index("ix_reservations_organization_id_factory_id", table_name="reservations")
     op.drop_table("reservations")
     op.drop_table("approvals")
+    op.drop_index("ix_allocations_organization_id_factory_id", table_name="allocations")
     op.drop_table("allocations")
     op.drop_table("agent_results")
+    op.drop_index("ix_run_snapshots_organization_id_factory_id", table_name="run_snapshots")
     op.drop_table("run_snapshots")
     op.drop_index("ix_run_events_run_id_id", table_name="run_events")
     op.drop_table("run_events")
     op.drop_index("ix_recommendations_factory_id_status", table_name="recommendations")
+    op.drop_index("ix_recommendations_organization_id_factory_id", table_name="recommendations")
     op.drop_table("recommendations")
+    op.drop_index("ix_quality_releases_organization_id_factory_id", table_name="quality_releases")
     op.drop_table("quality_releases")
+    op.drop_index("ix_quality_holds_organization_id_factory_id", table_name="quality_holds")
     op.drop_table("quality_holds")
     op.drop_table("defect_observations")
     op.drop_index("ix_agent_tasks_run_id", table_name="agent_tasks")
+    op.drop_index("ix_agent_tasks_organization_id_factory_id", table_name="agent_tasks")
     op.drop_table("agent_tasks")
     op.drop_index(
         "ix_stock_movements_factory_id_material_id_created_at", table_name="stock_movements"
     )
+    op.drop_index("ix_stock_movements_organization_id_factory_id", table_name="stock_movements")
     op.drop_table("stock_movements")
     op.drop_table("skill_records")
+    op.drop_index("ix_inspections_organization_id_factory_id", table_name="inspections")
     op.drop_table("inspections")
+    op.drop_index(
+        "ix_cycle_observations_organization_id_factory_id", table_name="cycle_observations"
+    )
     op.drop_table("cycle_observations")
     op.drop_index("ix_chunks_tsv", table_name="chunks", postgresql_using="gin")
+    op.drop_index("ix_chunks_organization_id_factory_id", table_name="chunks")
     op.drop_table("chunks")
+    op.drop_index("ix_analysis_runs_organization_id_factory_id", table_name="analysis_runs")
     op.drop_table("analysis_runs")
+    op.drop_index("ix_orders_organization_id_factory_id", table_name="orders")
+    op.drop_index("ix_orders_factory_id_due_date", table_name="orders")
     op.drop_table("orders")
+    op.drop_index("ix_operator_aliases_organization_id_factory_id", table_name="operator_aliases")
     op.drop_table("operator_aliases")
+    op.drop_index(
+        "ix_operation_staffing_organization_id_factory_id", table_name="operation_staffing"
+    )
     op.drop_table("operation_staffing")
+    op.drop_index("ix_line_measurements_organization_id_factory_id", table_name="line_measurements")
     op.drop_table("line_measurements")
+    op.drop_index(
+        "ix_line_capacity_slots_organization_id_factory_id", table_name="line_capacity_slots"
+    )
     op.drop_table("line_capacity_slots")
     op.drop_table("line_capabilities")
     op.drop_table("import_errors")
@@ -1942,18 +2131,26 @@ def downgrade() -> None:
     op.drop_table("bom_lines")
     op.drop_table("style_operations")
     op.drop_table("role_assignments")
+    op.drop_index("ix_notifications_organization_id_factory_id", table_name="notifications")
     op.drop_table("notifications")
+    op.drop_index("ix_notes_organization_id_factory_id", table_name="notes")
     op.drop_table("notes")
+    op.drop_index("ix_material_lots_organization_id_factory_id", table_name="material_lots")
     op.drop_table("material_lots")
+    op.drop_index("ix_material_balances_organization_id_factory_id", table_name="material_balances")
     op.drop_table("material_balances")
+    op.drop_index("ix_lines_organization_id_factory_id", table_name="lines")
     op.drop_table("lines")
     op.drop_index(
         "uq_import_batches_organization_id_kind_file_sha256",
         table_name="import_batches",
         postgresql_where=sa.text("status = 'COMMITTED'"),
     )
+    op.drop_index("ix_import_batches_organization_id_factory_id", table_name="import_batches")
     op.drop_table("import_batches")
+    op.drop_index("ix_expected_receipts_organization_id_factory_id", table_name="expected_receipts")
     op.drop_table("expected_receipts")
+    op.drop_index("ix_documents_organization_id_factory_id", table_name="documents")
     op.drop_table("documents")
     op.drop_index(
         "uq_bom_versions_one_active_per_style",
@@ -1974,5 +2171,6 @@ def downgrade() -> None:
     op.drop_index("ix_jobs_queue_status_available_at", table_name="jobs")
     op.drop_table("jobs")
     op.drop_index("ix_audit_events_organization_id_created_at", table_name="audit_events")
+    op.drop_index("ix_audit_events_organization_id_factory_id", table_name="audit_events")
     op.drop_table("audit_events")
     # ### end Alembic commands ###
