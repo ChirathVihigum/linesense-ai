@@ -1,0 +1,12 @@
+[
+  {"sub": "dev|admin", "email": "admin@demo.test", "name": "Org Admin (All plants)"},
+  {"sub": "dev|supervisor", "email": "supervisor@demo.test", "name": "Supervisor (KTN)"},
+  {"sub": "dev|supervisor.b", "email": "supervisor.b@demo.test", "name": "Supervisor B (KTN)"},
+  {"sub": "dev|planner", "email": "planner@demo.test", "name": "Planner (KTN)"},
+  {"sub": "dev|storekeeper", "email": "storekeeper@demo.test", "name": "Storekeeper (KTN)"},
+  {"sub": "dev|ie", "email": "ie@demo.test", "name": "IE Engineer (KTN)"},
+  {"sub": "dev|quality", "email": "quality@demo.test", "name": "Quality Manager (KTN)"},
+  {"sub": "dev|quality.b", "email": "quality.b@demo.test", "name": "Quality Manager B (KTN)"},
+  {"sub": "dev|viewer", "email": "viewer@demo.test", "name": "Viewer (KTN)"},
+  {"sub": "dev|byg.planner", "email": "byg.planner@demo.test", "name": "Planner (BYG)"}
+]

@@ -17,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.middleware import trace_id_var
+from app.api.middleware import security_headers_for, trace_id_var
 
 logger = structlog.get_logger("app.errors")
 
@@ -99,6 +99,14 @@ def _strip_loc_prefix(loc: tuple[Any, ...]) -> str:
     return ".".join(str(part) for part in parts)
 
 
+def error_response(status_code: int, code: str, message: str, *, trace_id: str) -> JSONResponse:
+    """A contract-shaped error response for code outside FastAPI's handlers
+    (e.g. pure-ASGI middleware)."""
+    return JSONResponse(
+        status_code=status_code, content=_error_body(code, message, trace_id=trace_id)
+    )
+
+
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
@@ -146,13 +154,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     # already reset that context variable by the time this handler runs (see
     # `_trace_id_for`'s docstring), so the processor would see it empty.
     logger.exception("unhandled_exception", trace_id=trace_id, exc_info=exc)
+    headers = security_headers_for(request.url.path)
+    if trace_id:
+        headers["X-Request-Id"] = trace_id
     return JSONResponse(
         status_code=500,
         content=_error_body("INTERNAL_ERROR", "An unexpected error occurred.", trace_id=trace_id),
         # ServerErrorMiddleware (Starlette) sends this response via the raw
-        # `send` it was given, bypassing TraceIdMiddleware's header
-        # injection, so add the header explicitly here.
-        headers={"X-Request-Id": trace_id} if trace_id else None,
+        # `send` it was given, bypassing TraceIdMiddleware's and
+        # SecurityHeadersMiddleware's header injection, so add them here.
+        headers=headers,
     )
 
 

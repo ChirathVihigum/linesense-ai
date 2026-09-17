@@ -11,6 +11,7 @@ dependencies = [
     "fastembed>=0.8.0",
     "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
+    "joserfc>=1.7.5",
     "numpy>=2.5.3",
     "pgvector>=0.5.0",
     "psycopg[binary]>=3.3.5",

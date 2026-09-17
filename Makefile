@@ -1,5 +1,5 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
-        lint format typecheck test test-integration test-all docs-check
+        lint format typecheck test test-integration test-all docs-check idp
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -54,3 +54,6 @@ test-all: test test-integration
 
 docs-check:
 	bash scripts/check-doc-links.sh
+
+idp:
+	cd services/backend && uv run python -m devtools.dev_oidc
