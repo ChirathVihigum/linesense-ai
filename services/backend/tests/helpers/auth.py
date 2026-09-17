@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.auth.oidc import normalize_issuer
 from app.auth.sessions import SESSION_COOKIE, create_session
 from app.db.models import Factory, Membership, Organization, RoleAssignment, User
 from app.settings import Settings
@@ -133,6 +134,7 @@ async def seed_identity(
     session: AsyncSession, *, issuer: str = DEFAULT_DEV_ISSUER
 ) -> IdentityFixture:
     """Create (idempotently) the contracts section 9 org, factories, users and roles."""
+    issuer = normalize_issuer(issuer)
     organization, factories = await _ensure_org(session)
     users: dict[str, User] = {}
     memberships: dict[str, Membership] = {}
@@ -225,7 +227,7 @@ async def login_as(
             organization, factories = await _ensure_org(session)
             user = await _ensure_user(
                 session,
-                issuer=settings.oidc_issuer,
+                issuer=normalize_issuer(settings.oidc_issuer),
                 subject=subject,
                 email=email,
                 display_name=display_name,
@@ -242,7 +244,7 @@ async def login_as(
             local_part = email.split("@", 1)[0]
             user = await _ensure_user(
                 session,
-                issuer=settings.oidc_issuer,
+                issuer=normalize_issuer(settings.oidc_issuer),
                 subject=f"dev|{local_part}",
                 email=email,
                 display_name=local_part,

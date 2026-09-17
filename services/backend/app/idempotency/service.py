@@ -20,7 +20,8 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select, update
@@ -39,8 +40,45 @@ class StoredResponse:
     body: dict[str, Any]
 
 
+def _tagged(value: Any) -> Any:
+    """Encode ``value`` as ``[type, value]`` so distinct types never collide.
+
+    Without tags, ``Decimal("1")``, ``"1"`` and ``1`` would be indistinguishable
+    once serialized (and a user dict could imitate any ad-hoc type marker).
+    """
+    if value is None:
+        return ["null"]
+    if isinstance(value, bool):
+        return ["bool", value]
+    if isinstance(value, int):
+        return ["int", value]
+    if isinstance(value, float):
+        return ["float", value]
+    if isinstance(value, str):
+        return ["str", value]
+    if isinstance(value, Decimal):
+        return ["decimal", str(value)]
+    if isinstance(value, uuid.UUID):
+        return ["uuid", str(value)]
+    if isinstance(value, datetime):
+        return ["datetime", value.isoformat()]
+    if isinstance(value, date):
+        return ["date", value.isoformat()]
+    if isinstance(value, dict):
+        items: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"request payload keys must be str, got {type(key).__name__}")
+            items[key] = _tagged(item)
+        return ["object", items]
+    if isinstance(value, list | tuple):
+        return ["array", [_tagged(item) for item in value]]
+    raise TypeError(f"unsupported request payload value of type {type(value).__name__}")
+
+
 def request_hash(payload: Any) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    """SHA-256 of the canonical, type-tagged JSON encoding of ``payload``."""
+    canonical = json.dumps(_tagged(payload), sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

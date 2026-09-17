@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 import httpx
@@ -23,6 +24,7 @@ import pytest_asyncio
 import uvicorn
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from joserfc.jwk import RSAKey
 from pydantic import SecretStr
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,7 +32,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.models import AuditEvent, SessionRecord, User
 from app.main import create_app
 from app.settings import Settings
-from devtools.dev_oidc.app import DevIdpConfig, create_dev_idp_app, load_users
+from devtools.dev_oidc.app import (
+    DevIdpConfig,
+    DevIdpHooks,
+    IdTokenTamper,
+    create_dev_idp_app,
+    load_users,
+)
 from tests.conftest import BACKEND_DIR
 from tests.helpers.auth import seed_identity
 
@@ -47,6 +55,7 @@ BANNER = "Development identity provider — not for production"
 @dataclass(frozen=True)
 class DevIdp:
     issuer: str
+    hooks: DevIdpHooks
 
 
 def _free_port() -> int:
@@ -59,6 +68,7 @@ def _free_port() -> int:
 def dev_idp() -> Iterator[DevIdp]:
     port = _free_port()
     issuer = f"http://127.0.0.1:{port}"
+    hooks = DevIdpHooks()
     idp_app = create_dev_idp_app(
         DevIdpConfig(
             issuer=issuer,
@@ -67,7 +77,8 @@ def dev_idp() -> Iterator[DevIdp]:
             redirect_uri=REDIRECT_URI,
             password=PASSWORD,
             users=load_users(),
-        )
+        ),
+        hooks=hooks,
     )
     server = uvicorn.Server(
         uvicorn.Config(idp_app, host="127.0.0.1", port=port, log_level="warning", lifespan="off")
@@ -80,7 +91,7 @@ def dev_idp() -> Iterator[DevIdp]:
             raise RuntimeError("dev IdP did not start")
         time.sleep(0.02)
     try:
-        yield DevIdp(issuer=issuer)
+        yield DevIdp(issuer=issuer, hooks=hooks)
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -265,6 +276,122 @@ async def test_callback_updates_existing_user_profile(
     assert len(users) == 1
     assert users[0].email == "planner@demo.test"
     assert users[0].display_name == "Planner (KTN)"
+
+
+def _wrong_audience(claims: dict[str, Any], key: RSAKey) -> tuple[dict[str, Any], RSAKey]:
+    # azp names our client, which Authlib's azp check alone would accept.
+    return {**claims, "aud": "some-other-client", "azp": CLIENT_ID}, key
+
+
+def _wrong_issuer(claims: dict[str, Any], key: RSAKey) -> tuple[dict[str, Any], RSAKey]:
+    return {**claims, "iss": "http://evil.example"}, key
+
+
+def _expired(claims: dict[str, Any], key: RSAKey) -> tuple[dict[str, Any], RSAKey]:
+    now = int(time.time())
+    return {**claims, "iat": now - 3600, "exp": now - 1800}, key
+
+
+def _nonce_mismatch(claims: dict[str, Any], key: RSAKey) -> tuple[dict[str, Any], RSAKey]:
+    return {**claims, "nonce": "not-the-nonce-we-sent"}, key
+
+
+def _missing_audience(claims: dict[str, Any], key: RSAKey) -> tuple[dict[str, Any], RSAKey]:
+    return {k: v for k, v in claims.items() if k != "aud"}, key
+
+
+def _bad_signature(claims: dict[str, Any], key: RSAKey) -> tuple[dict[str, Any], RSAKey]:
+    # Same kid as the published key, different key material.
+    forged = RSAKey.generate_key(2048, parameters={"kid": key.kid})
+    return claims, forged
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        _wrong_audience,
+        _wrong_issuer,
+        _expired,
+        _nonce_mismatch,
+        _missing_audience,
+        _bad_signature,
+    ],
+)
+async def test_invalid_id_token_is_rejected(
+    api: AsyncClient,
+    idp_http: AsyncClient,
+    dev_idp: DevIdp,
+    seeded: None,
+    session_factory: async_sessionmaker[AsyncSession],
+    tamper: IdTokenTamper,
+) -> None:
+    dev_idp.hooks.id_token_tamper = tamper
+    try:
+        response = await _login(api, idp_http, dev_idp)
+    finally:
+        dev_idp.hooks.id_token_tamper = None
+
+    assert response.status_code == 302
+    assert response.headers["location"] == f"{API_ORIGIN}/login?error=auth_failed"
+    assert _set_cookie_headers(response, "ls_session") == []
+    assert (await api.get("/api/v1/me")).status_code == 401
+    async with session_factory() as session:
+        assert (await session.scalars(select(SessionRecord))).all() == []
+
+    # The same client logs in fine once the provider is honest again.
+    assert (await _login(api, idp_http, dev_idp)).headers["location"] == f"{API_ORIGIN}/"
+
+
+async def test_discovery_without_jwks_uri_fails_cleanly(
+    api: AsyncClient,
+    auth_app: FastAPI,
+    idp_http: AsyncClient,
+    dev_idp: DevIdp,
+    seeded: None,
+) -> None:
+    callback_url = await _obtain_callback_url(api, idp_http, dev_idp)
+    # Authlib raises RuntimeError when the (cached) metadata has no jwks_uri.
+    metadata = auth_app.state.oauth.create_client("linesense").server_metadata
+    metadata.pop("jwks_uri")
+    metadata.pop("jwks", None)
+    response = await api.get(callback_url)
+    assert response.status_code == 302
+    assert response.headers["location"] == f"{API_ORIGIN}/login?error=auth_failed"
+    assert _set_cookie_headers(response, "ls_session") == []
+
+
+async def test_configured_issuer_with_trailing_slash_is_normalized(
+    auth_settings: Settings,
+    idp_http: AsyncClient,
+    dev_idp: DevIdp,
+    seeded: None,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    app = create_app(auth_settings.model_copy(update={"oidc_issuer": dev_idp.issuer + "/"}))
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url=API_ORIGIN
+    ) as client:
+        response = await _login(client, idp_http, dev_idp)
+        assert response.headers["location"] == f"{API_ORIGIN}/"
+        assert (await client.get("/api/v1/me")).status_code == 200
+
+    async with session_factory() as session:
+        issuers = set((await session.scalars(select(User.issuer))).all())
+    assert issuers == {dev_idp.issuer}
+
+
+async def test_issuer_mismatch_with_discovery_is_refused(
+    auth_settings: Settings, dev_idp: DevIdp
+) -> None:
+    # Same server, but the discovery document names a different issuer string.
+    alias = dev_idp.issuer.replace("127.0.0.1", "localhost")
+    app = create_app(auth_settings.model_copy(update={"oidc_issuer": alias}))
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url=API_ORIGIN
+    ) as client:
+        response = await client.get("/auth/login")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
 
 
 async def test_wrong_password_returns_401_page_without_code(

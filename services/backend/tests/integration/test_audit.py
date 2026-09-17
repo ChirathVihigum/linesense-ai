@@ -68,8 +68,11 @@ async def test_sensitive_keys_are_redacted(db_session: AsyncSession) -> None:
         before={"Password": "hunter2", "name": "x", "list": [{"api_secret": "s"}]},
         after={
             "csrf_token": "abc",
-            "nested": {"ACCESS_TOKEN": "t", "keep": 1},
+            "nested": {"ACCESS_TOKEN": "t", "keep": 1, "Authorization": "Bearer x"},
             "clientSecret": "c",
+            "api-key": "k",
+            "token": "raw",
+            "cookie": "ls_session=1",
         },
     )
     await db_session.commit()
@@ -79,10 +82,39 @@ async def test_sensitive_keys_are_redacted(db_session: AsyncSession) -> None:
     assert stored.before == {"Password": REDACTED, "name": "x", "list": [{"api_secret": REDACTED}]}
     assert stored.after == {
         "csrf_token": REDACTED,
-        "nested": {"ACCESS_TOKEN": REDACTED, "keep": 1},
+        "nested": {"ACCESS_TOKEN": REDACTED, "keep": 1, "Authorization": REDACTED},
         "clientSecret": REDACTED,
+        "api-key": REDACTED,
+        "token": REDACTED,
+        "cookie": REDACTED,
     }
     assert REDACTED == "[REDACTED]"
+
+
+async def test_token_usage_counters_are_not_redacted(db_session: AsyncSession) -> None:
+    factory = await make_factory(db_session)
+    usage = {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "max_tokens": 1024,
+        "token_count": 150,
+        "tokens_used": 150,
+        "token_budget": 200000,
+        "password_policy": "strong",
+    }
+    event = await record_audit(
+        db_session,
+        organization_id=factory.organization_id,
+        factory_id=factory.id,
+        actor_type="SYSTEM",
+        actor_id="worker",
+        action="analysis.model_call",
+        target_type="analysis_run",
+        target_id="r-1",
+        outcome="SUCCESS",
+        after={"usage": usage},
+    )
+    assert event.after == {"usage": usage}
 
 
 async def test_trace_id_defaults_to_request_context(db_session: AsyncSession) -> None:

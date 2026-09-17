@@ -83,6 +83,22 @@ class _AccessGrant:
     expires_at: float
 
 
+IdTokenTamper = Callable[[dict[str, Any], RSAKey], tuple[dict[str, Any], RSAKey]]
+
+
+@dataclass
+class DevIdpHooks:
+    """In-process test hooks. Only Python code holding this object can set them
+    (they are not reachable over HTTP) and ``__main__`` never passes one.
+
+    ``id_token_tamper`` receives the claims and the signing key the provider
+    would use and returns the claims/key to sign with instead, so tests can
+    mint ID tokens that the relying party must reject.
+    """
+
+    id_token_tamper: IdTokenTamper | None = None
+
+
 @dataclass
 class _State:
     codes: dict[str, _CodeGrant] = field(default_factory=dict)
@@ -131,7 +147,12 @@ def _error_page(message: str, status_code: int) -> HTMLResponse:
     return _page("Sign-in error", f'<p class="error">{escape(message)}</p>', status_code)
 
 
-def create_dev_idp_app(config: DevIdpConfig, *, clock: Callable[[], float] = time.time) -> FastAPI:
+def create_dev_idp_app(
+    config: DevIdpConfig,
+    *,
+    clock: Callable[[], float] = time.time,
+    hooks: DevIdpHooks | None = None,
+) -> FastAPI:
     issuer = config.issuer.rstrip("/")
     signing_key = RSAKey.generate_key(2048, auto_kid=True)
     kid = signing_key.kid
@@ -290,21 +311,20 @@ def create_dev_idp_app(config: DevIdpConfig, *, clock: Callable[[], float] = tim
 
         user = config.users[grant.sub]
         issued_at = int(now)
-        id_token = jwt.encode(
-            {"alg": "RS256", "kid": kid},
-            {
-                "iss": issuer,
-                "sub": user.sub,
-                "aud": config.client_id,
-                "exp": issued_at + TOKEN_TTL_SECONDS,
-                "iat": issued_at,
-                "nonce": grant.nonce,
-                "email": user.email,
-                "name": user.name,
-            },
-            signing_key,
-            algorithms=["RS256"],
-        )
+        claims: dict[str, Any] = {
+            "iss": issuer,
+            "sub": user.sub,
+            "aud": config.client_id,
+            "exp": issued_at + TOKEN_TTL_SECONDS,
+            "iat": issued_at,
+            "nonce": grant.nonce,
+            "email": user.email,
+            "name": user.name,
+        }
+        key = signing_key
+        if hooks is not None and hooks.id_token_tamper is not None:
+            claims, key = hooks.id_token_tamper(claims, signing_key)
+        id_token = jwt.encode({"alg": "RS256", "kid": kid}, claims, key, algorithms=["RS256"])
         access_token = secrets.token_urlsafe(32)
         for stale in [t for t, g in state.access_tokens.items() if g.expires_at <= now]:
             del state.access_tokens[stale]
