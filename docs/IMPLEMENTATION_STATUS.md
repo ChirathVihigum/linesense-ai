@@ -9,9 +9,12 @@ It is updated at the end of every task.
 Phases from `LINESENSE_IMPLEMENTATION_PLAN.md` section 14 ("Implementation sequence and
 milestones"):
 
-- [~] Phase 0: requirements and contracts — domain glossary, policies, threat model, data
+- [x] Phase 0: requirements and contracts — domain glossary, policies, threat model, data
       contracts, ADRs, official dependency check, synthetic fixtures.
-      **Documented** (formulas/fixtures pending test implementation in Task 4).
+      **Documented and implemented**: the formulas in `docs/architecture/formulas.md` and
+      its four reference fixtures are now backed by deterministic code and unit tests
+      (Task 4, `app/domain/`); fixtures 5 and 6 (concurrency/staleness) remain database-backed
+      and are deferred to Task 13.
 - [ ] Phase 1: walking skeleton — repository, Compose, migrations, OIDC/session, membership
       policies, CI, order list/create/detail, generated client
 - [ ] Phase 2: durable two-agent slice — jobs/leases, orchestrator, RM and planning agents,
@@ -618,4 +621,139 @@ bug fix described above), `docs/IMPLEMENTATION_STATUS.md` (this entry).
   in prose in the same file and column-by-column in `backend-contracts.md`.
 
 **Next step:** Task 4 (or the next task in the SDD plan — see
+`docs/superpowers/plans/2026-09-17-linesense-build.md`).
+
+### 2026-09-17 — Task 4: deterministic domain calculations, rounding, and lifecycle policy
+
+**Built:** pure, `Decimal`-in/`Decimal`-out domain modules under `app/domain/` — no database
+access or I/O anywhere in this layer:
+
+- `app/domain/rounding.py`: `quantize_display` (`ROUND_HALF_UP`, display-only) and
+  `round_up_to_pack` (ceil to a material's `pack_size`; unchanged when no pack size is
+  defined — continuous quantities like meters/kg have no natural whole-unit floor).
+- `app/domain/planning/calc.py`: `SlotCapacity`/`SlotAllocation`/`AllocationPlan` dataclasses,
+  `required_standard_minutes`, `available_standard_minutes`, `utilization`, and
+  `plan_earliest_slots` (greedy earliest-slot allocation with the documented
+  `(slot_date, shift_code, str(line_id))` tie-break, due-date cutoff, line-compatibility
+  filter, and `max_units` material cap; reasons `NO_COMPATIBLE_LINE`,
+  `INSUFFICIENT_CAPACITY_BEFORE_DUE_DATE`, `LIMITED_BY_MATERIAL`).
+- `app/domain/inventory/calc.py`: `available_now`, `gross_demand`, `shortage`,
+  `projected_balance`, `reorder_point`, `coverage_days` (`None` on non-positive consumption —
+  never a misleading zero), `average_daily_consumption`, `convert_quantity` (raises
+  `UnsupportedUnitConversion` for any pair not in `APPROVED_CONVERSIONS`), `coverable_units`
+  (floors to a whole-number `Decimal`), and `material_state` (`UNKNOWN`/`SHORTAGE`/`AT_RISK`/
+  `READY`).
+- `app/domain/ie/calc.py`: `OperationCycle`/`LineBalanceResult` dataclasses,
+  `representative_cycle_seconds` (median, raises `InsufficientSamples` below `min_samples`),
+  `effective_cycle_seconds`, `line_balance` (bottleneck = first max on ties, throughput,
+  this-model's balance index), `sam_capacity_units_per_hour`, `observed_units_per_hour`.
+- `app/domain/quality/calc.py`: `QualityPolicyRules` (with `from_json` validation),
+  `InspectionEvaluation`, `ShipmentFacts`/`ShipmentEligibility`, `defective_rate`,
+  `defects_per_hundred_units` (both `None` when nothing was inspected), `evaluate_inspection`
+  (`INSUFFICIENT_SAMPLE`/`FAIL` with one reason per broken rule/`PASS`), `shipment_eligibility`
+  (reason codes `POLICY_UNKNOWN`, `PRODUCTION_NOT_COMPLETE`, `PACKING_INCOMPLETE`,
+  `INSPECTION_MISSING:<TYPE>`, `ACTIVE_QUALITY_HOLD`, `NO_QUALITY_RELEASE`), and
+  `quality_state`.
+- `app/domain/orders/lifecycle.py`: `TransitionRule`, `InvalidTransition`, the exact
+  `TRANSITIONS` table from the brief, and `get_transition`.
+- Fixed `docs/architecture/formulas.md` to match the brief's `round_up_to_pack` semantics
+  (no-pack-size case left at full precision, not rounded to a whole unit) and to note that
+  Task 4 now implements these formulas.
+
+**TDD evidence:**
+
+- RED: `uv run pytest -m "not integration" -q tests/unit/test_reference_fixtures.py
+  tests/unit/test_planning_calc.py tests/unit/test_inventory_calc.py tests/unit/test_ie_calc.py
+  tests/unit/test_quality_calc.py tests/unit/test_lifecycle.py tests/unit/test_properties.py`
+  — all 7 files failed collection with `ModuleNotFoundError`/`ImportError` for the
+  not-yet-created `app.domain.{planning,inventory,ie,quality,orders}` modules, as expected
+  before any implementation existed.
+- GREEN (same command after implementing every module): `78 passed in 0.44s`.
+
+**Tests:** `tests/unit/test_reference_fixtures.py` (the plan's four independently-worked
+arithmetic fixtures, verbatim from the brief), `tests/unit/test_planning_calc.py`,
+`tests/unit/test_inventory_calc.py`, `tests/unit/test_ie_calc.py`,
+`tests/unit/test_quality_calc.py`, `tests/unit/test_lifecycle.py` (every `TRANSITIONS` pair,
+an invalid transition, `round_up_to_pack`/`quantize_display`), and
+`tests/unit/test_properties.py` (Hypothesis, `max_examples=200`, `derandomize=True`, bounded
+fixed-precision `Decimal` strategies): no allocation ever exceeds its slot's remaining
+minutes and `allocated + unscheduled == units`; `shortage` is never negative even when
+reservations exceed on-hand stock; `line_balance.balance_index_percent` stays within
+`(0, 100]`.
+
+**Commands and results:**
+
+```
+$ cd services/backend && uv run pytest -m "not integration" -q
+88 passed, 13 deselected in 0.62s
+
+$ make lint
+(clean on all Task 4 files; see "Known issues" — one unrelated, concurrently-edited file
+was excluded from this run, see below)
+
+$ make typecheck
+Success: no issues found in 36 source files
+
+$ make test-integration
+13 passed, 88 deselected in 1.33s
+
+$ make docs-check
+check-doc-links: checked 33 relative link target(s) across 18 file(s)
+```
+
+**Files changed:** new — `app/domain/rounding.py`, `app/domain/planning/{__init__,calc}.py`,
+`app/domain/inventory/{__init__,calc}.py`, `app/domain/ie/{__init__,calc}.py`,
+`app/domain/quality/{__init__,calc}.py`, `app/domain/orders/{__init__,lifecycle}.py`,
+`tests/unit/test_reference_fixtures.py`, `tests/unit/test_planning_calc.py`,
+`tests/unit/test_inventory_calc.py`, `tests/unit/test_ie_calc.py`,
+`tests/unit/test_quality_calc.py`, `tests/unit/test_lifecycle.py`,
+`tests/unit/test_properties.py`. Modified — `docs/architecture/formulas.md` (rounding-rule
+correction and a note that Task 4 implements these formulas), `docs/IMPLEMENTATION_STATUS.md`
+(this entry).
+
+**Self-review:**
+
+- Every function signature, dataclass shape, and exact semantic rule in the brief (rounding
+  direction, tie-break order, reason-code strings, `TRANSITIONS` table, precedence order in
+  `material_state`/`quality_state`/`shipment_eligibility`) was checked line-by-line against
+  the implementation while writing it; the brief's four reference fixtures pass verbatim.
+- `plan_earliest_slots` never lets an allocation's `standard_minutes` exceed the source
+  slot's `remaining_standard_minutes`: each allocation takes
+  `min(remaining_target * sam, slot.remaining_standard_minutes)` directly, so the invariant
+  holds structurally rather than depending on floating-point-style precision luck; the
+  `allocated_units + unscheduled_units == units` invariant holds by construction because
+  `unscheduled_units` is always computed as `total - allocated`, never independently.
+  Comparisons that decide the unscheduled reason are quantized to 6 places first (per the
+  brief's tolerance) so tiny Decimal division remainders never flip `LIMITED_BY_MATERIAL` vs
+  `None`.
+- No swallowed exceptions: every raised `ValueError`/domain-specific exception
+  (`InsufficientSamples`, `UnsupportedUnitConversion`, `InvalidTransition`) is raised with a
+  descriptive message and never caught internally.
+- No secrets, no I/O, no database access anywhere in `app/domain/` — every function here is
+  pure, matching the plan's "LLMs and I/O never establish business truth" boundary; deferred
+  correctly to whatever caller wires these into `AppError`/audit/persistence in later tasks.
+- YAGNI: `OperationCycle` is defined per the brief's interface but not yet consumed by any
+  function body (the brief doesn't give it one) — left as the documented shape for the next
+  task that builds a line-balance flow from raw per-operation cycle data.
+- Security/tenancy: not applicable to this pure-calculation layer (no scope checks needed;
+  the layer never touches organization/factory-scoped rows).
+
+**Known issues / limitations:**
+
+- While this task was running, an unrelated, concurrently-running Task 3 review made a
+  live, uncommitted edit to `services/backend/app/db/types.py` (adding an
+  `org_factory_index` helper) and touched a few `app/db/models/*.py` files; those files are
+  **not part of this commit** (only Task 4's own new/changed files were staged) and their
+  `ruff format` status is outside this task's scope. `make lint` run over the whole repo
+  therefore currently reports one pre-existing/in-flight formatting issue in
+  `app/db/types.py` unrelated to Task 4; `ruff check`/`ruff format --check` scoped to every
+  file this task touches pass cleanly.
+- `observed_units_per_hour` and `sam_capacity_units_per_hour` do not special-case
+  zero/negative `hours`/`sam_minutes_per_unit` beyond what `Decimal` division already does
+  (a `ZeroDivisionError`/`InvalidOperation`) — the brief does not specify an "unknown" return
+  for these two, unlike `coverage_days`/`utilization`, so none was added; a future task should
+  confirm this is the desired behavior for `sam_minutes_per_unit <= 0` observed-throughput
+  inputs before wiring these into an API response.
+
+**Next step:** Task 5 (or the next task in the SDD plan — see
 `docs/superpowers/plans/2026-09-17-linesense-build.md`).

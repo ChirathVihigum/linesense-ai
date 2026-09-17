@@ -10,8 +10,13 @@ IE/domain owner must validate these against real production assumptions
 before any non-demonstration use; every result they produce must be shown
 next to its units and assumptions, never as a bare number.
 
-Test implementation for these fixtures is planned for Task 4 (domain unit
-tests); this document is the agreed reference before that code exists.
+Test implementation for these fixtures was completed in Task 4
+(`services/backend/app/domain/`, `services/backend/tests/unit/
+test_reference_fixtures.py`); this document remains the narrative
+reference the code is checked against. Where an earlier draft of this
+document and the implemented code disagreed (the `round_up_to_pack`
+"no pack size" case, below), the code — reviewed with the task brief — is
+authoritative and this document was corrected to match.
 
 ## Rounding rules (apply to all formulas below)
 
@@ -19,8 +24,14 @@ tests); this document is the agreed reference before that code exists.
   intermediate calculation; round only for **display** or for a quantity
   that must be **purchased/allocated** in discrete units.
 - Purchasable/allocatable quantities round **up** (ceiling) to the
-  material's `pack_size` when one is defined, and up to the nearest whole
-  unit otherwise — under-ordering/under-allocating is the unsafe direction.
+  material's `pack_size` when one is defined (`app.domain.rounding
+  .round_up_to_pack`); under-ordering/under-allocating is the unsafe
+  direction. When no `pack_size` is defined, the quantity is left at full
+  `Decimal` precision rather than rounded to an arbitrary whole unit —
+  many materials are continuous quantities (meters, kilograms) with no
+  natural whole-unit floor. Discrete counts that always need a whole
+  number (e.g. `coverable_units`) floor instead, since "how many whole
+  units can I currently cover" must never overstate coverage.
 - Percentages and rates for display round to 2 decimal places; minutes and
   seconds round to 2 decimal places; counts are always integers.
 - A metric with an undefined denominator (division by zero) is never
