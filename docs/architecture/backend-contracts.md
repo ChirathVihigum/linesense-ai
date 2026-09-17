@@ -394,6 +394,8 @@ class LLMToolCall(BaseModel): id: str; name: str; arguments: dict[str, Any]
 class LLMResponse(BaseModel):
     text: str | None; tool_calls: list[LLMToolCall]; stop_reason: str
     input_tokens: int; output_tokens: int; provider: str; model: str; request_id: str | None
+    raw_content: list[dict[str, Any]] | None = None  # verbatim assistant content blocks (thinking included),
+    # for replay on the next turn; Anthropic only, always None for the fixture provider (Task 11)
 class LLMClient(Protocol):
     provider: str   # "anthropic" | "fixture"
     model: str
@@ -403,10 +405,13 @@ class LLMClient(Protocol):
 
 `messages` use the Anthropic content-block shape (`text`, `tool_use`, `tool_result`). Errors:
 `LLMUnavailableError` (retryable), `LLMRateLimitedError` (retryable, carries retry-after),
-`LLMRefusalError`, `LLMInvalidResponseError`. `LLM_PROVIDER=fixture` is a deterministic scripted
-client for tests/CI; everything it produces is labelled `provider="fixture"` and the UI shows
-"Test fixture — not a live AI model". `LLM_PROVIDER=disabled` produces degraded, deterministic-only
-results labelled "AI explanation unavailable".
+`LLMRefusalError`, `LLMInvalidResponseError`, `LLMDisabledError` (provider `"disabled"`; not
+retryable). `LLM_PROVIDER=fixture` is a deterministic scripted client for tests/CI; everything it
+produces is labelled `provider="fixture"` and the UI shows "Test fixture — not a live AI model".
+`LLM_PROVIDER=disabled` produces degraded, deterministic-only results labelled "AI explanation
+unavailable". Implementation, run budgets (`app/llm/budget.py`), and redaction
+(`app/llm/redaction.py`) are documented in
+[llm-boundary.md](llm-boundary.md).
 
 ## 9. Seeded demo identities (development/test only)
 

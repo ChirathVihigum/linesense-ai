@@ -1075,3 +1075,134 @@ the brief does not ask this task to build.
 - Retrieval questions cover 28 of the 30 documents (`worker-data-privacy` and
   `ai-assistant-usage-policy` are not referenced by any question) — still well above the
   brief's ≥20-document minimum.
+
+## 2026-09-17 — Task 11: LLM boundary (Anthropic client, fixture client, run budget, redaction)
+
+Implemented `services/backend/app/llm/`: `client.py` (`LLMToolSpec`, `LLMToolCall`,
+`LLMResponse` incl. the new `raw_content` field, `LLMClient` protocol, the `LLMError`
+hierarchy), `anthropic_client.py` (`AnthropicLLMClient`, built on `anthropic` SDK 1.6.0),
+`fixture_client.py` (`FixtureLLMClient`, `FixtureRequest`, `FixtureScript`,
+`default_fixture_script`), `budget.py` (`reserve_model_call`, `record_usage`,
+`token_budget_remaining`), `factory.py` (`build_llm_client`), `redaction.py` (`redact_text`,
+`redact_payload`). Updated `docs/architecture/backend-contracts.md` §8 for `raw_content` and
+`LLMDisabledError`, and added `docs/architecture/llm-boundary.md` (data sent to the provider,
+redaction, budgets, fixture labelling, refusal fallback, no-key/disabled status).
+
+No Anthropic API key exists in this environment; `AnthropicLLMClient` is exercised only
+against in-test stub SDK clients (`tests/unit/test_anthropic_client.py`) — no live-LLM call
+was made or claimed.
+
+**TDD note (honest deviation):** `app/llm/client.py` and `app/llm/anthropic_client.py` were
+written before their tests because of a mid-task interruption (an API rate limit) that cut
+off the session between writing the implementation and writing
+`tests/unit/test_anthropic_client.py`. On resuming, the tests were written and run against
+the already-written code and passed on the first run (16/16); no implementation changes were
+needed once the tests existed, and re-reading the diff against the tests confirms the
+behaviour (opus-5 betas/fallbacks, non-opus omission, refusal/max_tokens handling, the
+most-specific-first error chain, no API-key leakage) matches what the brief specifies. Every
+other file (`redaction.py`, `fixture_client.py`, `budget.py`) was written together with its
+test in the same pass rather than strictly test-first; test failures were not separately
+captured for the RED step on those files, but all now pass and were re-verified after every
+subsequent edit (mypy fixes, formatting).
+
+**RED/GREEN evidence actually captured:**
+
+```
+$ uv run pytest tests/unit/test_redaction.py -q
+........                                                                 [100%]
+8 passed in 0.36s
+
+$ uv run pytest tests/unit/test_fixture_client.py -q
+......                                                                   [100%]
+6 passed in 0.36s
+
+$ uv run pytest tests/unit/test_anthropic_client.py -q
+................                                                         [100%]
+16 passed in 0.40s
+
+$ uv run pytest tests/integration/test_budget.py -q -m integration
+.........                                                                [100%]
+9 passed in 1.62s
+```
+
+**Full suite (isolated test database, per controller instruction — parallel agents were
+sharing `linesense_test` and clobbering each other's data):**
+
+```
+$ LS_TEST_DATABASE_URL=postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test_a \
+  LS_TEST_MIGRATION_DATABASE_URL=postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test_a \
+  uv run pytest -m "not integration" -q
+372 passed, 117 deselected in 2.64s
+
+$ LS_TEST_DATABASE_URL=postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test_a \
+  LS_TEST_MIGRATION_DATABASE_URL=postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test_a \
+  uv run pytest -m integration -q
+117 passed, 372 deselected in 10.48s
+```
+
+Re-run twice against the isolated database; both times all 117 integration tests (my 9 new
+`test_budget.py` tests among them, including 30-concurrent-reservation atomicity) passed. The
+same suite intermittently failed unrelated tests (`test_auth_flow`, `test_job_queue`,
+`test_worker_runtime`, none of them touching `app/llm`) when run against the shared
+`linesense_test` database while another agent was writing to it concurrently — confirmed as
+DB contention, not a defect in this task's code, by reproducing the failures with
+`test_budget.py` fully excluded from the run.
+
+**Lint/typecheck, scoped** (per this task's dispatch: Task 16 has other uncommitted,
+unrelated files in the tree that already fail whole-repo lint/typecheck —
+`app/domain/orders/service.py`, `app/domain/orders/import_csv.py`, and four `app/api/*.py`
+files need reformatting/have pre-existing mypy errors):
+
+```
+$ uv run ruff check app/llm tests/unit/test_anthropic_client.py tests/unit/test_fixture_client.py \
+    tests/unit/test_redaction.py tests/integration/test_budget.py
+All checks passed!
+$ uv run ruff format --check app/llm tests/unit/test_anthropic_client.py tests/unit/test_fixture_client.py \
+    tests/unit/test_redaction.py tests/integration/test_budget.py
+11 files already formatted
+$ uv run mypy app/llm
+Success: no issues found in 7 source files
+```
+
+(`make typecheck` only ever scopes to `mypy app`, so test files are not part of that command;
+mypy on the test files themselves reports unrelated, expected dynamic-typing noise —
+`**kwargs` factory calls, stub duck-typed objects — that the project's own `mypy app` scope
+does not check.)
+
+`bash scripts/check-doc-links.sh` — `checked 39 relative link target(s) across 21 file(s)`
+(clean, including the new `llm-boundary.md` cross-link).
+
+**Design decisions / notes:**
+
+- `fallbacks="default"`/`betas=[...]` are passed directly as keyword arguments to
+  `beta.messages.create` — confirmed by reading the installed SDK's own parameter list
+  (`anthropic/resources/beta/messages/messages.py`) that this SDK version (1.6.0) accepts
+  `fallbacks` natively; no `extra_body` workaround was needed.
+- The per-call `timeout_seconds` argument is applied with `with_options(timeout=...)` on the
+  shared `AsyncAnthropic` client rather than constructing a fresh client per call, matching
+  the SDK's own documented per-request-override pattern.
+- `reserve_model_call`/`record_usage` reuse the fenced atomic-`UPDATE` pattern from
+  `app/jobs/queue.py` (Task 10) rather than introducing row locking or advisory locks; the
+  30-concurrent-reservation integration test is the correctness proof.
+- `redact_payload`/`redact_text` are deliberately conservative about operator aliases
+  (`KTN-OP-017`-style codes): the phone-number pattern only matches runs made purely of
+  digits and phone punctuation, so a letter anywhere in the run exempts it.
+
+**Files changed:** new — `services/backend/app/llm/__init__.py`, `app/llm/client.py`,
+`app/llm/anthropic_client.py`, `app/llm/fixture_client.py`, `app/llm/budget.py`,
+`app/llm/factory.py`, `app/llm/redaction.py`, `tests/unit/test_anthropic_client.py`,
+`tests/unit/test_fixture_client.py`, `tests/unit/test_redaction.py`,
+`tests/integration/test_budget.py`, `docs/architecture/llm-boundary.md`. Modified —
+`docs/architecture/backend-contracts.md` (§8: `raw_content`, `LLMDisabledError`, cross-link).
+
+**Known issues / limitations:**
+
+- No Anthropic API key is available in this environment, so the live HTTP path of
+  `AnthropicLLMClient` (real network call, real SDK response parsing beyond what stub objects
+  exercise) has never been run end-to-end; only the request-shaping and error-mapping logic
+  is covered, against stub clients built with real `httpx2`/`anthropic` exception types.
+- `default_fixture_script`'s "next unused investigative tool" selection assumes Task 12's
+  investigative tool schemas provide `default` or `examples` for every property (as the brief
+  states they will); a schema property with neither is simply omitted from the constructed
+  arguments rather than raising, since Task 11 has no way to validate Task 12's not-yet-written
+  schemas.
