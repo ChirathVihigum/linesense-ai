@@ -36,7 +36,7 @@ sequenceDiagram
     API->>IdP: POST /token (code, code_verifier, client auth)
     IdP-->>API: id_token (RS256), access_token
     API->>IdP: GET /jwks (cached)
-    API->>API: check signature, iss, aud, exp, nonce
+    API->>API: check signature, iss (= discovery issuer), aud (= client id), exp, nonce
     API->>DB: upsert users by (iss, sub); revoke old session; insert session; audit auth.login
     API-->>B: 302 to next<br/>Set-Cookie ls_session (HttpOnly)
     B->>API: GET /api/v1/me
@@ -50,12 +50,23 @@ sequenceDiagram
   `ls_oidc` cookie. Starlette's `SessionMiddleware` signs that cookie with `LS_SESSION_SECRET`. It
   lasts 10 minutes, uses `SameSite=Lax` and path `/auth`, and is `Secure` in production. It carries
   no application session.
+- ID-token claims are enforced explicitly: `iss` must equal the discovery document's `issuer`,
+  and `aud` must contain `LS_OIDC_CLIENT_ID`. Authlib's own `azp` check alone would accept a
+  foreign `aud` when `azp` names this client. `sub` is required. Authlib and joserfc also check
+  `exp` and `iat` (with 120 s leeway), `nonce` and the RS256 signature against the published
+  JWKS.
+- The issuer in the discovery document must match `LS_OIDC_ISSUER`, ignoring a trailing slash.
+  If it doesn't, `/auth/login` returns `503 SERVICE_UNAVAILABLE` and the callback fails.
+  `users.issuer` always stores the normalized issuer (no trailing slash), from
+  `app.auth.oidc.normalize_issuer`. The seed and test helpers store it the same way, so rows
+  created by the callback, the seed and the tests all match on `(issuer, subject)`.
 - The callback never creates memberships. Users are provisioned by an administrator or the seed.
   An identity with no active membership still gets a session, but `/api/v1/me` and every protected
   route return `403 FORBIDDEN` with the message "No LineSense membership".
 - The callback fails when the state doesn't match, the IdP rejects the token exchange, a signature
   or claim check fails, or the user is inactive. On failure it redirects to
-  `/login?error=auth_failed` and creates no session. The failure is audited as `auth.login` with
+  `/login?error=auth_failed` and creates no session. The same applies when the provider's
+  metadata is unusable, for example when it has no `jwks_uri`. The failure is audited as `auth.login` with
   outcome `FAILED` when the user and their organization are known. Otherwise it is only logged.
 - The provider's `id_token` and `access_token` are used only during the callback. They are never
   stored, logged or sent to the browser.
@@ -119,12 +130,18 @@ authority.
 ## Audit and idempotency
 
 - `app.audit.service.record_audit` writes `audit_events` in the caller's transaction. Before
-  writing, it replaces any `before`/`after` value whose key matches `token`, `password` or `secret`
-  (case-insensitive, at any depth) with `"[REDACTED]"`. A denied request's transaction is rolled
+  writing, it replaces with `"[REDACTED]"` any `before`/`after` value (at any depth) stored under a
+  credential key. Keys are normalized first: camelCase and `-` become `_`, and case is ignored.
+  A key is a credential key if it is one of `token`, `password`, `secret`, `api_key`,
+  `authorization`, `cookie`, `set_cookie`, `credentials` or `private_key`, or if it ends in
+  `_token`, `_password`, `_secret`, `_api_key` or `_private_key`. Usage counters such as
+  `input_tokens` or `token_count` are kept. A denied request's transaction is rolled
   back, so `audit_denied` commits its `DENIED` event in a separate transaction.
 - `app.idempotency.service.begin` / `finish` implement `Idempotency-Key` handling (8–128
   characters). Keys are scoped by organization, actor, operation and key, and are kept for 24 hours.
-  The payload is compared by the SHA-256 of its canonical JSON. A matching retry replays the stored
+  The payload is compared by the SHA-256 of its canonical JSON. In that JSON every value is
+  tagged with its type, so `Decimal("1")`, `"1"` and `1` never collide, and unsupported types
+  raise `TypeError`. A matching retry replays the stored
   response. A different payload returns `409 IDEMPOTENCY_KEY_REUSED`. A duplicate that arrives
   while the first request is still running waits on the first transaction's row lock, because the
   insert uses `INSERT ... ON CONFLICT DO NOTHING` and then re-reads the row.
@@ -172,5 +189,8 @@ not `https://`, or when `LS_OIDC_CLIENT_SECRET` contains a development value (`d
   parsing and production settings.
 - `tests/integration/test_auth_flow.py`: the full login against the development IdP. That IdP runs
   under uvicorn in a background thread, and Authlib fetches discovery, JWKS and tokens from it over
-  real HTTP.
+  real HTTP. The tests also reject tampered ID tokens (wrong `aud` with a matching `azp`, wrong
+  `iss`, expired, wrong nonce, missing `aud`, forged signature). They produce these through the
+  IdP's in-process `DevIdpHooks.id_token_tamper`, which can't be reached over HTTP and which
+  `python -m devtools.dev_oidc` never sets.
 - `tests/integration/test_csrf.py`, `test_scope.py`, `test_idempotency.py` and `test_audit.py`.

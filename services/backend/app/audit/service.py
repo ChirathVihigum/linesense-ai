@@ -19,15 +19,44 @@ from app.db.models import AuditEvent
 from app.domain.vocab import ActorType, AuditOutcome
 
 REDACTED = "[REDACTED]"
-_SENSITIVE_KEY = re.compile(r"token|password|secret", re.IGNORECASE)
+
+# Exact (normalized) key names that always hold credentials.
+_SENSITIVE_KEYS = frozenset(
+    {
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "set_cookie",
+        "credentials",
+        "private_key",
+    }
+)
+# ``<anything>_token`` / ``_password`` / ``_secret`` / ``_api_key`` variants
+# (access_token, id_token, csrf_token, client_secret, anthropic_api_key, ...).
+# Counters such as ``input_tokens`` or ``token_count`` do not match.
+_SENSITIVE_SUFFIXES = ("_token", "_password", "_secret", "_api_key", "_private_key")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _normalize_key(key: object) -> str:
+    return _CAMEL_BOUNDARY.sub("_", str(key)).replace("-", "_").lower()
+
+
+def is_sensitive_key(key: object) -> bool:
+    name = _normalize_key(key)
+    return name in _SENSITIVE_KEYS or name.endswith(_SENSITIVE_SUFFIXES)
 
 
 def redact(value: Any) -> Any:
-    """Recursively replace values whose key names look sensitive."""
+    """Recursively replace values stored under credential-like key names."""
     if isinstance(value, dict):
         return {
-            key: REDACTED if _SENSITIVE_KEY.search(str(key)) else redact(item)
-            for key, item in value.items()
+            key: REDACTED if is_sensitive_key(key) else redact(item) for key, item in value.items()
         }
     if isinstance(value, list | tuple):
         return [redact(item) for item in value]

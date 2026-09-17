@@ -823,3 +823,37 @@ correction and a note that Task 4 implements these formulas), `docs/IMPLEMENTATI
   real IdP. The Keycloak realm is scheduled for Task 26.
 - `DEMO_IDENTITIES` lives in `tests/helpers/auth.py` until Task 6 moves it to
   `app/seed/generator.py`. A unit test keeps `users.json` in sync with it.
+
+### 2026-09-17 — Task 5 fix round 1 (post-review)
+
+**Changed:**
+
+- The callback now passes `claims_options` to Authlib. It requires `iss` to equal the discovery
+  issuer, `aud` to contain the client id, and `sub` to be present. Before this, a token with a
+  foreign `aud` was accepted when its `azp` named our client.
+- The discovery issuer must match `LS_OIDC_ISSUER`, ignoring a trailing slash. On a mismatch,
+  `/auth/login` returns 503 and the callback fails. `users.issuer` is always normalized with
+  `normalize_issuer`, and the seed and test helpers use the same function.
+- The callback now also catches `RuntimeError` (Authlib metadata errors such as a missing
+  `jwks_uri`) and redirects to `auth_failed`.
+- Audit redaction now matches exact credential key names and the `_token`, `_password`,
+  `_secret`, `_api_key` and `_private_key` suffixes. `input_tokens`, `max_tokens` and
+  `token_count` are kept.
+- `request_hash` tags every value with its type (`Decimal("1")` ≠ `"1"` ≠ `1`) and rejects
+  unsupported types with `TypeError`.
+- The dev IdP gains `DevIdpHooks.id_token_tamper`, an in-process hook for tests. It can't be
+  reached over HTTP, and `__main__` never sets it.
+
+**Commands and results:**
+
+- `uv run pytest -q -m integration tests/integration/test_auth_flow.py tests/integration/test_csrf.py
+  tests/integration/test_scope.py tests/integration/test_idempotency.py
+  tests/integration/test_audit.py tests/integration/test_health.py tests/integration/test_schema.py`:
+  `68 passed`.
+- `uv run pytest -q tests/unit/test_policy.py tests/unit/test_dev_oidc.py
+  tests/unit/test_http_hardening.py tests/unit/test_idempotency_hash.py`: `239 passed`.
+- `uv run mypy app/auth app/audit app/idempotency app/api app/main.py devtools
+  tests/helpers/auth.py`: no issues.
+- Scoped `ruff check` and `ruff format --check` are clean. `make docs-check` passes.
+- Whole-repo `make typecheck` currently reports 4 errors, all in the concurrently written,
+  uncommitted `app/jobs/` (Task 10). None of them are in this task's files.
