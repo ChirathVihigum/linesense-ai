@@ -20,12 +20,23 @@ _API_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 # A candidate phone-like run: starts and ends with a digit, with only digits
 # and common phone punctuation (space, +, -, ., parens) in between. Letters
-# anywhere in the run break the match, so alphanumeric codes are unaffected.
-_PHONE_CANDIDATE_RE = re.compile(r"(?<![\w])\+?\d[\d\-.\s()]{6,}\d(?![\w])")
+# anywhere in the run break the match, so alphanumeric codes (order refs,
+# UUIDs, operator aliases) are unaffected wherever a letter falls inside the
+# run. A run of pure digits with no punctuation at all (an order quantity, a
+# PO number, part of a UUID/date/decimal) is *not* phone-like by itself; see
+# `_is_phone_like`, which additionally requires a separator or a leading "+"
+# per backend-contracts.md section 8's "phone-number-like sequences".
+_PHONE_CANDIDATE_RE = re.compile(r"(?<![\w])[(+]?\d[\d\-.\s()]{6,}\d(?![\w])")
+_SEPARATOR_CHARS = frozenset(" -.()")
 
 
-def _digit_count(candidate: str) -> int:
-    return sum(1 for char in candidate if char.isdigit())
+def _is_phone_like(candidate: str) -> bool:
+    digits = sum(1 for char in candidate if char.isdigit())
+    if digits < 9:
+        return False
+    if candidate.startswith("+"):
+        return True
+    return any(char in _SEPARATOR_CHARS for char in candidate)
 
 
 def redact_text(text: str) -> str:
@@ -36,7 +47,7 @@ def redact_text(text: str) -> str:
 
     def _phone_sub(match: re.Match[str]) -> str:
         candidate = match.group(0)
-        return REDACTED if _digit_count(candidate) >= 9 else candidate
+        return REDACTED if _is_phone_like(candidate) else candidate
 
     return _PHONE_CANDIDATE_RE.sub(_phone_sub, text)
 

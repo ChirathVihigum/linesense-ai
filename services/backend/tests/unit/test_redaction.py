@@ -60,3 +60,37 @@ def test_redact_payload_preserves_tuple_type() -> None:
     result = redact_payload(("planner@demo.test", 42))
     assert result == (REDACTED, 42)
     assert isinstance(result, tuple)
+
+
+def test_bare_digit_runs_survive() -> None:
+    # 9-12 bare digits with no separators and no leading "+" are not
+    # phone-like per backend-contracts.md section 8 (separators required).
+    assert redact_text("order quantity 123456789") == "order quantity 123456789"
+    assert redact_text("PO number 9876543210") == "PO number 9876543210"
+    assert redact_text("reference 123456789012") == "reference 123456789012"
+
+
+def test_order_references_survive() -> None:
+    assert redact_text("see PO-KTN-0001 for details") == "see PO-KTN-0001 for details"
+    assert redact_text("linked to PO-DEMO-001") == "linked to PO-DEMO-001"
+
+
+def test_uuids_survive() -> None:
+    text = "run id c1468894-4b3a-4a5d-941f-fb9eb3c6a2c3 failed"
+    assert redact_text(text) == text
+
+
+def test_iso_dates_and_datetimes_survive() -> None:
+    assert redact_text("due 2026-09-17") == "due 2026-09-17"
+    assert redact_text("logged at 2026-09-17T08:30:00Z") == "logged at 2026-09-17T08:30:00Z"
+
+
+def test_decimal_numbers_survive() -> None:
+    assert redact_text("total 1099.98") == "total 1099.98"
+    assert redact_text("balance 12000.00") == "balance 12000.00"
+
+
+def test_punctuated_phone_numbers_are_still_redacted() -> None:
+    assert redact_text("call +94 77 123 4567 now") == f"call {REDACTED} now"
+    assert redact_text("call (011) 234-5678 now") == f"call {REDACTED} now"
+    assert redact_text("call 077.123.4567 now") == f"call {REDACTED} now"
