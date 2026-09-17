@@ -6,11 +6,10 @@ and `app.domain.quality.calc` modules); every write happens inside the
 caller's transaction (the `get_db_session` FastAPI dependency commits or
 rolls back around the route handler).
 
-Cancelling an order releases its active allocations and reservations. The
-shared capacity/inventory lock helpers arrive with Task 8; until then, the
-small private `_release_allocations`/`_release_reservations` functions here
-do the row-locked decrement themselves so Task 8 can replace them with the
-shared helpers without touching the transition logic above them.
+Cancelling an order releases its active allocations and reservations
+through the shared, row-locking helpers of `app.domain.capacity.service`
+and `app.domain.inventory.service` (lock order: order -> slots ->
+balances).
 """
 
 from __future__ import annotations
@@ -38,7 +37,6 @@ from app.db.models import (
     Factory,
     Inspection,
     Material,
-    MaterialBalance,
     Notification,
     Order,
     QualityHold,
@@ -48,12 +46,13 @@ from app.db.models import (
     Style,
     StyleOperation,
 )
+from app.domain.capacity.service import release_order_allocations
 from app.domain.clock import today_in
+from app.domain.inventory.service import release_order_reservations
 from app.domain.orders.lifecycle import TRANSITIONS, InvalidTransition, get_transition
 from app.domain.quality.calc import ShipmentEligibility, ShipmentFacts, shipment_eligibility
 from app.domain.vocab import (
     ActorType,
-    AllocationStatus,
     AuditOutcome,
     InspectionResult,
     InspectionType,
@@ -63,7 +62,6 @@ from app.domain.vocab import (
     ProductionState,
     QualityHoldStatus,
     QualityState,
-    ReservationStatus,
     Role,
 )
 
@@ -405,79 +403,6 @@ _ENFORCERS: dict[str, Callable[[AsyncSession, Order], Awaitable[None]]] = {
 }
 
 
-async def _release_allocations(session: AsyncSession, order: Order) -> None:
-    from app.db.models import LineCapacitySlot  # local import: capacity model, avoids a cycle
-
-    allocations = list(
-        (
-            await session.scalars(
-                select(Allocation)
-                .where(
-                    Allocation.order_id == order.id,
-                    Allocation.status == AllocationStatus.ACTIVE.value,
-                )
-                .order_by(Allocation.id)
-            )
-        ).all()
-    )
-    if not allocations:
-        return
-    slot_ids = sorted({allocation.slot_id for allocation in allocations})
-    slots = (
-        await session.scalars(
-            select(LineCapacitySlot)
-            .where(LineCapacitySlot.id.in_(slot_ids))
-            .order_by(LineCapacitySlot.id)
-            .with_for_update()
-        )
-    ).all()
-    slots_by_id = {slot.id: slot for slot in slots}
-    for allocation in allocations:
-        slot = slots_by_id.get(allocation.slot_id)
-        if slot is not None:
-            slot.allocated_standard_minutes -= allocation.standard_minutes
-            slot.version += 1
-        allocation.status = AllocationStatus.RELEASED.value
-    await session.flush()
-
-
-async def _release_reservations(session: AsyncSession, order: Order) -> None:
-    reservations = list(
-        (
-            await session.scalars(
-                select(Reservation)
-                .where(
-                    Reservation.order_id == order.id,
-                    Reservation.status == ReservationStatus.ACTIVE.value,
-                )
-                .order_by(Reservation.id)
-            )
-        ).all()
-    )
-    if not reservations:
-        return
-    material_ids = sorted({reservation.material_id for reservation in reservations})
-    balances = (
-        await session.scalars(
-            select(MaterialBalance)
-            .where(
-                MaterialBalance.factory_id == order.factory_id,
-                MaterialBalance.material_id.in_(material_ids),
-            )
-            .order_by(MaterialBalance.id)
-            .with_for_update()
-        )
-    ).all()
-    balances_by_material = {balance.material_id: balance for balance in balances}
-    for reservation in reservations:
-        balance = balances_by_material.get(reservation.material_id)
-        if balance is not None:
-            balance.reserved -= reservation.quantity
-            balance.version += 1
-        reservation.status = ReservationStatus.RELEASED.value
-    await session.flush()
-
-
 async def _notify_supervisors(
     session: AsyncSession, order: Order, *, kind: str, title: str, body: str
 ) -> None:
@@ -533,8 +458,8 @@ async def transition_order(
     order.version += 1
 
     if target_state == ProductionState.CANCELLED:
-        await _release_allocations(session, order)
-        await _release_reservations(session, order)
+        await release_order_allocations(session, order)
+        await release_order_reservations(session, order)
 
     await session.flush()
     after = _order_snapshot(order)

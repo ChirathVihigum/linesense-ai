@@ -6,9 +6,11 @@ from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.audit import router as audit_router
+from app.api.capacity import router as capacity_router
 from app.api.errors import register_exception_handlers
 from app.api.health import router as health_router
 from app.api.imports import router as imports_router
+from app.api.inventory import router as inventory_router
 from app.api.me import router as me_router
 from app.api.middleware import SecurityHeadersMiddleware, TraceIdMiddleware
 from app.api.notifications import router as notifications_router
@@ -61,5 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(audit_router)
     app.include_router(notifications_router)
     app.include_router(reference_router)
+    app.include_router(inventory_router)
+    app.include_router(capacity_router)
 
     return app

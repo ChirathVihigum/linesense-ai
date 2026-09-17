@@ -169,6 +169,85 @@
         "title": "AuditEventOut",
         "type": "object"
       },
+      "BalanceOut": {
+        "properties": {
+          "available_now": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Now",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "on_hand_accepted": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand Accepted",
+            "type": "string"
+          },
+          "reserved": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reserved",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "material_id",
+          "on_hand_accepted",
+          "reserved",
+          "available_now",
+          "version"
+        ],
+        "title": "BalanceOut",
+        "type": "object"
+      },
+      "BoardLineOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "operator_count": {
+            "title": "Operator Count",
+            "type": "integer"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/SlotOut"
+            },
+            "title": "Slots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "operator_count",
+          "is_active",
+          "slots"
+        ],
+        "title": "BoardLineOut",
+        "type": "object"
+      },
       "Body_upload_orders_csv_api_v1_factories__factory_id__imports_orders_post": {
         "properties": {
           "file": {
@@ -237,6 +316,76 @@
           "lines"
         ],
         "title": "BomOut",
+        "type": "object"
+      },
+      "CapacityBoardOut": {
+        "properties": {
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "factory_id": {
+            "format": "uuid",
+            "title": "Factory Id",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/BoardLineOut"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "factory_id",
+          "start",
+          "end",
+          "lines"
+        ],
+        "title": "CapacityBoardOut",
+        "type": "object"
+      },
+      "CorrectionCreate": {
+        "properties": {
+          "movement_id": {
+            "format": "uuid",
+            "title": "Movement Id",
+            "type": "string"
+          },
+          "quantity_delta": {
+            "anyOf": [
+              {
+                "maximum": 9999999999.9999,
+                "minimum": -9999999999.9999,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity Delta"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "movement_id",
+          "quantity_delta",
+          "reason"
+        ],
+        "title": "CorrectionCreate",
         "type": "object"
       },
       "CustomerOut": {
@@ -497,6 +646,65 @@
         "title": "InspectionOut",
         "type": "object"
       },
+      "IssueCreate": {
+        "properties": {
+          "lot_id": {
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 9999999999.9999,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "material_id",
+          "lot_id",
+          "quantity"
+        ],
+        "title": "IssueCreate",
+        "type": "object"
+      },
       "LatestRunOut": {
         "properties": {
           "created_at": {
@@ -522,6 +730,191 @@
         "title": "LatestRunOut",
         "type": "object"
       },
+      "LineOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "operator_count": {
+            "title": "Operator Count",
+            "type": "integer"
+          },
+          "skill_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skill Codes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "operator_count",
+          "is_active",
+          "skill_codes"
+        ],
+        "title": "LineOut",
+        "type": "object"
+      },
+      "LotAcceptResult": {
+        "properties": {
+          "balance": {
+            "$ref": "#/components/schemas/BalanceOut"
+          },
+          "lot": {
+            "$ref": "#/components/schemas/LotOut"
+          }
+        },
+        "required": [
+          "lot",
+          "balance"
+        ],
+        "title": "LotAcceptResult",
+        "type": "object"
+      },
+      "LotOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lot_code": {
+            "title": "Lot Code",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lot_code",
+          "material_id",
+          "status",
+          "received_at"
+        ],
+        "title": "LotOut",
+        "type": "object"
+      },
+      "MaterialOverview": {
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MaterialStatusOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "items"
+        ],
+        "title": "MaterialOverview",
+        "type": "object"
+      },
+      "MaterialReservationOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "recommendation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "material_id",
+          "order_id",
+          "quantity",
+          "status",
+          "recommendation_id",
+          "created_by",
+          "created_at"
+        ],
+        "title": "MaterialReservationOut",
+        "type": "object"
+      },
       "MaterialState": {
         "enum": [
           "UNKNOWN",
@@ -531,6 +924,120 @@
         ],
         "title": "MaterialState",
         "type": "string"
+      },
+      "MaterialStatusOut": {
+        "properties": {
+          "available_now": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Now",
+            "type": "string"
+          },
+          "average_daily_consumption": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Average Daily Consumption",
+            "type": "string"
+          },
+          "balance_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance Version"
+          },
+          "below_reorder_point": {
+            "title": "Below Reorder Point",
+            "type": "boolean"
+          },
+          "coverage_days": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Days of cover at the 14-day average consumption; null means unknown.",
+            "title": "Coverage Days"
+          },
+          "material_code": {
+            "title": "Material Code",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "material_name": {
+            "title": "Material Name",
+            "type": "string"
+          },
+          "next_receipt_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Receipt Date"
+          },
+          "on_hand": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand",
+            "type": "string"
+          },
+          "open_receipt_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Open Receipt Quantity",
+            "type": "string"
+          },
+          "reorder_point": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reorder Point",
+            "type": "string"
+          },
+          "reserved": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reserved",
+            "type": "string"
+          },
+          "status_source": {
+            "title": "Status Source",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "material_id",
+          "material_code",
+          "material_name",
+          "unit",
+          "on_hand",
+          "reserved",
+          "available_now",
+          "open_receipt_quantity",
+          "next_receipt_date",
+          "average_daily_consumption",
+          "coverage_days",
+          "reorder_point",
+          "below_reorder_point",
+          "balance_version",
+          "status_source"
+        ],
+        "title": "MaterialStatusOut",
+        "type": "object"
       },
       "MeFactory": {
         "properties": {
@@ -647,6 +1154,119 @@
           "display_name"
         ],
         "title": "MeUser",
+        "type": "object"
+      },
+      "MovementOut": {
+        "properties": {
+          "corrects_movement_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Movement Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lot_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Code"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Id"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "movement_type": {
+            "title": "Movement Type",
+            "type": "string"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "id",
+          "material_id",
+          "lot_id",
+          "lot_code",
+          "movement_type",
+          "quantity",
+          "corrects_movement_id",
+          "reason",
+          "order_id",
+          "created_by",
+          "created_at"
+        ],
+        "title": "MovementOut",
         "type": "object"
       },
       "NotificationOut": {
@@ -1136,6 +1756,99 @@
         "title": "Page[CustomerOut]",
         "type": "object"
       },
+      "Page_LineOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LineOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[LineOut]",
+        "type": "object"
+      },
+      "Page_MaterialReservationOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MaterialReservationOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[MaterialReservationOut]",
+        "type": "object"
+      },
+      "Page_MovementOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MovementOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[MovementOut]",
+        "type": "object"
+      },
       "Page_NotificationOut_": {
         "properties": {
           "items": {
@@ -1252,6 +1965,99 @@
         "title": "QualityState",
         "type": "string"
       },
+      "ReceiptCreate": {
+        "properties": {
+          "accept": {
+            "title": "Accept",
+            "type": "boolean"
+          },
+          "lot_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+            "title": "Lot Code",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 9999999999.9999,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          }
+        },
+        "required": [
+          "material_id",
+          "lot_code",
+          "quantity",
+          "accept"
+        ],
+        "title": "ReceiptCreate",
+        "type": "object"
+      },
+      "ReservationCommandResult": {
+        "properties": {
+          "balance": {
+            "$ref": "#/components/schemas/BalanceOut"
+          },
+          "reservation": {
+            "$ref": "#/components/schemas/MaterialReservationOut"
+          }
+        },
+        "required": [
+          "reservation",
+          "balance"
+        ],
+        "title": "ReservationCommandResult",
+        "type": "object"
+      },
+      "ReservationCreate": {
+        "properties": {
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 9999999999.9999,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          }
+        },
+        "required": [
+          "material_id",
+          "order_id",
+          "quantity"
+        ],
+        "title": "ReservationCreate",
+        "type": "object"
+      },
       "ReservationOut": {
         "properties": {
           "id": {
@@ -1302,6 +2108,144 @@
           "reasons"
         ],
         "title": "ShipmentStatus",
+        "type": "object"
+      },
+      "SlotAllocationOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "order_external_ref": {
+            "title": "Order External Ref",
+            "type": "string"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "standard_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Minutes",
+            "type": "string"
+          },
+          "units": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Units",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "order_external_ref",
+          "standard_minutes",
+          "units"
+        ],
+        "title": "SlotAllocationOut",
+        "type": "object"
+      },
+      "SlotOut": {
+        "properties": {
+          "allocated_standard_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Allocated Standard Minutes",
+            "type": "string"
+          },
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/SlotAllocationOut"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "available_operator_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Operator Minutes",
+            "type": "string"
+          },
+          "capacity_standard_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Capacity Standard Minutes",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "planned_efficiency": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Planned Efficiency",
+            "type": "string"
+          },
+          "remaining_standard_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Standard Minutes",
+            "type": "string"
+          },
+          "shift_code": {
+            "title": "Shift Code",
+            "type": "string"
+          },
+          "slot_date": {
+            "format": "date",
+            "title": "Slot Date",
+            "type": "string"
+          },
+          "utilization": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilization"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slot_date",
+          "shift_code",
+          "available_operator_minutes",
+          "planned_efficiency",
+          "capacity_standard_minutes",
+          "allocated_standard_minutes",
+          "remaining_standard_minutes",
+          "utilization",
+          "version",
+          "allocations"
+        ],
+        "title": "SlotOut",
+        "type": "object"
+      },
+      "StockCommandResult": {
+        "properties": {
+          "balance": {
+            "$ref": "#/components/schemas/BalanceOut"
+          },
+          "lot": {
+            "$ref": "#/components/schemas/LotOut"
+          },
+          "movement": {
+            "$ref": "#/components/schemas/MovementOut"
+          }
+        },
+        "required": [
+          "movement",
+          "lot",
+          "balance"
+        ],
+        "title": "StockCommandResult",
         "type": "object"
       },
       "StyleOut": {
@@ -1553,6 +2497,69 @@
         ]
       }
     },
+    "/api/v1/factories/{factory_id}/capacity": {
+      "get": {
+        "operationId": "capacity_board_api_v1_factories__factory_id__capacity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "End",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapacityBoardOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capacity Board",
+        "tags": [
+          "capacity"
+        ]
+      }
+    },
     "/api/v1/factories/{factory_id}/customers": {
       "get": {
         "operationId": "list_customers_api_v1_factories__factory_id__customers_get",
@@ -1680,6 +2687,191 @@
         "summary": "Upload Orders Csv",
         "tags": [
           "imports"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/lines": {
+      "get": {
+        "operationId": "list_lines_api_v1_factories__factory_id__lines_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_LineOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Lines",
+        "tags": [
+          "capacity"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/materials": {
+      "get": {
+        "operationId": "material_overview_api_v1_factories__factory_id__materials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Material Overview",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/materials/{material_id}/ledger": {
+      "get": {
+        "operationId": "material_ledger_api_v1_factories__factory_id__materials__material_id__ledger_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MovementOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Material Ledger",
+        "tags": [
+          "inventory"
         ]
       }
     },
@@ -1956,6 +3148,407 @@
         "summary": "Create Order",
         "tags": [
           "orders"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/reservations": {
+      "get": {
+        "operationId": "list_reservations_api_v1_factories__factory_id__reservations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MaterialReservationOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reservations",
+        "tags": [
+          "inventory"
+        ]
+      },
+      "post": {
+        "operationId": "create_reservation_api_v1_factories__factory_id__reservations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationCommandResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Reservation",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/stock/corrections": {
+      "post": {
+        "operationId": "record_correction_api_v1_factories__factory_id__stock_corrections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockCommandResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Correction",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/stock/issues": {
+      "post": {
+        "operationId": "record_issue_api_v1_factories__factory_id__stock_issues_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockCommandResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Issue",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/stock/lots/{lot_id}/accept": {
+      "post": {
+        "operationId": "accept_lot_api_v1_factories__factory_id__stock_lots__lot_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotAcceptResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Lot",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/stock/receipts": {
+      "post": {
+        "operationId": "record_receipt_api_v1_factories__factory_id__stock_receipts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReceiptCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockCommandResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Receipt",
+        "tags": [
+          "inventory"
         ]
       }
     },
@@ -2375,6 +3968,60 @@
         "summary": "Transition Order",
         "tags": [
           "orders"
+        ]
+      }
+    },
+    "/api/v1/reservations/{reservation_id}/release": {
+      "post": {
+        "operationId": "release_reservation_api_v1_reservations__reservation_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reservation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Reservation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationCommandResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Reservation",
+        "tags": [
+          "inventory"
         ]
       }
     },

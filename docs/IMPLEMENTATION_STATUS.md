@@ -1515,3 +1515,52 @@ Success: no issues found in 4 source files
 - Limitation: a plain `pytest -m "not integration"` currently fails at collection because Task 8's
   in-progress `tests/integration/test_inventory_api.py` and `test_reservation_concurrency.py`
   cannot import `app.domain.inventory.service` yet. Nothing in this change affects them.
+
+## 2026-09-17 — Task 8: inventory and capacity services and APIs (ledger, locked reservations, capacity board)
+
+**Built:**
+- `app/domain/inventory/service.py`: ledger commands `record_receipt` (new lot ACCEPTED or
+  QUARANTINE; quarantined quantity joins `on_hand_accepted` only on `accept_lot`), `accept_lot`,
+  `record_issue` (lot must be ACCEPTED and hold the quantity; `on_hand - reserved` may not go
+  negative except by consuming the order's own ACTIVE reservations, oldest first, splitting a
+  partially consumed reservation into ACTIVE remainder + new CONSUMED row), `record_correction`
+  (references the original RECEIPT/ISSUE and its lot; never below `reserved`, never a negative lot);
+  `reserve_material` (internal locked primitive, 409 "Insufficient available material"),
+  `create_reservation` (storekeeper command), `release_reservation`,
+  `release_order_reservations`; `ensure_balance` (`INSERT ... ON CONFLICT DO NOTHING`, version 1),
+  `lock_balances` (`FOR UPDATE`, ascending id, `populate_existing`),
+  `lock_orders_using_materials`, `recompute_material_states(session, factory_id, material_ids, *,
+  order_ids=None)` (DRAFT/VALIDATED/PLANNED orders using the material, ≤ 500, Task 4
+  `material_state` per BOM line, most severe wins, `version + 1` on change); `material_overview`,
+  `list_ledger`, `list_reservations`. Every command audits (`inventory.receipt`, `.lot_accept`,
+  `.issue`, `.correction`, `.reserve`, `.release`) with before/after balance snapshots.
+- `app/domain/capacity/service.py`: `lock_slots`, `compatible_line_ids`, `slot_capacities`,
+  `allocate` (caller holds the slot lock; 409 when remaining capacity is insufficient; audit
+  `capacity.allocate`), `release_order_allocations`, `capacity_board` (≤ 31 days), `list_lines`.
+- Lock order everywhere: orders → `line_capacity_slots` → `material_balances` → lots/reservations,
+  each ascending by id. `app/domain/orders/service.py` cancel now uses the shared
+  `release_order_allocations` / `release_order_reservations` helpers (private copies removed).
+- Routes (`app/api/inventory.py`, `app/api/capacity.py`, schemas in `app/api/schemas/`):
+  `GET /factories/{f}/materials`, `GET .../materials/{material_id}/ledger`,
+  `POST .../stock/receipts`, `POST .../stock/lots/{lot_id}/accept`, `POST .../stock/issues`,
+  `POST .../stock/corrections`, `GET|POST .../reservations`, `POST /reservations/{id}/release`,
+  `GET /factories/{f}/lines`, `GET /factories/{f}/capacity?start&end`. Writes need
+  `inventory:write` + `Idempotency-Key`; 403s are audited DENIED; no role in the factory → 404.
+- `contracts/openapi.json` regenerated (`make contracts`).
+
+**Commands and results** (test DB `linesense_test_b`):
+- `make test` → 414 passed; `make typecheck` / `make lint` → clean for all Task 8 files.
+- `uv run pytest -m integration -q tests/integration/test_inventory_api.py
+  tests/integration/test_reservation_concurrency.py tests/integration/test_capacity_api.py
+  tests/integration/test_orders_api.py` → 40 passed.
+- Full `make test-integration` on HEAD + Task 8 files (scratch worktree, to exclude another agent's
+  uncommitted `app/seed/generator.py` rewrite) → 177 passed; full `ruff check`, `ruff format
+  --check`, `mypy app` there → clean.
+- Mutation check: removing `FOR UPDATE` from `lock_balances` makes all 11 concurrency tests fail.
+
+**Limitations:**
+- `reserve_material` does not recompute `material_state` (Task 14's apply recomputes its own order
+  and refreshes others via a job); order cancellation also does not recompute other orders' states
+  synchronously (it would lock orders after balances).
+- Material overview lists every organization material for the factory (zeros when no balance);
+  a BOM material without a balance row yields `UNKNOWN` readiness.
