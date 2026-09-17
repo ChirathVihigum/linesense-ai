@@ -63,9 +63,9 @@ required to reproduce).
 | Lines (KTN `L1`..`L6`, BYG `B1`..`B3`)           | 9 |
 | Capacity slots (9 lines × 30 days × 2 shifts)    | 540 |
 | Orders (80 `PO-KTN-*`, 20 `PO-BYG-*`, 1 demo)    | 101 |
-| Allocations                                     | ~170 (only PLANNED/IN_PRODUCTION/PRODUCTION_COMPLETE orders) |
-| Material lots / stock movements / balances       | 20 / ~300 / 20 |
-| Reservations / expected receipts                | ~55 / 6 |
+| Allocations                                     | ~160 (only PLANNED/IN_PRODUCTION/PRODUCTION_COMPLETE orders, spread across every compatible line, not just one) |
+| Material lots / stock movements / balances       | 40 / ~600 / 40 (both KTN and BYG) |
+| Reservations / expected receipts                | ~75 / ~11 (both factories) |
 | Operator aliases (25 per KTN line)               | 150 |
 | Skill records / operation staffing / cycle observations / line measurements | ~300 / ~144 / ~720 / ~108 |
 | Quality policy versions / inspections / defects / holds / releases | 1 / ~40 / ~32 / 1 / ~18 |

@@ -1564,3 +1564,105 @@ Success: no issues found in 4 source files
   synchronously (it would lock orders after balances).
 - Material overview lists every organization material for the factory (zeros when no balance);
   a BOM material without a balance row yields `UNKNOWN` readiness.
+
+### 2026-09-17 — Task 6 fix round 1 (post-review): allocation coverage, anchor-relative timestamps, BYG inventory
+
+Fixed three review findings in `services/backend/app/seed/generator.py`:
+
+1. **Critical — orders left without allocations.** `_allocate_order` previously restricted each
+   PLANNED/IN_PRODUCTION/PRODUCTION_COMPLETE order to one rng-chosen compatible line; if that one
+   line had no capacity left in the order's date window (a sibling compatible line might still have
+   had room), the order got its state with zero `ACTIVE` allocations (live symptom: `PO-KTN-0078`
+   PLANNED and `PO-KTN-0074` IN_PRODUCTION with no allocations). `_allocate_order` now builds the
+   slot pool from *every* compatible line and calls `plan_earliest_slots` with all of their line ids,
+   so a saturated line can never starve an order while another compatible line has room. If no
+   capacity exists anywhere in the window (still possible in principle), the order is downgraded to
+   `VALIDATED` (never left in a capacity-requiring state without an allocation) and its
+   produced/packed units reset to 0. Restricting each order's allocation window to
+   `max(anchor_date, due_date - 14 days)` (instead of always `anchor_date`) keeps every order's
+   capacity draw concentrated near its own due date, which both fixes an emergent problem this
+   change introduced (spreading every order across all 6 lines simultaneously front-loaded the
+   very first days across every line at once, which briefly broke the demo scenario's "L1-L6
+   capacity before the due date comfortably exceeds the order's requirement" fact) and is more
+   realistic. Added `test_every_planned_and_in_production_order_has_allocations` asserting every
+   PLANNED/IN_PRODUCTION order has ≥1 `ACTIVE` allocation, every PLANNED order has `ACTIVE`
+   reservations for each of its non-M01 BOM materials (both factories), and every
+   PRODUCTION_COMPLETE order has `produced_units >= quantity`.
+2. **Wall-clock reads.** `bom_versions.approved_at`, `quality_policy_versions.approved_at`,
+   `inspections.inspected_at`, and `quality_releases.released_at` were `datetime.now(UTC)` --
+   nondeterministic and a documentation-vs-code contradiction (the module docstring already claimed
+   "nothing here reads the wall clock"). Added `_anchor_datetime(anchor_date)` (08:00 Asia/Colombo,
+   converted to UTC) as the one time-of-day reference; every timestamp above is now that plus a
+   fixed or rng-derived (still deterministic) offset. `grep -rn "datetime.now\|date.today" app/seed`
+   now only matches `__main__.py`'s CLI default-anchor-date helper (legitimate: it is outside
+   `seed_demo`, only used when `--anchor-date` is omitted) and comments. Extended the determinism
+   test into `_full_digest`: sorted tuples covering orders (now also `production_state`,
+   `material_state`, `quality_state`, `priority`), `bom_versions.approved_at`,
+   `quality_policy_versions.approved_at`, `inspections.inspected_at`, and
+   `quality_releases.released_at` -- this digest would have failed against the old `datetime.now()`
+   code (two runs a few milliseconds apart would have produced different timestamps).
+3. **BYG had no material ledger.** `_seed_inventory` only ever created lots/movements/balances for
+   KTN, so BYG's 4 PLANNED orders had no reservations and no `MaterialBalance` to reserve against.
+   Extracted the KTN M01 demo ledger into `_seed_demo_material_ledger` (called from `_seed_inventory`
+   itself, before `_finalize_material_states` runs, so a real M01/KTN balance always exists when
+   material states are computed) and made the rest of `_seed_inventory` loop over **both** factories
+   for lots/movements/balances/reservations/expected receipts. `_seed_demo_scenario` no longer
+   creates a `MaterialBalance` row itself -- it fetches the one `_seed_demo_material_ledger` already
+   created and only sets `.reserved` to the demo's exact 400. Added `_finalize_material_states`
+   (run last, after the demo scenario, via `app.domain.inventory.calc.available_now` /
+   `gross_demand` / `shortage` / `material_state`) so every non-DRAFT order's stored
+   `material_state` reflects its actual BOM demand against the fully-seeded balances/expected
+   receipts, worst-case across its BOM lines -- never the old arbitrary
+   `rng.choice([READY, AT_RISK, SHORTAGE])` for VALIDATED orders. DRAFT orders keep the `UNKNOWN`
+   placeholder (no planning has happened yet); the demo order keeps its brief-mandated hardcoded
+   `UNKNOWN` (created after `_finalize_material_states` would have run on it, and never part of the
+   `orders` dict that function processes).
+
+Minor: `_seed_lines`/`_seed_ie` now import and reuse `app.seed.vocabulary.SKILL_CODES` instead of
+re-deriving the skill set from `OPERATION_CATALOG`; `test_no_personal_names_in_seeded_data` replaced
+the `for model, column in (...): del model` idiom with a plain tuple of columns.
+
+**Fresh seed summary** (test DB `linesense_test_d`, truncated then seeded -- `linesense_dev` was not
+touched this round per the controller's instruction):
+```json
+{
+  "created": true,
+  "organization_id": "3240cbce-4c86-4ad3-8c02-a8bdb67958bf",
+  "demo_order_id": "4b4656f9-a456-49cb-97f3-354e1e14a9c6",
+  "counts": {
+    "factories": 2, "users": 10, "memberships": 10, "role_assignments": 10,
+    "customers": 26, "styles": 12, "style_operations": 88, "materials": 20,
+    "bom_versions": 16, "bom_lines": 61, "lines": 9, "line_capabilities": 62,
+    "capacity_slots": 540, "orders": 101, "allocations": 158,
+    "material_lots": 40, "stock_movements": 600, "material_balances": 40,
+    "reservations": 78, "expected_receipts": 11, "operator_aliases": 150,
+    "skill_records": 304, "operation_staffing": 144, "cycle_observations": 720,
+    "line_measurements": 108, "quality_policy_versions": 1, "inspections": 39,
+    "defect_observations": 29, "quality_holds": 1, "quality_releases": 18
+  }
+}
+```
+`material_lots`/`material_balances` doubled from 20 to 40 (both factories) and `reservations` grew
+from 55 to 78 (BYG's PLANNED orders now draw real reservations), confirming finding 3 is fixed;
+`allocations` (158, down from 174) reflects the 14-day allocation-lead-window change, not a
+regression -- the slot/allocation and material-balance invariant tests still hold for every row.
+
+**Commands and results** (isolated test DB `linesense_test_d`, per this task's dispatch):
+```
+$ uv run pytest -m integration tests/integration/test_seed.py -q
+9 passed
+$ uv run pytest -m "not integration" -q
+419 passed, 178 deselected
+$ uv run pytest -m integration -q
+178 passed, 419 deselected
+$ uv run ruff check app/seed tests/integration/test_seed.py tests/helpers/auth.py
+All checks passed!
+$ uv run ruff format --check app/seed tests/integration/test_seed.py tests/helpers/auth.py
+8 files already formatted
+$ uv run mypy app
+Success: no issues found in 86 source files
+```
+
+**Files changed:** modified -- `services/backend/app/seed/generator.py`,
+`services/backend/tests/integration/test_seed.py`, `docs/evaluation/synthetic-data.md` (sizes table
+updated for both-factory inventory).

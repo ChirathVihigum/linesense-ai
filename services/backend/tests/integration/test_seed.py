@@ -19,8 +19,10 @@ from app.db.base import Base
 from app.db.models import (
     Allocation,
     BomLine,
+    BomVersion,
     Customer,
     CycleObservation,
+    Inspection,
     Line,
     LineCapacitySlot,
     Material,
@@ -29,6 +31,8 @@ from app.db.models import (
     OperationStaffing,
     OperatorAlias,
     Order,
+    QualityPolicyVersion,
+    QualityRelease,
     Reservation,
     StockMovement,
     Style,
@@ -140,16 +144,16 @@ async def test_capacity_slot_invariant(db_session: AsyncSession) -> None:
 async def test_no_personal_names_in_seeded_data(db_session: AsyncSession) -> None:
     await seed_demo(db_session, anchor_date=ANCHOR_DATE, issuer=TEST_ISSUER)
 
+    text_columns = (
+        User.display_name,
+        Customer.name,
+        Style.name,
+        Material.name,
+        Line.name,
+        OperatorAlias.alias_code,
+    )
     text_values: list[str] = []
-    for model, column in (
-        (User, User.display_name),
-        (Customer, Customer.name),
-        (Style, Style.name),
-        (Material, Material.name),
-        (Line, Line.name),
-        (OperatorAlias, OperatorAlias.alias_code),
-    ):
-        del model
+    for column in text_columns:
         text_values.extend((await db_session.execute(select(column))).scalars().all())
 
     for value in text_values:
@@ -303,36 +307,172 @@ async def test_demo_order_facts(db_session: AsyncSession) -> None:
     )
 
 
+async def test_every_planned_and_in_production_order_has_allocations(
+    db_session: AsyncSession,
+) -> None:
+    """Regression for fix round 1: `_allocate_order` must never leave a
+    PLANNED/IN_PRODUCTION/PRODUCTION_COMPLETE order without at least one
+    ACTIVE allocation (previously possible when the one rng-chosen line
+    had no capacity left, even though a sibling compatible line did).
+    """
+    await seed_demo(db_session, anchor_date=ANCHOR_DATE, issuer=TEST_ISSUER)
+
+    orders = list((await db_session.execute(select(Order))).scalars())
+    assert orders
+
+    demo_material_id = await db_session.scalar(
+        select(Material.id).where(Material.code == demo_scenario.DEMO_BOM_MATERIAL_CODE)
+    )
+
+    for order in orders:
+        if order.production_state in ("PLANNED", "IN_PRODUCTION"):
+            allocation_count = await db_session.scalar(
+                select(sa.func.count())
+                .select_from(Allocation)
+                .where(Allocation.order_id == order.id, Allocation.status == "ACTIVE")
+            )
+            assert allocation_count >= 1, (order.external_ref, order.production_state)
+
+        if order.production_state == "PLANNED":
+            bom_lines = list(
+                (
+                    await db_session.execute(
+                        select(BomLine).where(BomLine.bom_version_id == order.bom_version_id)
+                    )
+                ).scalars()
+            )
+            for bom_line in bom_lines:
+                if bom_line.material_id == demo_material_id:
+                    # M01 is deliberately excluded from generic BOM
+                    # reservations everywhere — reserved solely for the
+                    # demo scenario's one exact reservation.
+                    continue
+                reservation_count = await db_session.scalar(
+                    select(sa.func.count())
+                    .select_from(Reservation)
+                    .where(
+                        Reservation.order_id == order.id,
+                        Reservation.material_id == bom_line.material_id,
+                        Reservation.status == "ACTIVE",
+                    )
+                )
+                assert reservation_count >= 1, (order.external_ref, bom_line.material_id)
+
+        if order.production_state == "PRODUCTION_COMPLETE":
+            assert order.produced_units >= order.quantity, order.external_ref
+
+
 async def test_seed_is_deterministic_across_fresh_databases(
     db_session: AsyncSession, owner_engine: AsyncEngine
 ) -> None:
     first = await seed_demo(db_session, anchor_date=ANCHOR_DATE, issuer=TEST_ISSUER)
     assert first.created is True
-    digest_one = await _order_digest(db_session)
+    digest_one = await _full_digest(db_session)
     await db_session.commit()
 
     await _truncate_all(owner_engine)
 
     second = await seed_demo(db_session, anchor_date=ANCHOR_DATE, issuer=TEST_ISSUER)
     assert second.created is True
-    digest_two = await _order_digest(db_session)
+    digest_two = await _full_digest(db_session)
 
     assert digest_one == digest_two
-    assert digest_one  # non-empty
-    for entry in digest_one:
-        assert len(entry) == 3
-        ref, quantity, due_date = entry
-        assert isinstance(ref, str)
-        assert isinstance(quantity, int)
-        assert isinstance(due_date, str)
+    assert all(digest_one)  # every sub-digest is non-empty
 
 
-async def _order_digest(session: AsyncSession) -> tuple[tuple[str, int, str], ...]:
-    """A stable digest of every order's (external_ref, quantity, due_date).
+async def _full_digest(session: AsyncSession) -> tuple[tuple[object, ...], ...]:
+    """A stable digest covering every table this generator writes a
+    business-meaningful (non-UUID, non-`created_at`/`updated_at`) timestamp
+    or value into, so a regression like fix round 1's `datetime.now()`
+    calls (which made `approved_at`/`inspected_at`/`released_at` differ
+    between runs) would fail this test.
 
-    Deliberately excludes primary keys, foreign keys, and `created_at` /
-    `updated_at` so it only captures values the generator is required to
-    reproduce identically given the same anchor date and rng seed.
+    Each sub-digest is a sorted tuple of plain values (never a UUID or a
+    primary/foreign key) keyed by a business identifier instead
+    (`external_ref`, `(style_code, version_no)`, `(policy_code,
+    version_no)`), so it is directly comparable across two independent runs
+    against two empty databases.
     """
-    rows = (await session.execute(select(Order.external_ref, Order.quantity, Order.due_date))).all()
-    return tuple(sorted((ref, quantity, due_date.isoformat()) for ref, quantity, due_date in rows))
+    order_rows = (
+        await session.execute(
+            select(
+                Order.external_ref,
+                Order.quantity,
+                Order.due_date,
+                Order.production_state,
+                Order.material_state,
+                Order.quality_state,
+                Order.priority,
+            )
+        )
+    ).all()
+    orders_digest = tuple(
+        sorted(
+            (row.external_ref, row.quantity, row.due_date.isoformat(), *row[3:])
+            for row in order_rows
+        )
+    )
+
+    bom_rows = (
+        await session.execute(
+            select(Style.code, BomVersion.version_no, BomVersion.is_active, BomVersion.approved_at)
+            .select_from(BomVersion)
+            .join(Style, BomVersion.style_id == Style.id)
+        )
+    ).all()
+    bom_digest = tuple(
+        sorted(
+            (code, version_no, is_active, approved_at.isoformat())
+            for code, version_no, is_active, approved_at in bom_rows
+        )
+    )
+
+    policy_rows = (
+        await session.execute(
+            select(
+                QualityPolicyVersion.code,
+                QualityPolicyVersion.version_no,
+                QualityPolicyVersion.status,
+                QualityPolicyVersion.approved_at,
+            )
+        )
+    ).all()
+    policy_digest = tuple(
+        sorted(
+            (code, version_no, status, approved_at.isoformat())
+            for code, version_no, status, approved_at in policy_rows
+        )
+    )
+
+    inspection_rows = (
+        await session.execute(
+            select(
+                Order.external_ref,
+                Inspection.inspection_type,
+                Inspection.inspected_units,
+                Inspection.defective_units,
+                Inspection.result,
+                Inspection.inspected_at,
+            )
+            .select_from(Inspection)
+            .join(Order, Inspection.order_id == Order.id)
+        )
+    ).all()
+    inspection_digest = tuple(
+        sorted(
+            (row.external_ref, *row[1:5], row.inspected_at.isoformat()) for row in inspection_rows
+        )
+    )
+
+    release_rows = (
+        await session.execute(
+            select(Order.external_ref, QualityRelease.released_at)
+            .select_from(QualityRelease)
+            .join(Order, QualityRelease.order_id == Order.id)
+        )
+    ).all()
+    release_digest = tuple(
+        sorted((ref, released_at.isoformat()) for ref, released_at in release_rows)
+    )
+
+    return (orders_digest, bom_digest, policy_digest, inspection_digest, release_digest)
