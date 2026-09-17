@@ -249,8 +249,15 @@ def require(principal: Principal, permission: str, factory_id: UUID) -> None  # 
 Resource access helper (`app/auth/scope.py`):
 `async def load_scoped(session, model, resource_id, principal, permission) -> model` returns the row
 only if `row.organization_id == principal.organization_id` and the principal has `permission` for
-`row.factory_id`; otherwise raises `AppError(404, "NOT_FOUND")` (never reveal existence).
-Collection endpoints take `factory_id` in the path and call `require` first.
+`row.factory_id`. A missing row, a row in another organization, or a row in a factory where the
+principal holds no role at all raises `AppError(404, "NOT_FOUND")` (never reveal existence); a row in
+a factory where the principal holds some role but lacks `permission` raises `AppError(403,
+"FORBIDDEN")` (global rule: "missing permission on an accessible scope returns 403"). `Factory` rows
+are scoped by their own id; organization-level rows without `factory_id` require `permission` from
+any of the principal's roles. `accessible_factory_ids(session, principal, permission)` lists the
+organization's factories where `permission` is granted (org-wide roles expand to every factory).
+Collection endpoints take `factory_id` in the path and call `load_scoped(session, Factory,
+factory_id, principal, permission)` (or `require` once the factory is known to be in the org) first.
 
 ## 5. HTTP API conventions
 

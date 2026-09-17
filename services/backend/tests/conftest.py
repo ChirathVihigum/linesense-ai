@@ -17,7 +17,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db.base import Base
 from app.db.session import get_engine, get_session_factory
@@ -111,6 +111,12 @@ async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, Non
     session_factory = get_session_factory(db_engine.url.render_as_string(hide_password=False))
     async with session_factory() as session:
         yield session
+
+
+@pytest.fixture
+def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """App-role session factory for helpers that manage their own transactions."""
+    return get_session_factory(db_engine.url.render_as_string(hide_password=False))
 
 
 @pytest_asyncio.fixture(autouse=True)

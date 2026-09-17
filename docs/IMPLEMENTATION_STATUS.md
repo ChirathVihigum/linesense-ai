@@ -757,3 +757,69 @@ correction and a note that Task 4 implements these formulas), `docs/IMPLEMENTATI
 
 **Next step:** Task 5 (or the next task in the SDD plan — see
 `docs/superpowers/plans/2026-09-17-linesense-build.md`).
+
+### 2026-09-17 — Task 5: OIDC login with PKCE, server sessions, CSRF, role policy, audit and idempotency
+
+**Built:**
+
+- `services/backend/devtools/dev_oidc/`: a development-only OIDC provider (`make idp` /
+  `python -m devtools.dev_oidc`). It offers discovery, JWKS (RSA-2048 generated at startup,
+  `kid` = thumbprint), `/authorize` (escaped HTML form with a banner, a user select and a password
+  field), `/token` (client_secret_basic/post, single-use 60 s codes, PKCE S256, RS256 `id_token`
+  valid for 300 s) and `/userinfo`. It exits with code 2 unless `LS_ENVIRONMENT` is
+  `development` or `test`. `users.json` lists the ten contracts §9 identities.
+- `app/auth/policy.py`: `ROLES`, `PERMISSIONS`, `Principal` and `require`.
+  `app/auth/scope.py`: `load_scoped`, `accessible_factory_ids` and `visible_factories`.
+  `app/auth/sessions.py`: opaque sha256-hashed sessions with an 8 h absolute lifetime,
+  `last_seen_at` updated at most once a minute, rotation and revocation, and `load_principal`.
+- `app/auth/oidc.py` (Authlib `linesense` client, one per app instance) and
+  `app/auth/routes.py`: `/auth/login` (validates `next`), `/auth/callback` (upserts users by
+  `(iss, sub)`, never creates memberships, rotates the session, audits `auth.login`
+  SUCCESS/FAILED) and `/auth/logout` (204, revokes the session, audits `auth.logout`). The
+  `ls_oidc` `SessionMiddleware` cookie holds only the handshake state.
+- `app/auth/csrf.py`: a pure-ASGI CSRF middleware that checks Origin/Referer and
+  `X-CSRF-Token`, and keeps the session record it resolves on the request scope.
+- `app/api/middleware.py`: `SecurityHeadersMiddleware`. The 500 handler adds the same headers.
+- `app/api/deps.py`: `get_principal`, `get_optional_principal` and
+  `require_idempotency_key`. `app/api/me.py`: `GET /api/v1/me`. `app/api/pagination.py`:
+  `page_params` and `Page[T]`.
+- `app/audit/service.py`: `record_audit`, which redacts keys matching token/password/secret, and
+  `audit_denied`, which commits in its own transaction.
+- `app/idempotency/service.py`: `begin`/`finish`/`StoredResponse`/`request_hash`, using
+  `INSERT ... ON CONFLICT DO NOTHING` and then re-selecting the row with `FOR UPDATE`. Keys are
+  kept for 24 h.
+- `tests/helpers/auth.py`: `DEMO_IDENTITIES`, `seed_identity`, `login_as` and `AuthedClient`.
+  `tests/conftest.py` gains a `session_factory` fixture.
+- `app/settings.py`: in production, settings are rejected if `oidc_issuer` or
+  `oidc_redirect_uri` is not https, or if `oidc_client_secret` is a `dev-` value (ADR-0004).
+- `joserfc` (already installed as a transitive dependency of Authlib) is now a direct dependency
+  (`uv add joserfc`). `docs/security/authentication.md` was added. Contracts §4 now states the
+  404/403 split for `load_scoped`, matching the global rule "missing permission on an accessible
+  scope returns 403".
+
+**Commands and results (2026-09-17):**
+
+- `make typecheck`: `Success: no issues found in 52 source files`.
+  `uv run mypy devtools tests/helpers/auth.py`: no issues.
+- `make test-integration`: `58 passed, 323 deselected`. This includes 17 auth-flow tests
+  against the dev IdP running under uvicorn in a background thread.
+- `uv run pytest -m "not integration" -q --ignore=tests/unit/test_datasets.py
+  --ignore=tests/unit/test_seed_vocabulary.py`: `308 passed`.
+- `ruff check` and `ruff format --check` pass on every file this task touched.
+- `make docs-check`: all 36 relative links resolve.
+- Manual check: `LS_ENVIRONMENT=development uv run python -m devtools.dev_oidc` followed by
+  `curl http://127.0.0.1:8090/.well-known/openid-configuration` returned
+  `"issuer":"http://127.0.0.1:8090"`. `LS_ENVIRONMENT=production` produced `exit=2` with the
+  refusal message.
+
+**Known issues / limitations:**
+
+- Two things in the working tree are unrelated to this task and are not committed with it: the
+  concurrently added `tests/unit/test_datasets.py` (it needs `data/synthetic/`, which is still
+  being written) and `tests/unit/test_seed_vocabulary.py` (2 ruff SIM300 findings). Because of
+  them, `make test` and `make lint` over the whole repo currently fail.
+- Limitations of the dev IdP (shared password, in-memory state, a key that changes on every
+  restart, no TLS) are documented in `docs/security/authentication.md`. Production must use a
+  real IdP. The Keycloak realm is scheduled for Task 26.
+- `DEMO_IDENTITIES` lives in `tests/helpers/auth.py` until Task 6 moves it to
+  `app/seed/generator.py`. A unit test keeps `users.json` in sync with it.

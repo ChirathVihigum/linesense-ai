@@ -57,3 +57,53 @@ class TraceIdMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             trace_id_var.reset(token)
+
+
+_BASE_SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"same-origin"),
+    (b"x-frame-options", b"DENY"),
+)
+_NO_STORE_PREFIXES = ("/api", "/auth")
+
+
+def security_headers_for(path: str) -> dict[str, str]:
+    """The security headers every response to ``path`` carries."""
+    headers = {
+        name.decode("latin-1"): value.decode("latin-1") for name, value in _BASE_SECURITY_HEADERS
+    }
+    if path.startswith(_NO_STORE_PREFIXES):
+        headers["cache-control"] = "no-store"
+    return headers
+
+
+class SecurityHeadersMiddleware:
+    """Adds ``X-Content-Type-Options``, ``Referrer-Policy`` and ``X-Frame-Options``
+    to every HTTP response, and ``Cache-Control: no-store`` under ``/api`` and
+    ``/auth`` (replacing any value set by the handler)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        extra = [
+            (name.encode("latin-1"), value.encode("latin-1"))
+            for name, value in security_headers_for(scope["path"]).items()
+        ]
+        names = {name for name, _ in extra}
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                existing = [
+                    (name, value)
+                    for name, value in message.get("headers", [])
+                    if name.lower() not in names
+                ]
+                message["headers"] = existing + extra
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)

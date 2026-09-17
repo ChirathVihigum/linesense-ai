@@ -94,6 +94,16 @@ class Settings(BaseSettings):
             )
         if not self.public_origin.startswith("https://"):
             errors.append("public_origin must use https:// when LS_ENVIRONMENT=production")
+        # The development OIDC provider (devtools/dev_oidc, ADR-0004) must never
+        # be the identity provider of a production deployment.
+        if not self.oidc_issuer.startswith("https://"):
+            errors.append("oidc_issuer must use https:// when LS_ENVIRONMENT=production")
+        if not self.oidc_redirect_uri.startswith("https://"):
+            errors.append("oidc_redirect_uri must use https:// when LS_ENVIRONMENT=production")
+        if "dev-" in self.oidc_client_secret.get_secret_value():
+            errors.append(
+                "oidc_client_secret must not be a development value when LS_ENVIRONMENT=production"
+            )
         if self.llm_provider == "fixture":
             errors.append("llm_provider must not be 'fixture' when LS_ENVIRONMENT=production")
         if self.llm_provider == "anthropic" and not self.anthropic_api_key.get_secret_value():
