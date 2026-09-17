@@ -365,11 +365,18 @@ Queues: `orchestrator`, `agent`, `document`, `maintenance`. Delivery is at least
 ```python
 async def enqueue(session, *, queue: str, job_type: str, payload: dict, dedupe_key: str | None = None,
                   available_at: datetime | None = None, max_attempts: int = 3) -> UUID | None
-async def claim(session_factory, *, queues: Sequence[str], worker_id: str, lease_seconds: int) -> ClaimedJob | None
+async def claim(session_factory, *, queues: Sequence[str], worker_id: str, lease_seconds: int,
+                on_exhausted: ExhaustedCallback | None = None) -> ClaimedJob | None
 async def heartbeat(session_factory, *, job_id: UUID, lease_token: UUID, lease_seconds: int) -> bool
 async def complete(session, *, job_id: UUID, lease_token: UUID) -> bool     # inside caller's transaction; False = fenced out
-async def fail(session_factory, *, job_id: UUID, lease_token: UUID, error: str, retryable: bool) -> None
+async def fail(session_factory, *, job_id: UUID, lease_token: UUID, error: str, retryable: bool,
+               on_exhausted: ExhaustedCallback | None = None) -> None
+# ExhaustedCallback = Callable[[ClaimedJob, str], Awaitable[None]]
 ```
+
+`claim` and `fail` take an optional `on_exhausted` callback (added in Task 10). The queue module
+has no handler registry, so this callback is how the worker's per-job-type exhaustion hook runs.
+The callback runs after the `FAILED` state is committed.
 
 A claim selects `READY` jobs with `available_at <= now()` **or** `LEASED` jobs whose `leased_until <
 now()`, using `FOR UPDATE SKIP LOCKED`, sets a fresh `lease_token`, increments `attempt`, and

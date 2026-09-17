@@ -9,12 +9,13 @@ customer, style, BOM, ...), adds the row(s) to the session, and flushes
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    AnalysisRun,
     BomVersion,
     Customer,
     Factory,
@@ -25,11 +26,21 @@ from app.db.models import (
     Membership,
     Order,
     Organization,
+    Recommendation,
     Style,
     StyleOperation,
     User,
 )
-from app.domain.vocab import MaterialState, OrderSource, ProductionState, QualityState
+from app.domain.vocab import (
+    GeneratedBy,
+    MaterialState,
+    OrderSource,
+    ProductionState,
+    QualityState,
+    RecommendationKind,
+    RecommendationStatus,
+    RunStatus,
+)
 
 
 def _slug() -> str:
@@ -277,6 +288,67 @@ async def make_balance(
     session.add(balance)
     await session.flush()
     return balance
+
+
+async def make_run(
+    session: AsyncSession,
+    order: Order | None = None,
+    requested_by: User | None = None,
+    **overrides: Any,
+) -> AnalysisRun:
+    """An ``analysis_runs`` row (status QUEUED) for ``order`` (created if omitted)."""
+    order = order or await make_order(session)
+    requested_by = requested_by or await make_user(session)
+    defaults: dict[str, Any] = {
+        "organization_id": order.organization_id,
+        "factory_id": order.factory_id,
+        "order_id": order.id,
+        "status": RunStatus.QUEUED.value,
+        "requested_by": requested_by.id,
+        "idempotency_key": f"run-{_slug()}",
+        "llm_provider": "fixture",
+        "llm_model": "fixture",
+        "trace_id": f"trace-{_slug()}",
+        "deadline_at": utcnow() + timedelta(seconds=120),
+    }
+    defaults.update(overrides)
+    run = AnalysisRun(**defaults)
+    session.add(run)
+    await session.flush()
+    return run
+
+
+async def make_recommendation(
+    session: AsyncSession,
+    run: AnalysisRun | None = None,
+    proposer: User | None = None,
+    **overrides: Any,
+) -> Recommendation:
+    """A PROPOSED ``recommendations`` row for ``run`` (created if omitted)."""
+    run = run or await make_run(session)
+    proposer = proposer or await make_user(session)
+    defaults: dict[str, Any] = {
+        "organization_id": run.organization_id,
+        "factory_id": run.factory_id,
+        "order_id": run.order_id,
+        "run_id": run.id,
+        "kind": RecommendationKind.ALLOCATION.value,
+        "status": RecommendationStatus.PROPOSED.value,
+        "proposal": {},
+        "proposal_hash": uuid.uuid4().hex,
+        "input_versions": {},
+        "rationale": "test recommendation",
+        "evidence_refs": {},
+        "generated_by": GeneratedBy.DETERMINISTIC.value,
+        "proposed_by_agent": "planning",
+        "proposer_user_id": proposer.id,
+        "expires_at": utcnow() + timedelta(hours=1),
+    }
+    defaults.update(overrides)
+    recommendation = Recommendation(**defaults)
+    session.add(recommendation)
+    await session.flush()
+    return recommendation
 
 
 def utcnow() -> datetime:
