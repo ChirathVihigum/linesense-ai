@@ -22,9 +22,10 @@ from __future__ import annotations
 import random
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from sqlalchemy import select
@@ -64,7 +65,8 @@ from app.db.models import (
     StyleOperation,
     User,
 )
-from app.domain.inventory.calc import gross_demand
+from app.domain.inventory.calc import available_now, gross_demand, shortage
+from app.domain.inventory.calc import material_state as derive_material_state
 from app.domain.planning.calc import SlotCapacity, plan_earliest_slots
 from app.domain.quality.calc import QualityPolicyRules, evaluate_inspection
 from app.domain.vocab import (
@@ -98,6 +100,7 @@ from app.seed.vocabulary import (
     KTN_ORDER_REFS,
     MATERIALS,
     OPERATION_CATALOG,
+    SKILL_CODES,
     STYLE_CODES,
 )
 
@@ -148,6 +151,15 @@ _STATES_NEEDING_CAPACITY = frozenset(
     {ProductionState.PLANNED, ProductionState.IN_PRODUCTION, ProductionState.PRODUCTION_COMPLETE}
 )
 
+# Orders are scheduled starting no earlier than `due_date - _ALLOCATION_LEAD_DAYS`
+# (clamped to `anchor_date`), not always from `anchor_date`: a planner would
+# not normally book capacity for a far-future order into the very first
+# available days, and reserving the demo scenario's anchor..anchor+5 window
+# for orders that are actually due that early keeps its "capacity comfortably
+# exceeds the order's requirement" fact true regardless of how many of the
+# ~100 random orders end up needing capacity.
+_ALLOCATION_LEAD_DAYS = 14
+
 # The 4 styles that additionally get a superseded (inactive) BOM version.
 _STYLES_WITH_BOM_HISTORY = frozenset({"ST-01", "ST-02", "ST-04", "ST-05"})
 
@@ -164,6 +176,26 @@ _QUALITY_POLICY_RULES: dict[str, object] = {
     "max_critical_defects": 0,
     "required_inspection_types": ["FINAL"],
 }
+
+# Worse-outcome ranking used to combine several BOM lines' material states
+# into one order-level state (`_finalize_material_states`).
+_MATERIAL_STATE_SEVERITY: dict[MaterialState, int] = {
+    MaterialState.READY: 0,
+    MaterialState.AT_RISK: 1,
+    MaterialState.SHORTAGE: 2,
+    MaterialState.UNKNOWN: 3,
+}
+
+
+def _anchor_datetime(anchor_date: date) -> datetime:
+    """08:00 Asia/Colombo on `anchor_date`, converted to UTC.
+
+    The single time-of-day reference every non-date timestamp in the
+    generator is computed relative to (plus a deterministic offset) —
+    never `datetime.now()`.
+    """
+    local = datetime.combine(anchor_date, time(8, 0), tzinfo=ZoneInfo("Asia/Colombo"))
+    return local.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -214,7 +246,7 @@ async def seed_demo(
     customers = await _seed_customers(session, org)
     materials = await _seed_materials(session, org, rng)
     styles, style_ops = await _seed_styles(session, org, rng)
-    bom_versions = await _seed_boms(session, rng, styles, materials, users)
+    bom_versions = await _seed_boms(session, rng, styles, materials, users, anchor_date)
     lines, line_capabilities = await _seed_lines(session, factories, rng)
     slots = await _seed_capacity_slots(session, lines, anchor_date, rng)
 
@@ -239,7 +271,6 @@ async def seed_demo(
         factories=factories,
         materials=materials,
         orders=orders,
-        bom_versions=bom_versions,
         anchor_date=anchor_date,
         rng=rng,
     )
@@ -255,7 +286,7 @@ async def seed_demo(
         rng=rng,
     )
 
-    policy_version = await _seed_quality_policy(session, org, users)
+    policy_version = await _seed_quality_policy(session, org, users, anchor_date)
     await _seed_quality_inspections(
         session,
         orders=orders,
@@ -263,6 +294,7 @@ async def seed_demo(
         policy_version=policy_version,
         users=users,
         rng=rng,
+        anchor_date=anchor_date,
     )
 
     demo_order = await _seed_demo_scenario(
@@ -276,6 +308,12 @@ async def seed_demo(
         orders=orders,
         anchor_date=anchor_date,
     )
+
+    # Recomputed last so every non-DRAFT order's `material_state` reflects
+    # the fully-seeded balances/reservations/expected receipts (including
+    # the demo scenario's), via the real domain function — never an
+    # arbitrary random choice.
+    await _finalize_material_states(session, orders=orders)
 
     await session.flush()
     counts = await _count_tables(session, org.id)
@@ -421,11 +459,14 @@ async def _seed_boms(
     styles: dict[str, Style],
     materials: dict[str, Material],
     users: dict[str, User],
+    anchor_date: date,
 ) -> dict[str, BomVersion]:
     active_versions: dict[str, BomVersion] = {}
     material_codes = list(materials.keys())
     approver = users["supervisor@demo.test"].id
-    approved_at = datetime.now(UTC)
+    # BOMs are approved well before the anchor date (a business fact, not a
+    # seeding-time fact) — derived from anchor_date, never `datetime.now()`.
+    approved_at = _anchor_datetime(anchor_date) - timedelta(days=60)
 
     for code, style in styles.items():
         version_no = 1
@@ -508,7 +549,7 @@ async def _seed_boms(
 async def _seed_lines(
     session: AsyncSession, factories: dict[str, Factory], rng: random.Random
 ) -> tuple[dict[str, Line], dict[str, set[str]]]:
-    all_skills = {skill for _, skill in OPERATION_CATALOG}
+    all_skills = set(SKILL_CODES)
     lines: dict[str, Line] = {}
     capabilities: dict[str, set[str]] = {}
 
@@ -607,26 +648,12 @@ async def _seed_orders(
         quantity = rng.randint(300, 3000)
         due_date = anchor_date + timedelta(days=rng.randint(3, 45))
         priority = rng.randint(1, 5)
-        state = _ORDER_STATE_CYCLE[index % len(_ORDER_STATE_CYCLE)]
+        intended_state = _ORDER_STATE_CYCLE[index % len(_ORDER_STATE_CYCLE)]
 
-        produced_units = 0
-        packed_units = 0
-        if state == ProductionState.IN_PRODUCTION:
-            produced_units = rng.randint(1, max(1, quantity - 1))
-            packed_units = rng.randint(0, produced_units)
-        elif state == ProductionState.PRODUCTION_COMPLETE:
-            produced_units = quantity
-            packed_units = quantity
-
-        if state == ProductionState.DRAFT:
-            material_state = MaterialState.UNKNOWN.value
-        elif state == ProductionState.VALIDATED:
-            material_state = rng.choice(
-                [MaterialState.READY, MaterialState.AT_RISK, MaterialState.SHORTAGE]
-            ).value
-        else:
-            material_state = MaterialState.READY.value
-
+        # `material_state` is a placeholder here: DRAFT orders keep UNKNOWN
+        # (no planning has happened yet); every other order's real state is
+        # computed by `_finalize_material_states` once balances/reservations
+        # exist, from actual BOM demand — never a random choice.
         order = Order(
             organization_id=org.id,
             factory_id=factory.id,
@@ -635,12 +662,12 @@ async def _seed_orders(
             bom_version_id=bom_versions[style_code].id,
             external_ref=ref,
             quantity=quantity,
-            produced_units=produced_units,
-            packed_units=packed_units,
+            produced_units=0,
+            packed_units=0,
             due_date=due_date,
             priority=priority,
-            production_state=state.value,
-            material_state=material_state,
+            production_state=intended_state.value,
+            material_state=MaterialState.UNKNOWN.value,
             quality_state=QualityState.NOT_INSPECTED.value,
             source=OrderSource.SYNTHETIC_SEED.value,
         )
@@ -648,25 +675,41 @@ async def _seed_orders(
         await session.flush()
         orders[ref] = order
 
-        if state in _STATES_NEEDING_CAPACITY:
+        final_state = intended_state
+        if intended_state in _STATES_NEEDING_CAPACITY:
             required_skills = {op.skill_code for op in ops}
             candidate_codes = ktn_line_codes if factory_code == "KTN" else byg_line_codes
             compatible = _compatible_line_codes(required_skills, line_capabilities, candidate_codes)
-            if compatible:
-                chosen_code = rng.choice(compatible)
-                line = lines[chosen_code]
-                sam_total = _style_sam_total(ops)
+            earliest_date = max(anchor_date, due_date - timedelta(days=_ALLOCATION_LEAD_DAYS))
+            primary_line_id = (
                 _allocate_order(
                     session,
                     order=order,
-                    line=line,
-                    line_code=chosen_code,
-                    sam_total=sam_total,
+                    compatible_codes=compatible,
+                    lines=lines,
+                    sam_total=_style_sam_total(ops),
                     slots=slots,
-                    earliest_date=anchor_date,
+                    earliest_date=earliest_date,
                     due_date=due_date,
                 )
-                order_line[order.id] = line.id
+                if compatible
+                else None
+            )
+            if primary_line_id is not None:
+                order_line[order.id] = primary_line_id
+            else:
+                # No compatible line had capacity left in the window: never
+                # leave a PLANNED/IN_PRODUCTION/PRODUCTION_COMPLETE order
+                # without at least one ACTIVE allocation.
+                final_state = ProductionState.VALIDATED
+
+        if final_state == ProductionState.IN_PRODUCTION:
+            order.produced_units = rng.randint(1, max(1, quantity - 1))
+            order.packed_units = rng.randint(0, order.produced_units)
+        elif final_state == ProductionState.PRODUCTION_COMPLETE:
+            order.produced_units = quantity
+            order.packed_units = quantity
+        order.production_state = final_state.value
 
     await session.flush()
     return orders, order_line
@@ -676,42 +719,55 @@ def _allocate_order(
     session: AsyncSession,
     *,
     order: Order,
-    line: Line,
-    line_code: str,
+    compatible_codes: list[str],
+    lines: dict[str, Line],
     sam_total: Decimal,
     slots: dict[tuple[str, date, str], LineCapacitySlot],
     earliest_date: date,
     due_date: date,
-) -> None:
-    if sam_total <= 0:
-        return
-    relevant = [
-        (slot_date, shift_code, slot)
-        for (code, slot_date, shift_code), slot in slots.items()
-        if code == line_code and earliest_date <= slot_date <= due_date
-    ]
-    relevant.sort(key=lambda item: (item[0], item[1]))
-    slot_capacities = [
-        SlotCapacity(
-            slot_id=slot.id,
-            line_id=line.id,
-            slot_date=slot_date,
-            shift_code=shift_code,
-            available_operator_minutes=slot.available_operator_minutes,
-            planned_efficiency=slot.planned_efficiency,
-            allocated_standard_minutes=slot.allocated_standard_minutes,
+) -> uuid.UUID | None:
+    """Allocate `order` across every compatible line's capacity slots in
+    ``[earliest_date, due_date]``, filling the earliest available capacity
+    first regardless of which compatible line it falls on (never restricted
+    to a single rng-chosen line, so a saturated line can never leave an
+    order with zero allocations while a sibling compatible line still has
+    room). Returns the first allocation's line id, or ``None`` if no
+    capacity was available on any compatible line.
+    """
+    if sam_total <= 0 or not compatible_codes:
+        return None
+
+    slot_lookup: dict[uuid.UUID, LineCapacitySlot] = {}
+    slot_capacities: list[SlotCapacity] = []
+    for (code, slot_date, shift_code), slot in slots.items():
+        if code not in compatible_codes or not (earliest_date <= slot_date <= due_date):
+            continue
+        slot_lookup[slot.id] = slot
+        slot_capacities.append(
+            SlotCapacity(
+                slot_id=slot.id,
+                line_id=lines[code].id,
+                slot_date=slot_date,
+                shift_code=shift_code,
+                available_operator_minutes=slot.available_operator_minutes,
+                planned_efficiency=slot.planned_efficiency,
+                allocated_standard_minutes=slot.allocated_standard_minutes,
+            )
         )
-        for slot_date, shift_code, slot in relevant
-    ]
+    if not slot_capacities:
+        return None
+
+    compatible_line_ids = frozenset(lines[code].id for code in compatible_codes)
     plan = plan_earliest_slots(
         units=order.quantity,
         sam_minutes_per_unit=sam_total,
         slots=slot_capacities,
         earliest_date=earliest_date,
         due_date=due_date,
-        compatible_line_ids=frozenset({line.id}),
+        compatible_line_ids=compatible_line_ids,
     )
-    slot_by_id = {slot.id: slot for _, _, slot in relevant}
+
+    primary_line_id: uuid.UUID | None = None
     for allocation in plan.allocations:
         standard_minutes = _quantize_minutes(allocation.standard_minutes)
         units = _quantize_units(allocation.units)
@@ -728,11 +784,86 @@ def _allocate_order(
                 status=AllocationStatus.ACTIVE.value,
             )
         )
-        slot = slot_by_id[allocation.slot_id]
+        slot = slot_lookup[allocation.slot_id]
         slot.allocated_standard_minutes = slot.allocated_standard_minutes + standard_minutes
+        if primary_line_id is None:
+            primary_line_id = allocation.line_id
+    return primary_line_id
 
 
 # --- Inventory ---------------------------------------------------------------
+
+
+def _is_demo_material_at_ktn(factory_code: str, material_code: str) -> bool:
+    """True only for KTN's M01 — its ledger/balance are the demo scenario's
+    exact deterministic numbers (`_seed_demo_material_ledger`), never the
+    generic random path. BYG's M01 is an ordinary material.
+    """
+    return factory_code == "KTN" and material_code == demo_scenario.DEMO_BOM_MATERIAL_CODE
+
+
+async def _seed_demo_material_ledger(
+    session: AsyncSession,
+    *,
+    org: Organization,
+    factory: Factory,
+    material: Material,
+    anchor_date: date,
+) -> None:
+    """KTN M01's deterministic ledger and balance (Task 6 brief section 4):
+    one receipt lot, then a fixed 14-day daily issue of exactly
+    `DEMO_ISSUE_DAILY_QUANTITY`, so `average_daily_consumption` is exactly
+    the target and `on_hand_accepted` is exactly the demo balance by
+    construction. `reserved` starts at 0 here; `_seed_demo_scenario` sets
+    it to the demo's exact reservation amount once the "other order" it
+    reserves against exists.
+    """
+    receipt_at = anchor_date - timedelta(days=demo_scenario.DEMO_ISSUE_WINDOW_DAYS + 1)
+    lot = MaterialLot(
+        organization_id=org.id,
+        factory_id=factory.id,
+        material_id=material.id,
+        lot_code=f"LOT-{material.code}-DEMO",
+        status=MaterialLotStatus.ACCEPTED.value,
+        received_at=datetime.combine(receipt_at, datetime.min.time(), tzinfo=UTC),
+    )
+    session.add(lot)
+    await session.flush()
+
+    session.add(
+        StockMovement(
+            organization_id=org.id,
+            factory_id=factory.id,
+            material_id=material.id,
+            lot_id=lot.id,
+            movement_type=MovementType.RECEIPT.value,
+            quantity=demo_scenario.DEMO_RECEIPT_LOT_QUANTITY,
+            created_at=datetime.combine(receipt_at, datetime.min.time(), tzinfo=UTC),
+        )
+    )
+    for offset in range(demo_scenario.DEMO_ISSUE_WINDOW_DAYS, 0, -1):
+        issue_date = anchor_date - timedelta(days=offset)
+        session.add(
+            StockMovement(
+                organization_id=org.id,
+                factory_id=factory.id,
+                material_id=material.id,
+                lot_id=lot.id,
+                movement_type=MovementType.ISSUE.value,
+                quantity=-demo_scenario.DEMO_ISSUE_DAILY_QUANTITY,
+                created_at=datetime.combine(issue_date, datetime.min.time(), tzinfo=UTC),
+            )
+        )
+
+    session.add(
+        MaterialBalance(
+            organization_id=org.id,
+            factory_id=factory.id,
+            material_id=material.id,
+            on_hand_accepted=demo_scenario.DEMO_BALANCE_ON_HAND_ACCEPTED,
+            reserved=Decimal("0"),
+        )
+    )
 
 
 async def _seed_inventory(
@@ -742,96 +873,100 @@ async def _seed_inventory(
     factories: dict[str, Factory],
     materials: dict[str, Material],
     orders: dict[str, Order],
-    bom_versions: dict[str, BomVersion],
     anchor_date: date,
     rng: random.Random,
 ) -> None:
-    factory = factories["KTN"]
+    """Lots/movements/balances/reservations/expected receipts for **both**
+    factories. KTN's M01 uses the demo scenario's exact deterministic
+    ledger (`_seed_demo_material_ledger`); every other (factory, material)
+    pair gets a generous random receipt and a random 14-day issue history.
+    """
+    for factory_code, factory in factories.items():
+        for code, material in materials.items():
+            if _is_demo_material_at_ktn(factory_code, code):
+                await _seed_demo_material_ledger(
+                    session, org=org, factory=factory, material=material, anchor_date=anchor_date
+                )
+                continue
 
-    for code, material in materials.items():
-        if code == demo_scenario.DEMO_BOM_MATERIAL_CODE:
-            continue  # handled by _seed_demo_scenario
-
-        lot_quantity = Decimal(rng.randint(50_000, 150_000))
-        lot = MaterialLot(
-            organization_id=org.id,
-            factory_id=factory.id,
-            material_id=material.id,
-            lot_code=f"LOT-{code}-0001",
-            status=MaterialLotStatus.ACCEPTED.value,
-            received_at=datetime.combine(
-                anchor_date - timedelta(days=30), datetime.min.time(), tzinfo=UTC
-            ),
-        )
-        session.add(lot)
-        await session.flush()
-
-        session.add(
-            StockMovement(
+            lot_quantity = Decimal(rng.randint(50_000, 150_000))
+            lot = MaterialLot(
                 organization_id=org.id,
                 factory_id=factory.id,
                 material_id=material.id,
-                lot_id=lot.id,
-                movement_type=MovementType.RECEIPT.value,
-                quantity=lot_quantity,
-                created_at=datetime.combine(
+                lot_code=f"LOT-{factory_code}-{code}-0001",
+                status=MaterialLotStatus.ACCEPTED.value,
+                received_at=datetime.combine(
                     anchor_date - timedelta(days=30), datetime.min.time(), tzinfo=UTC
                 ),
             )
-        )
+            session.add(lot)
+            await session.flush()
 
-        total_issued = Decimal("0")
-        for offset in range(14, 0, -1):
-            issue_qty = Decimal(str(round(rng.uniform(0, float(lot_quantity) * 0.01), 2)))
-            if issue_qty <= 0:
-                continue
-            issue_date = anchor_date - timedelta(days=offset)
             session.add(
                 StockMovement(
                     organization_id=org.id,
                     factory_id=factory.id,
                     material_id=material.id,
                     lot_id=lot.id,
-                    movement_type=MovementType.ISSUE.value,
-                    quantity=-issue_qty,
-                    created_at=datetime.combine(issue_date, datetime.min.time(), tzinfo=UTC),
+                    movement_type=MovementType.RECEIPT.value,
+                    quantity=lot_quantity,
+                    created_at=datetime.combine(
+                        anchor_date - timedelta(days=30), datetime.min.time(), tzinfo=UTC
+                    ),
                 )
             )
-            total_issued += issue_qty
 
-        on_hand = lot_quantity - total_issued
+            total_issued = Decimal("0")
+            for offset in range(14, 0, -1):
+                issue_qty = Decimal(str(round(rng.uniform(0, float(lot_quantity) * 0.01), 2)))
+                if issue_qty <= 0:
+                    continue
+                issue_date = anchor_date - timedelta(days=offset)
+                session.add(
+                    StockMovement(
+                        organization_id=org.id,
+                        factory_id=factory.id,
+                        material_id=material.id,
+                        lot_id=lot.id,
+                        movement_type=MovementType.ISSUE.value,
+                        quantity=-issue_qty,
+                        created_at=datetime.combine(issue_date, datetime.min.time(), tzinfo=UTC),
+                    )
+                )
+                total_issued += issue_qty
 
-        session.add(
-            MaterialBalance(
-                organization_id=org.id,
-                factory_id=factory.id,
-                material_id=material.id,
-                on_hand_accepted=on_hand,
-                reserved=Decimal("0"),
+            on_hand = lot_quantity - total_issued
+
+            session.add(
+                MaterialBalance(
+                    organization_id=org.id,
+                    factory_id=factory.id,
+                    material_id=material.id,
+                    on_hand_accepted=on_hand,
+                    reserved=Decimal("0"),
+                )
             )
-        )
 
     await session.flush()
 
-    # Reservations: gross BOM demand of every PLANNED order, per material.
-    reserved_by_material: dict[str, Decimal] = {}
-    # Inventory (lots/movements/balances) is only seeded for the KTN factory
-    # (the demo scenario's factory), so only its PLANNED orders draw down
-    # reservations against a real `MaterialBalance` row.
+    # Reservations: gross BOM demand of every PLANNED order, per (factory,
+    # material) — both KTN and BYG. M01 is always skipped: its only
+    # reservation is the demo scenario's deliberate, exact one.
+    bom_lines_by_version: dict[uuid.UUID, list[BomLine]] = {}
+    reserved_by_key: dict[tuple[str, str], Decimal] = {}
     planned_orders = [
-        o
-        for o in orders.values()
-        if o.production_state == ProductionState.PLANNED.value and o.factory_id == factory.id
+        o for o in orders.values() if o.production_state == ProductionState.PLANNED.value
     ]
-    bom_lines_by_style_version: dict[uuid.UUID, list[BomLine]] = {}
     for order in planned_orders:
+        factory_code = next(code for code, f in factories.items() if f.id == order.factory_id)
         bom_version_id = order.bom_version_id
-        if bom_version_id not in bom_lines_by_style_version:
+        if bom_version_id not in bom_lines_by_version:
             result = await session.execute(
                 select(BomLine).where(BomLine.bom_version_id == bom_version_id)
             )
-            bom_lines_by_style_version[bom_version_id] = list(result.scalars())
-        for bom_line in bom_lines_by_style_version[bom_version_id]:
+            bom_lines_by_version[bom_version_id] = list(result.scalars())
+        for bom_line in bom_lines_by_version[bom_version_id]:
             material_code = next(
                 (code for code, mat in materials.items() if mat.id == bom_line.material_id), None
             )
@@ -853,44 +988,114 @@ async def _seed_inventory(
                     status=ReservationStatus.ACTIVE.value,
                 )
             )
-            reserved_by_material[material_code] = (
-                reserved_by_material.get(material_code, Decimal("0")) + demand
-            )
+            key = (factory_code, material_code)
+            reserved_by_key[key] = reserved_by_key.get(key, Decimal("0")) + demand
 
-    if reserved_by_material:
-        balance_result = await session.execute(
-            select(MaterialBalance).where(MaterialBalance.factory_id == factory.id)
-        )
-        balances_by_material_id = {b.material_id: b for b in balance_result.scalars()}
-        for material_code, reserved_total in reserved_by_material.items():
-            balance = balances_by_material_id.get(materials[material_code].id)
+    if reserved_by_key:
+        balance_result = await session.execute(select(MaterialBalance))
+        balances_by_key: dict[tuple[uuid.UUID, uuid.UUID], MaterialBalance] = {
+            (b.factory_id, b.material_id): b for b in balance_result.scalars()
+        }
+        for (factory_code, material_code), reserved_total in reserved_by_key.items():
+            balance = balances_by_key.get((factories[factory_code].id, materials[material_code].id))
             if balance is None:
                 continue
             # The receipt buffer (50k-150k) is sized generously above any
-            # plausible BOM demand from the ~20 PLANNED orders so this never
-            # needs clamping; asserting rather than clamping keeps the
-            # `reserved == sum(active reservations)` invariant exact.
+            # plausible BOM demand from the PLANNED orders sharing a
+            # material so this never needs clamping; asserting rather than
+            # clamping keeps the `reserved == sum(active reservations)`
+            # invariant exact.
             assert reserved_total <= balance.on_hand_accepted, (
-                f"material {material_code} reserved {reserved_total} exceeds "
-                f"on_hand {balance.on_hand_accepted}"
+                f"{factory_code} material {material_code} reserved {reserved_total} "
+                f"exceeds on_hand {balance.on_hand_accepted}"
             )
             balance.reserved = reserved_total
 
-    # A handful of open expected receipts for non-demo materials.
-    other_codes = [c for c in materials if c != demo_scenario.DEMO_BOM_MATERIAL_CODE]
-    for material_code in rng.sample(other_codes, 5):
-        material = materials[material_code]
-        session.add(
-            ExpectedReceipt(
-                organization_id=org.id,
-                factory_id=factory.id,
-                material_id=material.id,
-                quantity=Decimal(rng.randint(500, 5000)),
-                expected_date=anchor_date + timedelta(days=rng.randint(1, 20)),
-                supplier_ref=f"SUP-{material_code}-{rng.randint(1000, 9999)}",
-                status=ExpectedReceiptStatus.OPEN.value,
+    # A handful of open expected receipts per factory, for non-demo materials.
+    for factory_code, factory in factories.items():
+        other_codes = [
+            code for code in materials if not _is_demo_material_at_ktn(factory_code, code)
+        ]
+        for material_code in rng.sample(other_codes, 5):
+            material = materials[material_code]
+            session.add(
+                ExpectedReceipt(
+                    organization_id=org.id,
+                    factory_id=factory.id,
+                    material_id=material.id,
+                    quantity=Decimal(rng.randint(500, 5000)),
+                    expected_date=anchor_date + timedelta(days=rng.randint(1, 20)),
+                    supplier_ref=f"SUP-{factory_code}-{material_code}-{rng.randint(1000, 9999)}",
+                    status=ExpectedReceiptStatus.OPEN.value,
+                )
             )
-        )
+
+    await session.flush()
+
+
+async def _finalize_material_states(session: AsyncSession, *, orders: dict[str, Order]) -> None:
+    """Recompute every non-DRAFT order's `material_state` from its actual
+    BOM demand against the fully-seeded balances/expected receipts, via
+    `app.domain.inventory.calc` — never an arbitrary random choice. DRAFT
+    orders keep the `UNKNOWN` placeholder (no planning has happened yet).
+    Run last, after the demo scenario, so it sees the demo's own
+    reservation/expected-receipt too.
+    """
+    balances = list((await session.execute(select(MaterialBalance))).scalars())
+    balance_by_key = {(b.factory_id, b.material_id): b for b in balances}
+
+    open_receipts = list(
+        (
+            await session.execute(
+                select(ExpectedReceipt).where(
+                    ExpectedReceipt.status == ExpectedReceiptStatus.OPEN.value
+                )
+            )
+        ).scalars()
+    )
+    receipts_by_key: dict[tuple[uuid.UUID, uuid.UUID], list[ExpectedReceipt]] = {}
+    for receipt in open_receipts:
+        receipts_by_key.setdefault((receipt.factory_id, receipt.material_id), []).append(receipt)
+
+    bom_lines_by_version: dict[uuid.UUID, list[BomLine]] = {}
+
+    for order in orders.values():
+        if order.production_state == ProductionState.DRAFT.value:
+            continue
+        if order.bom_version_id not in bom_lines_by_version:
+            result = await session.execute(
+                select(BomLine).where(BomLine.bom_version_id == order.bom_version_id)
+            )
+            bom_lines_by_version[order.bom_version_id] = list(result.scalars())
+        lines = bom_lines_by_version[order.bom_version_id]
+        if not lines:
+            continue
+
+        worst = MaterialState.READY
+        for line in lines:
+            balance = balance_by_key.get((order.factory_id, line.material_id))
+            if balance is None:
+                worst = MaterialState.UNKNOWN
+                continue
+            available = available_now(balance.on_hand_accepted, balance.reserved)
+            demand = gross_demand(
+                Decimal(order.quantity), line.quantity_per_unit, line.wastage_fraction
+            )
+            current_shortage = shortage(available, demand)
+            eligible_receipts = sum(
+                (
+                    receipt.quantity
+                    for receipt in receipts_by_key.get((order.factory_id, line.material_id), [])
+                    if receipt.expected_date <= order.due_date
+                ),
+                Decimal("0"),
+            )
+            projected_shortage = shortage(available + eligible_receipts, demand)
+            line_state = derive_material_state(current_shortage, projected_shortage, True)
+            if _MATERIAL_STATE_SEVERITY[line_state] > _MATERIAL_STATE_SEVERITY[worst]:
+                worst = line_state
+
+        order.material_state = worst.value
 
     await session.flush()
 
@@ -931,11 +1136,9 @@ async def _seed_ie(
             counter += 1
     await session.flush()
 
-    all_skills = sorted({skill for _, skill in OPERATION_CATALOG} - {"BH"})
+    skills_without_bh = sorted(set(SKILL_CODES) - {"BH"})
     for code, line_aliases in aliases_by_line.items():
-        skills_for_line = (
-            sorted({skill for _, skill in OPERATION_CATALOG}) if code != "L6" else all_skills
-        )
+        skills_for_line = sorted(SKILL_CODES) if code != "L6" else skills_without_bh
         for alias in line_aliases:
             for skill in rng.sample(skills_for_line, rng.randint(1, 3)):
                 session.add(
@@ -1038,7 +1241,7 @@ async def _seed_ie(
 
 
 async def _seed_quality_policy(
-    session: AsyncSession, org: Organization, users: dict[str, User]
+    session: AsyncSession, org: Organization, users: dict[str, User], anchor_date: date
 ) -> QualityPolicyVersion:
     policy = QualityPolicyVersion(
         organization_id=org.id,
@@ -1048,7 +1251,9 @@ async def _seed_quality_policy(
         status=PolicyStatus.ACTIVE.value,
         rules=_QUALITY_POLICY_RULES,
         approved_by=users["quality@demo.test"].id,
-        approved_at=datetime.now(UTC),
+        # Approved well before the anchor date — a business fact, never
+        # `datetime.now()`.
+        approved_at=_anchor_datetime(anchor_date) - timedelta(days=90),
     )
     session.add(policy)
     await session.flush()
@@ -1063,9 +1268,11 @@ async def _seed_quality_inspections(
     policy_version: QualityPolicyVersion,
     users: dict[str, User],
     rng: random.Random,
+    anchor_date: date,
 ) -> None:
     rules = QualityPolicyRules.from_json(policy_version.rules)
     quality_user = users["quality@demo.test"].id
+    anchor_dt = _anchor_datetime(anchor_date)
 
     failed_hold_assigned = False
     no_release_assigned = False
@@ -1093,7 +1300,9 @@ async def _seed_quality_inspections(
                 policy_version_id=policy_version.id,
                 result=evaluation.result,
                 inspected_by=quality_user,
-                inspected_at=datetime.now(UTC),
+                # Recent, but deterministic (rng-derived, anchor-relative)
+                # rather than `datetime.now()`.
+                inspected_at=anchor_dt - timedelta(days=rng.randint(0, 5), hours=rng.randint(0, 8)),
             )
             session.add(inspection)
             await session.flush()
@@ -1133,7 +1342,7 @@ async def _seed_quality_inspections(
                 policy_version_id=policy_version.id,
                 result=evaluation.result,
                 inspected_by=quality_user,
-                inspected_at=datetime.now(UTC),
+                inspected_at=anchor_dt - timedelta(days=rng.randint(0, 3), hours=rng.randint(0, 8)),
             )
             session.add(inspection)
             await session.flush()
@@ -1173,7 +1382,9 @@ async def _seed_quality_inspections(
                         inspection_id=inspection.id,
                         policy_version_id=policy_version.id,
                         released_by=quality_user,
-                        released_at=datetime.now(UTC),
+                        # A few hours after the inspection it releases —
+                        # never `datetime.now()`.
+                        released_at=inspection.inspected_at + timedelta(hours=4),
                     )
                 )
                 order.quality_state = QualityState.RELEASED.value
@@ -1220,62 +1431,19 @@ async def _seed_demo_scenario(
     session.add(demo_order)
     await session.flush()
 
-    # Deterministic M01 ledger: one receipt lot, then 14 daily issues of a
-    # fixed amount so `average_daily_consumption` is exactly the target and
-    # on_hand_accepted is exactly the demo balance (Task 6 brief section 4).
-    lot = MaterialLot(
-        organization_id=org.id,
-        factory_id=factory.id,
-        material_id=material.id,
-        lot_code=f"LOT-{material.code}-DEMO",
-        status=MaterialLotStatus.ACCEPTED.value,
-        received_at=datetime.combine(
-            anchor_date - timedelta(days=demo_scenario.DEMO_ISSUE_WINDOW_DAYS + 1),
-            datetime.min.time(),
-            tzinfo=UTC,
-        ),
-    )
-    session.add(lot)
-    await session.flush()
-
-    session.add(
-        StockMovement(
-            organization_id=org.id,
-            factory_id=factory.id,
-            material_id=material.id,
-            lot_id=lot.id,
-            movement_type=MovementType.RECEIPT.value,
-            quantity=demo_scenario.DEMO_RECEIPT_LOT_QUANTITY,
-            created_at=datetime.combine(
-                anchor_date - timedelta(days=demo_scenario.DEMO_ISSUE_WINDOW_DAYS + 1),
-                datetime.min.time(),
-                tzinfo=UTC,
-            ),
+    # KTN M01's lot/ledger/balance were already created deterministically by
+    # `_seed_demo_material_ledger` (called from `_seed_inventory`, which
+    # runs before this scenario step so `_finalize_material_states` always
+    # sees a real balance for M01). Only the demo's own reservation is
+    # applied here, against the balance that already exists.
+    balance = await session.scalar(
+        select(MaterialBalance).where(
+            MaterialBalance.factory_id == factory.id, MaterialBalance.material_id == material.id
         )
     )
-    for offset in range(demo_scenario.DEMO_ISSUE_WINDOW_DAYS, 0, -1):
-        issue_date = anchor_date - timedelta(days=offset)
-        session.add(
-            StockMovement(
-                organization_id=org.id,
-                factory_id=factory.id,
-                material_id=material.id,
-                lot_id=lot.id,
-                movement_type=MovementType.ISSUE.value,
-                quantity=-demo_scenario.DEMO_ISSUE_DAILY_QUANTITY,
-                created_at=datetime.combine(issue_date, datetime.min.time(), tzinfo=UTC),
-            )
-        )
-
-    session.add(
-        MaterialBalance(
-            organization_id=org.id,
-            factory_id=factory.id,
-            material_id=material.id,
-            on_hand_accepted=demo_scenario.DEMO_BALANCE_ON_HAND_ACCEPTED,
-            reserved=demo_scenario.DEMO_BALANCE_RESERVED,
-        )
-    )
+    assert balance is not None, "KTN M01 balance must exist before the demo scenario runs"
+    assert balance.on_hand_accepted == demo_scenario.DEMO_BALANCE_ON_HAND_ACCEPTED
+    balance.reserved = demo_scenario.DEMO_BALANCE_RESERVED
 
     other_order = next(
         (
