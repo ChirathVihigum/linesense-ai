@@ -570,20 +570,32 @@ def generate_split(
 ) -> list[dict[str, Any]]:
     """Generate `per_label` notes per label from `templates_by_label`.
 
-    No template is used more than `MAX_USES_PER_TEMPLATE` times. If
-    `against_token_sets` is given (the token sets of an already-generated
-    opposite split), any candidate note whose Jaccard similarity to any of
-    them is >= `JACCARD_MAX` is discarded and a different rendering/
-    template is drawn instead — this is how train/test separation is
-    enforced, as part of generation rather than as a post-hoc patch.
+    Templates are drawn by **shuffle-and-cycle**, not independent random
+    sampling: each label's template bank is shuffled once (seeded, so this
+    stays deterministic) and then walked in that fixed order, wrapping
+    around when exhausted. This guarantees every template in the bank is
+    used at least once before any template is repeated — plain
+    with-replacement sampling (`rng.choice` every draw) can, and did,
+    leave several templates completely unused by chance even with a
+    per-template cap, understating real sentence-frame diversity. No
+    template is used more than `MAX_USES_PER_TEMPLATE` times regardless.
+
+    If `against_token_sets` is given (the token sets of an already-
+    generated opposite split), any candidate note whose Jaccard similarity
+    to any of them is >= `JACCARD_MAX` is discarded and generation moves on
+    to the next template in the cycle — this is how train/test separation
+    is enforced, as part of generation rather than as a post-hoc patch.
     """
     notes: list[dict[str, Any]] = []
     seen_texts: set[str] = set()
     counter = 1
     for label in LABELS:
         templates = templates_by_label[label]
+        order = list(templates)
+        rng.shuffle(order)
         usage: dict[str, int] = dict.fromkeys(templates, 0)
         produced = 0
+        cycle_index = 0
         attempts = 0
         max_attempts = per_label * 1000
         while produced < per_label:
@@ -593,14 +605,19 @@ def generate_split(
                     f"could not generate {per_label} unique, sufficiently distinct notes "
                     f"for label {label!r} ({id_prefix}) after {max_attempts} attempts"
                 )
-            candidates = [t for t in templates if usage[t] < MAX_USES_PER_TEMPLATE]
-            if not candidates:
+            template = None
+            for _ in range(len(order)):
+                candidate = order[cycle_index % len(order)]
+                cycle_index += 1
+                if usage[candidate] < MAX_USES_PER_TEMPLATE:
+                    template = candidate
+                    break
+            if template is None:
                 raise RuntimeError(
                     f"template capacity exhausted for label {label!r} ({id_prefix}): "
                     f"{len(templates)} templates * {MAX_USES_PER_TEMPLATE} uses "
                     f"< {per_label} needed"
                 )
-            template = rng.choice(candidates)
             text, entities = render_template(template, rng)
             if text in seen_texts:
                 continue
