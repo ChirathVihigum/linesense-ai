@@ -370,13 +370,16 @@ async def claim(session_factory, *, queues: Sequence[str], worker_id: str, lease
 async def heartbeat(session_factory, *, job_id: UUID, lease_token: UUID, lease_seconds: int) -> bool
 async def complete(session, *, job_id: UUID, lease_token: UUID) -> bool     # inside caller's transaction; False = fenced out
 async def fail(session_factory, *, job_id: UUID, lease_token: UUID, error: str, retryable: bool,
-               on_exhausted: ExhaustedCallback | None = None) -> None
+               on_exhausted: ExhaustedCallback | None = None) -> bool   # False = fenced out, nothing recorded
 # ExhaustedCallback = Callable[[ClaimedJob, str], Awaitable[None]]
 ```
 
 `claim` and `fail` take an optional `on_exhausted` callback (added in Task 10). The queue module
 has no handler registry, so this callback is how the worker's per-job-type exhaustion hook runs.
-The callback runs after the `FAILED` state is committed.
+The callback runs after the `FAILED` state is committed, at most once: if it fails or the process
+dies, it does not run again, so any effect it has must also be reachable through reconciliation.
+`fail` returns `bool` (fix round 1 of Task 10) so that the worker can tell whether it was fenced
+out. When it was, the worker logs `job.lease_lost` instead of a misleading `job.failed`.
 
 A claim selects `READY` jobs with `available_at <= now()` **or** `LEASED` jobs whose `leased_until <
 now()`, using `FOR UPDATE SKIP LOCKED`, sets a fresh `lease_token`, increments `attempt`, and

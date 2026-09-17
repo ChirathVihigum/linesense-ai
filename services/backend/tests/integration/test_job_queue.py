@@ -8,6 +8,7 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import Job, RunEvent
@@ -261,7 +262,7 @@ async def test_retryable_failure_backs_off_then_exhausts_once(
 
     job = await _claim(session_factory)
     assert job is not None and job.attempt == 1
-    await fail(
+    assert await fail(
         session_factory,
         job_id=job_id,
         lease_token=job.lease_token,
@@ -289,7 +290,7 @@ async def test_retryable_failure_backs_off_then_exhausts_once(
         )
     job = await _claim(session_factory)
     assert job is not None and job.attempt == 2
-    await fail(
+    assert await fail(
         session_factory,
         job_id=job_id,
         lease_token=job.lease_token,
@@ -305,13 +306,16 @@ async def test_retryable_failure_backs_off_then_exhausts_once(
     assert exhausted == ["boom 2"]
 
     # A second (stale) fail call is fenced out and does not re-run the hook.
-    await fail(
-        session_factory,
-        job_id=job_id,
-        lease_token=job.lease_token,
-        error="late",
-        retryable=False,
-        on_exhausted=on_exhausted,
+    assert (
+        await fail(
+            session_factory,
+            job_id=job_id,
+            lease_token=job.lease_token,
+            error="late",
+            retryable=False,
+            on_exhausted=on_exhausted,
+        )
+        is False
     )
     assert exhausted == ["boom 2"]
     assert (await _job(session_factory, job_id)).last_error == "boom 2"
@@ -323,7 +327,7 @@ async def test_non_retryable_failure_is_terminal_and_truncated(
     job_id = await _enqueue(session_factory)
     job = await _claim(session_factory)
     assert job is not None
-    await fail(
+    assert await fail(
         session_factory,
         job_id=job_id,
         lease_token=job.lease_token,
@@ -392,3 +396,45 @@ def test_backoff_and_error_formatting() -> None:
 
     formatted = format_error(ValueError("y" * 900))
     assert formatted == "'ValueError': " + "y" * 500
+
+
+async def test_claim_skips_rows_locked_by_another_transaction(
+    session_factory: async_sessionmaker[AsyncSession], db_session: AsyncSession
+) -> None:
+    db_now = await db_session.scalar(select(func.now()))
+    assert db_now is not None
+    first = await _enqueue(session_factory, available_at=db_now - timedelta(seconds=10))
+    second = await _enqueue(session_factory, available_at=db_now - timedelta(seconds=1))
+
+    async with session_factory() as locker, locker.begin():
+        locked = await locker.scalar(select(Job.id).where(Job.id == first).with_for_update())
+        assert locked == first
+        # Must not block on the locked row: it is skipped.
+        job = await asyncio.wait_for(_claim(session_factory), timeout=2)
+        assert job is not None and job.id == second
+        assert await asyncio.wait_for(_claim(session_factory), timeout=2) is None
+
+    job = await _claim(session_factory)
+    assert job is not None and job.id == first
+
+
+async def test_format_error_hides_sql_and_parameters(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _enqueue(session_factory, dedupe_key="secret-dedupe-value")
+    with pytest.raises(IntegrityError) as caught:
+        async with session_factory() as session, session.begin():
+            session.add(
+                Job(
+                    queue="maintenance",
+                    job_type="t",
+                    payload={},
+                    status="READY",
+                    dedupe_key="secret-dedupe-value",
+                )
+            )
+            await session.flush()
+    formatted = format_error(caught.value)
+    assert formatted.startswith("'UniqueViolation': ")
+    assert "INSERT" not in formatted
+    assert "secret-dedupe-value" not in formatted

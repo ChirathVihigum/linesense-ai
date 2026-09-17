@@ -13,6 +13,8 @@ Outcome mapping:
 - any other exception -> retry with backoff (``FAILED`` once attempts run out)
 - lease lost (heartbeat fenced out or ``LeaseLostError``) -> nothing: the job
   belongs to whichever worker holds the new lease.
+- a handler that raises ``CancelledError`` on its own (neither lease loss nor
+  worker shutdown) -> retry with backoff, like any other exception.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
@@ -50,7 +51,8 @@ logger = structlog.get_logger("app.jobs")
 
 SHUTDOWN_GRACE_SECONDS = 20.0
 RECONCILE_INTERVAL_SECONDS = 15.0
-ALIVE_LOG_INTERVAL_SECONDS = 30.0
+ALIVE_INTERVAL_SECONDS = 30.0
+HEARTBEAT_STOP_TIMEOUT_SECONDS = 5.0
 MAX_ERROR_BACKOFF_SECONDS = 5.0
 
 
@@ -127,6 +129,8 @@ class Worker:
         worker_id: str | None = None,
         reconcile_seconds: float | None = RECONCILE_INTERVAL_SECONDS,
         shutdown_grace_seconds: float = SHUTDOWN_GRACE_SECONDS,
+        alive_dir: Path | None = None,
+        alive_interval: float = ALIVE_INTERVAL_SECONDS,
     ) -> None:
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
@@ -145,32 +149,40 @@ class Worker:
         self.worker_id = worker_id or _default_worker_id()
         self.reconcile_seconds = reconcile_seconds
         self.shutdown_grace_seconds = shutdown_grace_seconds
+        self.alive_dir = alive_dir or resolve_backend_path(settings.worker_alive_dir)
+        self.alive_interval = alive_interval
         self.active_jobs = 0
-        self._last_alive_log = 0.0
 
     # ------------------------------------------------------------------ liveness
 
     @property
     def alive_path(self) -> Path | None:
+        """Liveness file (``None`` in production, where no file is written)."""
         if self.settings.environment == "production":
             return None
-        directory = resolve_backend_path(self.settings.worker_alive_dir)
-        return directory / f"worker-{self.worker_id}.alive"
+        return self.alive_dir / f"worker-{self.worker_id}.alive"
 
     def _touch_alive(self) -> None:
         path = self.alive_path
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
-        now = time.monotonic()
-        if now - self._last_alive_log >= ALIVE_LOG_INTERVAL_SECONDS:
-            self._last_alive_log = now
+
+    async def _liveness_loop(self, stop_event: asyncio.Event) -> None:
+        """Log ``worker.alive`` and touch the liveness file, independent of busy slots."""
+        while not stop_event.is_set():
+            try:
+                self._touch_alive()
+            except OSError:
+                logger.exception("worker.liveness_error", worker_id=self.worker_id)
             logger.info(
                 "worker.alive",
                 worker_id=self.worker_id,
                 queues=self.queues,
                 active_jobs=self.active_jobs,
             )
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop_event.wait(), timeout=self.alive_interval)
 
     # ---------------------------------------------------------------- processing
 
@@ -218,11 +230,26 @@ class Worker:
             self.active_jobs -= 1
         return True
 
+    async def _is_done_by_us(self, job: ClaimedJob) -> bool:
+        """Whether the row is DONE under this worker's lease token."""
+        async with self.session_factory() as session:
+            status = await session.scalar(
+                sa.select(Job.status).where(Job.id == job.id, Job.lease_token == job.lease_token)
+            )
+        return status == JobStatus.DONE.value
+
     async def _heartbeat_loop(
-        self, job: ClaimedJob, handler_task: asyncio.Task[None], lease_lost: asyncio.Event
+        self,
+        job: ClaimedJob,
+        handler_task: asyncio.Task[None],
+        lease_lost: asyncio.Event,
+        stop: asyncio.Event,
     ) -> None:
         while True:
-            await asyncio.sleep(self.heartbeat_seconds)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=self.heartbeat_seconds)
+            if stop.is_set():
+                return
             try:
                 extended = await heartbeat(
                     self.session_factory,
@@ -230,6 +257,10 @@ class Worker:
                     lease_token=job.lease_token,
                     lease_seconds=self.lease_seconds,
                 )
+                if not extended and await self._is_done_by_us(job):
+                    # The handler already committed its completion; let it
+                    # finish any post-commit work undisturbed.
+                    return
             except Exception:
                 # Transient database trouble: keep trying; if it persists the
                 # lease expires and the job is recovered by another claim.
@@ -240,16 +271,21 @@ class Worker:
                 handler_task.cancel()
                 return
 
+    async def _stop_heartbeat(
+        self, stop: asyncio.Event, heartbeat_task: asyncio.Task[None]
+    ) -> None:
+        """Let an in-flight heartbeat finish (bounded) instead of cancelling it mid-transaction."""
+        stop.set()
+        try:
+            await asyncio.wait_for(heartbeat_task, timeout=HEARTBEAT_STOP_TIMEOUT_SECONDS)
+        except TimeoutError:
+            logger.warning("job.heartbeat_stop_timeout", worker_id=self.worker_id)
+        except Exception:
+            logger.exception("job.heartbeat_error", worker_id=self.worker_id)
+
     async def _fail(self, job: ClaimedJob, exc: BaseException, *, retryable: bool) -> None:
         error = format_error(exc)
-        logger.warning(
-            "job.failed",
-            error=error,
-            retryable=retryable,
-            will_retry=retryable and job.attempt < job.max_attempts,
-            **self._log_fields(job),
-        )
-        await fail(
+        recorded = await fail(
             self.session_factory,
             job_id=job.id,
             lease_token=job.lease_token,
@@ -257,16 +293,24 @@ class Worker:
             retryable=retryable,
             on_exhausted=self._on_exhausted,
         )
+        fields = self._log_fields(job)
+        if not recorded:
+            logger.warning("job.lease_lost", reason="fail fenced out", **fields)
+            return
+        logger.warning(
+            "job.failed",
+            error=error,
+            retryable=retryable,
+            will_retry=retryable and job.attempt < job.max_attempts,
+            **fields,
+        )
 
     async def _complete_after_handler(self, job: ClaimedJob) -> bool:
         """Complete in a fresh transaction unless the handler already did."""
         async with self.session_factory() as session, session.begin():
             if await complete(session, job_id=job.id, lease_token=job.lease_token):
                 return True
-            status = await session.scalar(
-                sa.select(Job.status).where(Job.id == job.id, Job.lease_token == job.lease_token)
-            )
-        return status == JobStatus.DONE.value
+        return await self._is_done_by_us(job)
 
     async def _process(self, job: ClaimedJob) -> None:
         fields = self._log_fields(job)
@@ -278,27 +322,32 @@ class Worker:
             return
 
         lease_lost = asyncio.Event()
+        stop_heartbeat = asyncio.Event()
         context = self._context(job)
 
         async def run_handler() -> None:
             await entry.handler(context)
 
         handler_task = asyncio.create_task(run_handler())
-        heartbeat_task = asyncio.create_task(self._heartbeat_loop(job, handler_task, lease_lost))
+        heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(job, handler_task, lease_lost, stop_heartbeat)
+        )
         try:
             try:
                 await handler_task
             finally:
                 # Stop heartbeating before recording the outcome.
-                heartbeat_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await heartbeat_task
-        except asyncio.CancelledError:
+                await self._stop_heartbeat(stop_heartbeat, heartbeat_task)
+        except asyncio.CancelledError as exc:
             current = asyncio.current_task()
-            if lease_lost.is_set() and current is not None and not current.cancelling():
+            if current is not None and current.cancelling():
+                raise  # the worker itself is being cancelled (shutdown)
+            if lease_lost.is_set():
                 logger.warning("job.lease_lost", reason="heartbeat fenced out", **fields)
                 return
-            raise
+            # The handler cancelled itself: treat it like any other error.
+            await self._fail(job, exc, retryable=True)
+            return
         except LeaseLostError:
             logger.warning("job.lease_lost", reason="complete fenced out", **fields)
             return
@@ -319,9 +368,19 @@ class Worker:
     async def _slot(self, stop_event: asyncio.Event) -> None:
         consecutive_errors = 0
         while not stop_event.is_set():
-            self._touch_alive()
             try:
                 processed = await self.run_once()
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is None or current.cancelling():
+                    raise
+                consecutive_errors += 1
+                logger.exception(
+                    "worker.loop_error",
+                    worker_id=self.worker_id,
+                    consecutive_errors=consecutive_errors,
+                )
+                processed = False
             except Exception:
                 consecutive_errors += 1
                 logger.exception(
@@ -373,7 +432,9 @@ class Worker:
             asyncio.create_task(self._slot(stop_event), name=f"job-slot-{n}")
             for n in range(self.concurrency)
         ]
-        background: list[asyncio.Task[None]] = []
+        background: list[asyncio.Task[None]] = [
+            asyncio.create_task(self._liveness_loop(stop_event), name="worker-liveness")
+        ]
         if self.reconcile_seconds is not None:
             background.append(
                 asyncio.create_task(self._reconcile_loop(stop_event, self.reconcile_seconds))
@@ -394,5 +455,8 @@ class Worker:
             await asyncio.gather(*slots, *background, return_exceptions=True)
             path = self.alive_path
             if path is not None:
-                path.unlink(missing_ok=True)
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    logger.exception("worker.liveness_error", worker_id=self.worker_id)
             logger.info("worker.stopped", worker_id=self.worker_id)
