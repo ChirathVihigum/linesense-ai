@@ -160,3 +160,81 @@ def test_redact_text_is_fast_on_pathological_inputs() -> None:
     elapsed = time.perf_counter() - start
     assert result == many_at_signs
     assert elapsed < 1.0, f"redact_text on 200k '@' chars took {elapsed:.3f}s"
+
+
+def test_ordinary_email_is_redacted() -> None:
+    text = "contact ops.lead@factory.example.com today"
+    assert redact_text(text) == f"contact {REDACTED} today"
+
+
+def test_over_long_local_part_is_redacted_in_full() -> None:
+    # Regression: a length-bounded email regex matched only the last 64
+    # local-part characters, leaking the rest ("reach a[REDACTED] now").
+    for length in (65, 100, 1_000):
+        text = f"reach {'a' * length}@example.com now"
+        assert redact_text(text) == f"reach {REDACTED} now", length
+
+
+def test_over_long_domain_is_redacted_in_full() -> None:
+    domain = ".".join(["aaaa"] * 60) + ".com"  # ~300 characters
+    assert len(domain) >= 300
+    text = f"mail user@{domain} now"
+    assert redact_text(text) == f"mail {REDACTED} now"
+
+
+def test_email_adjacent_to_punctuation() -> None:
+    assert redact_text("see (a.b@c.io) here") == f"see ({REDACTED}) here"
+    # The sentence-ending dot is not part of the domain and must survive.
+    assert redact_text("write to a.b@c.io.") == f"write to {REDACTED}."
+    assert redact_text("write to a.b@c.io-") == f"write to {REDACTED}-"
+    assert redact_text("mail a.b@c.io, then") == f"mail {REDACTED}, then"
+
+
+def test_dotless_host_is_not_treated_as_email() -> None:
+    # Deliberate choice: without a dotted domain ending in a >=2-letter
+    # label, "@" text is far more often a handle/mention/host than a
+    # routable address, so "user@localhost" is left alone.
+    assert redact_text("ssh user@localhost now") == "ssh user@localhost now"
+    assert redact_text("ping @c.io now") == "ping @c.io now"
+    assert redact_text("version a@b.c1 now") == "version a@b.c1 now"
+
+
+def test_chained_at_signs_are_redacted_in_full() -> None:
+    assert redact_text("x a@b@c.io y") == f"x {REDACTED} y"
+    assert redact_text("x a@b.io@c.io y") == f"x {REDACTED} y"
+    assert redact_text("x a@b.io@ y") == f"x {REDACTED} y"
+
+
+def test_email_redaction_leaves_dates_and_phones_behaviour_intact() -> None:
+    text = "mail a@b.io or call 077-123-4567 by 2026-09-17 08:30."
+    assert redact_text(text) == f"mail {REDACTED} or call {REDACTED} by 2026-09-17 08:30."
+
+
+def test_redact_text_is_linear_on_long_emails_and_mixed_text() -> None:
+    long_local = "a" * 200_000 + "@example.com"
+    start = time.perf_counter()
+    assert redact_text(long_local) == REDACTED
+    assert time.perf_counter() - start < 1.0
+
+    long_domain = "u@" + "a." * 100_000 + "com"
+    start = time.perf_counter()
+    assert redact_text(long_domain) == REDACTED
+    assert time.perf_counter() - start < 1.0
+
+    dotted_chain = "aa.aa@" * 40_000
+    start = time.perf_counter()
+    redact_text(dotted_chain)
+    assert time.perf_counter() - start < 1.0
+
+    sentence = (
+        "Operator KTN-OP-017 (ops.lead@factory.example.com, +94 77 123 4567) "
+        "logged PO-KTN-0001 at 2026-09-17 08:30; total 1099.98, key sk-ant-abc. "
+    )
+    mixed = sentence * (200_000 // len(sentence) + 1)
+    start = time.perf_counter()
+    result = redact_text(mixed)
+    elapsed = time.perf_counter() - start
+    assert "@" not in result
+    assert "123 4567" not in result
+    assert "2026-09-17 08:30" in result
+    assert elapsed < 1.0, f"redact_text on 200k mixed text took {elapsed:.3f}s"

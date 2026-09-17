@@ -38,7 +38,16 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}")
+# Emails are found by a linear scan (`_email_spans`), not a regex: an
+# unbounded regex backtracks quadratically on long non-matching runs, and a
+# length-bounded one matches only a suffix/prefix of an over-long address,
+# leaking the rest. Neither character set contains "@", so the per-"@"
+# expansions below never cross another "@" and total work is O(n).
+_EMAIL_LOCAL_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
+)
+_EMAIL_DOMAIN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-")
+_EMAIL_DOMAIN_TRAILING = ".-"
 _API_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 
@@ -48,10 +57,8 @@ _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 # or bounded, and each optional segment is gated by a literal character
 # (`-`, `T`/` `, `:`) that must appear first, so a failed match at any
 # position fails in O(1) rather than backtracking -- this module never scans
-# with an unbounded quantifier over untrusted input (see `_EMAIL_RE` above,
-# which is bounded for the same reason: an unbounded local-part/domain would
-# make a long run of non-matching characters, e.g. attacker-supplied text
-# with no "@" at all, cost O(n^2) instead of O(n)).
+# with an unbounded, backtracking quantifier over untrusted input (emails are
+# handled by a linear scan above for the same reason).
 _ISO_DATETIME_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
 )
@@ -89,6 +96,73 @@ def _is_phone_like(candidate: str) -> bool:
     return _PHONE_MIN_DIGITS <= digits <= _PHONE_MAX_DIGITS
 
 
+def _expand_left(text: str, index: int, floor: int) -> int:
+    """First index of the local-part run ending just before ``index``."""
+    while index > floor and text[index - 1] in _EMAIL_LOCAL_CHARS:
+        index -= 1
+    return index
+
+
+def _expand_right(text: str, index: int) -> int:
+    """End index (exclusive) of the domain run starting at ``index``, with
+    trailing dots/hyphens (e.g. a sentence-ending period) excluded."""
+    length = len(text)
+    end = index
+    while end < length and text[end] in _EMAIL_DOMAIN_CHARS:
+        end += 1
+    while end > index and text[end - 1] in _EMAIL_DOMAIN_TRAILING:
+        end -= 1
+    return end
+
+
+def _is_email_domain(domain: str) -> bool:
+    """A dotted domain whose final label is at least two ASCII letters.
+    Dotless hosts (``user@localhost``) are deliberately not treated as
+    emails: they are far more often handles or host names."""
+    dot = domain.rfind(".")
+    if dot < 1:
+        return False
+    label = domain[dot + 1 :]
+    return len(label) >= 2 and label.isascii() and label.isalpha()
+
+
+def _email_spans(text: str) -> list[tuple[int, int]]:
+    """Non-overlapping, ordered spans of every email-shaped token, each
+    covering the whole token regardless of length. Chains such as
+    ``a@b@c.io`` are covered in full. Runs in O(len(text)): each "@"
+    expands only up to its neighbouring "@", and chain extensions only cover
+    text not yet claimed by an earlier span."""
+    spans: list[tuple[int, int]] = []
+    cursor = 0  # end of the last accepted span
+    at = text.find("@")
+    while at != -1:
+        if at >= cursor:
+            start = _expand_left(text, at, cursor)
+            end = _expand_right(text, at + 1)
+            if start < at and _is_email_domain(text[at + 1 : end]):
+                # Extend over chained "local@" pieces to the left ...
+                while start > cursor and text[start - 1] == "@":
+                    start = _expand_left(text, start - 1, cursor)
+                # ... and over chained "@domain" pieces to the right.
+                while end < len(text) and text[end] == "@":
+                    end = max(end + 1, _expand_right(text, end + 1))
+                spans.append((start, end))
+                cursor = end
+        at = text.find("@", at + 1)
+    return spans
+
+
+def _redact_emails(text: str) -> str:
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in _email_spans(text):
+        pieces.append(text[cursor:start])
+        pieces.append(REDACTED)
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def _protected_spans(text: str) -> list[tuple[int, int]]:
     """Character-offset spans of ISO dates/datetimes and bare times in
     ``text``. A phone candidate overlapping any of these is not redacted."""
@@ -105,7 +179,7 @@ def redact_text(text: str) -> str:
     """Replace emails, API keys, bearer tokens, and phone-like sequences."""
     text = _API_KEY_RE.sub(REDACTED, text)
     text = _BEARER_RE.sub(REDACTED, text)
-    text = _EMAIL_RE.sub(REDACTED, text)
+    text = _redact_emails(text)
 
     protected = _protected_spans(text)
 
