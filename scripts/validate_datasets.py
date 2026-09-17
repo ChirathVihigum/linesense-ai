@@ -120,6 +120,7 @@ MIN_UNKNOWN_FRACTION = 0.08
 # that a raw-text or per-note check would miss.
 MAX_FRAME_USES = 3
 MIN_UNIQUE_FRAME_FRACTION = 0.6
+MIN_UNIQUE_FRAMES_PER_LABEL = 20
 
 DEFECT_CODE_RE = re.compile(r"\bDEF-[A-Z]{2,4}\b")
 KNOWN_DEFECT_CODES = {code for code, _, _ in vocab.DEFECT_CATALOG}
@@ -664,6 +665,30 @@ def check_frame_diversity(notes: list[dict[str, Any]], *, context: str) -> list[
     return problems
 
 
+def check_frame_diversity_by_label(notes: list[dict[str, Any]], *, context: str) -> list[str]:
+    """Per-label counterpart to `check_frame_diversity`: a split-wide
+    diversity fraction can hide one label that is almost entirely built
+    from a handful of frames while other labels carry the diversity. Each
+    label must have at least `min(MIN_UNIQUE_FRAMES_PER_LABEL, its own
+    note count)` unique entity-normalized frames."""
+    problems: list[str] = []
+    by_label: dict[str, list[dict[str, Any]]] = {}
+    for note in notes:
+        label = note.get("label")
+        if label in NOTE_LABELS:
+            by_label.setdefault(label, []).append(note)
+
+    for label, label_notes in by_label.items():
+        required = min(MIN_UNIQUE_FRAMES_PER_LABEL, len(label_notes))
+        unique = len({normalize_frame(note) for note in label_notes})
+        if unique < required:
+            problems.append(
+                f"{context}: label {label!r} has only {unique} unique entity-normalized "
+                f"sentence frames out of {len(label_notes)} notes (minimum {required})"
+            )
+    return problems
+
+
 def check_notes_file(path: Path, *, min_lines: int) -> tuple[list[dict[str, Any]], list[str]]:
     """Parse and validate a notes JSONL file. Returns (valid_notes, problems)."""
     records, problems = _parse_jsonl(path)
@@ -692,6 +717,7 @@ def check_notes_file(path: Path, *, min_lines: int) -> tuple[list[dict[str, Any]
 
     problems.extend(check_label_distribution(records, context=str(context_label)))
     problems.extend(check_frame_diversity(valid_notes, context=str(context_label)))
+    problems.extend(check_frame_diversity_by_label(valid_notes, context=str(context_label)))
 
     return valid_notes, problems
 

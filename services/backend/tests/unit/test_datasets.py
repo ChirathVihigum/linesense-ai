@@ -219,3 +219,48 @@ def test_frame_diversity_passes_with_enough_distinct_frames(vd: ModuleType) -> N
     # 5 unique frames out of 6 notes (0.833 >= 0.6); no frame used more than 2 times (cap is 3).
     problems = vd.check_frame_diversity(notes, context="fixture")
     assert problems == []
+
+
+def _labelled_note(note_id: str, label: str, template: str, order: str) -> dict:
+    note = _order_only_note(note_id, template, order)
+    note["label"] = label
+    return note
+
+
+def test_per_label_frame_diversity_flags_a_narrow_label(vd: ModuleType) -> None:
+    # Only 3 distinct templates for 24 "quality" notes (well under the 20 minimum),
+    # even though each individual frame stays within the max-reuse cap.
+    templates = [
+        "{order} passed FINAL inspection.",
+        "{order} failed FINAL inspection.",
+        "{order} was placed on quality hold.",
+    ]
+    notes = [
+        _labelled_note(f"n-{i}", "quality", templates[i % 3], f"PO-KTN-{i:04d}") for i in range(24)
+    ]
+    problems = vd.check_frame_diversity_by_label(notes, context="fixture")
+    assert any("label 'quality'" in p and "minimum 20" in p for p in problems)
+
+
+def test_per_label_frame_diversity_uses_note_count_when_below_20(vd: ModuleType) -> None:
+    # Only 5 "materials" notes total, but all 5 have distinct frames, so the
+    # effective minimum is min(20, 5) = 5, which is met.
+    templates = [
+        "{order} is short on stock.",
+        "{order} lot was rejected.",
+        "{order} reservation released.",
+        "{order} issued to the line.",
+        "{order} placed in quarantine.",
+    ]
+    notes = [
+        _labelled_note(f"n-{i}", "materials", templates[i], f"PO-KTN-{i:04d}") for i in range(5)
+    ]
+    problems = vd.check_frame_diversity_by_label(notes, context="fixture")
+    assert problems == []
+
+
+def test_per_label_frame_diversity_passes_with_enough_distinct_frames(vd: ModuleType) -> None:
+    templates = [f"{{order}} note variant number {i}." for i in range(20)]
+    notes = [_labelled_note(f"n-{i}", "ie", templates[i], f"PO-KTN-{i:04d}") for i in range(20)]
+    problems = vd.check_frame_diversity_by_label(notes, context="fixture")
+    assert problems == []
