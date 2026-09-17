@@ -92,8 +92,27 @@ commands planned for later tasks) and critical invariants.
 
 ## Setup
 
-_Filled in as later tasks add authentication, seeding, and the frontend
-dev server._
+_Filled in as later tasks add authentication and the frontend dev server._
+
+### Seed data
+
+`make seed` populates the deterministic synthetic demonstration dataset
+(organization `Demo Apparel Group`, factories `KTN`/`BYG`, the 10
+[demo identities](docs/architecture/backend-contracts.md#9-seeded-demo-identities-developmenttest-only),
+master data, ~100 orders, and the `PO-DEMO-001` walkthrough scenario) into
+`LS_DATABASE_URL`. Run `make migrate` first if the database has no schema
+yet. Idempotent — running it again is a no-op (prints
+`{"created": false, ...}`) — and it never deletes or truncates data.
+Refuses to run when `LS_ENVIRONMENT=production` (exit code 2). See
+[`docs/evaluation/synthetic-data.md`](docs/evaluation/synthetic-data.md)
+for the generator's design, and pass `--anchor-date YYYY-MM-DD` to pin the
+dataset to a fixed date instead of today (Asia/Colombo):
+
+```bash
+make migrate
+make seed
+# or: cd services/backend && uv run python -m app.seed --anchor-date 2026-01-05
+```
 
 ## Usage
 

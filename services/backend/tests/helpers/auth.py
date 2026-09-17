@@ -2,7 +2,9 @@
 
 ``DEMO_IDENTITIES`` mirrors backend-contracts.md section 9 and the dev IdP's
 ``devtools/dev_oidc/users.json`` (a unit test keeps the two in sync). Task 6
-moves the list to ``app/seed/generator.py`` and this module will import it.
+owns the canonical list in ``app/seed/generator.py`` (re-exported from
+``app/seed/identities.py``); this module just imports it so the seed
+generator and the test helpers never drift apart.
 """
 
 from __future__ import annotations
@@ -18,36 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.oidc import normalize_issuer
 from app.auth.sessions import SESSION_COOKIE, create_session
 from app.db.models import Factory, Membership, Organization, RoleAssignment, User
+from app.seed.generator import (
+    DEMO_FACTORIES,
+    DEMO_IDENTITIES,
+    DEMO_ORG_NAME,
+    DEMO_ORG_SLUG,
+    DemoIdentity,
+)
 from app.settings import Settings
-
-DemoIdentity = tuple[str, str, str, str, str | None]
-"""``(email, subject, display_name, role, factory_code | None)``."""
-
-DEMO_ORG_NAME = "Demo Apparel Group"
-DEMO_ORG_SLUG = "demo-apparel"
-DEMO_FACTORIES: tuple[tuple[str, str], ...] = (
-    ("KTN", "Katunayake Plant"),
-    ("BYG", "Biyagama Plant"),
-)
-
-DEMO_IDENTITIES: tuple[DemoIdentity, ...] = (
-    ("admin@demo.test", "dev|admin", "Org Admin (All plants)", "org_admin", None),
-    ("supervisor@demo.test", "dev|supervisor", "Supervisor (KTN)", "supervisor", "KTN"),
-    ("supervisor.b@demo.test", "dev|supervisor.b", "Supervisor B (KTN)", "supervisor", "KTN"),
-    ("planner@demo.test", "dev|planner", "Planner (KTN)", "planner", "KTN"),
-    ("storekeeper@demo.test", "dev|storekeeper", "Storekeeper (KTN)", "storekeeper", "KTN"),
-    ("ie@demo.test", "dev|ie", "IE Engineer (KTN)", "ie_engineer", "KTN"),
-    ("quality@demo.test", "dev|quality", "Quality Manager (KTN)", "quality_manager", "KTN"),
-    (
-        "quality.b@demo.test",
-        "dev|quality.b",
-        "Quality Manager B (KTN)",
-        "quality_manager",
-        "KTN",
-    ),
-    ("viewer@demo.test", "dev|viewer", "Viewer (KTN)", "viewer", "KTN"),
-    ("byg.planner@demo.test", "dev|byg.planner", "Planner (BYG)", "planner", "BYG"),
-)
 
 DEFAULT_DEV_ISSUER = "http://127.0.0.1:8090"
 
