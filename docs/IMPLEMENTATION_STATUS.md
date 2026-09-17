@@ -1206,6 +1206,89 @@ does not check.)
   states they will); a schema property with neither is simply omitted from the constructed
   arguments rather than raising, since Task 11 has no way to validate Task 12's not-yet-written
   schemas.
+
+## 2026-09-17 — Task 7: Orders API (list, create, detail, lifecycle commands, CSV import, audit, notifications)
+
+**Built:**
+- `app/domain/clock.py` — injectable `utcnow()`/`today_in(tz)` (no direct `datetime.now()`/`date.today()` in services).
+- `app/domain/orders/service.py` — `list_orders`, `create_order`, `order_detail`, `transition_order`,
+  `progress_order`, `compute_shipment` (builds `ShipmentFacts` from inspections/holds/releases/the
+  `QP-DEMO` active policy directly, per the task's decision note — Task 9 will move this into the
+  quality service), and the private `_release_allocations`/`_release_reservations` (row-locked,
+  sorted-id decrements) that cancel calls into. `VALIDATED -> PLANNED` is explicitly blocked at this
+  endpoint (409 `INVALID_TRANSITION`, "Planning is applied through an approved recommendation.") even
+  though it is a real transition in `app.domain.orders.lifecycle`.
+- `app/domain/orders/import_csv.py` — `validate_csv`/`revalidate_rows` sharing one DB-facing
+  `_resolve_valid_row` helper, so the commit route re-runs the exact same checks the upload route did.
+  Since the raw file is never stored, the upload route persists each valid row's normalized fields
+  (`ValidRow.to_storage()`) in `import_batches.preview` (`{"display": [...20...], "valid_rows": [...all...]}`)
+  for the commit route to re-validate from.
+- `app/api/schemas/orders.py`, `app/api/orders.py`, `app/api/imports.py`, `app/api/audit.py`,
+  `app/api/notifications.py`, `app/api/reference.py` — routes per backend-contracts.md §5 and the brief.
+  Denied writes (`create_order`, `transition_order`, `progress_order`, CSV upload/commit) are wrapped so
+  a 403 also calls `app.audit.service.audit_denied` in its own committed transaction
+  (`app.api.orders.audit_denial_from_error`), since the request's own transaction rolls back with the error.
+- `app/main.py` — registers the five new routers.
+- `scripts/export-openapi.sh` + `make contracts` — exports a deterministic, sorted `contracts/openapi.json`
+  (verified byte-identical across two consecutive runs); committed.
+
+**Design decisions not fully specified by the brief:**
+- Notification "read" has no per-user read state in the schema (`notifications.read_at` is one column),
+  so `POST /notifications/{id}/read` on a role-targeted row marks it read for everyone that role reaches.
+- CSV row-level errors (bad header/date/priority/formula cell/etc.) never raise; they always produce a
+  `VALIDATED`/`REJECTED` `import_batches` row (still 201). Only batch-level conflicts (already committed,
+  batch not `VALIDATED`, or a commit-time re-validation failure) raise 409, and — since the whole request's
+  transaction rolls back on any raised `AppError` — a failed commit truly writes nothing (no orders, no
+  batch/status mutation), satisfying "any failure -> 409 and no rows inserted" without extra bookkeeping.
+- Deviated from the brief's literal "`list /factories/{KTN}/orders` -> 403" for `byg.planner`: per
+  backend-contracts.md §4 and `app/auth/scope.py::load_scoped`, a factory the caller holds **no** role in
+  at all is 404, never 403 (403 is reserved for an accessible factory with an insufficient permission);
+  `order:read` is granted to every role, so there is no role that reaches an accessible-but-forbidden list.
+  `tests/security/test_order_access.py` asserts the documented 404 behavior for all three of
+  `byg.planner`'s KTN accesses (detail/transition/list) and explains this in a module docstring.
+
+**TDD evidence:**
+- RED: before implementation, running the new integration files against a scaffolded `app/api/orders.py`
+  stub failed with `ImportError`/404s for the not-yet-registered routes and missing service functions
+  (expected — the modules did not exist yet).
+- GREEN, unit (no database):
+  ```
+  $ uv run pytest -m "not integration" -q
+  398 passed, 146 deselected
+  ```
+- GREEN, integration (against the isolated per-agent database `linesense_test_b`, per controller note):
+  ```
+  $ LS_TEST_DATABASE_URL=postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test_b \
+    LS_TEST_MIGRATION_DATABASE_URL=postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test_b \
+    uv run pytest -m integration -q
+  146 passed, 398 deselected
+  ```
+  (21 of the 146 are this task's: 9 in `test_orders_api.py`, 5 in `test_import_api.py`, 3 in
+  `test_audit_api.py`, 4 in `test_order_access.py`; the rest are prior tasks', unaffected.)
+- `uv run ruff check app tests/integration/test_orders_api.py tests/integration/test_import_api.py tests/integration/test_audit_api.py tests/unit/test_import_csv.py tests/security/test_order_access.py` — all checks passed.
+- `uv run ruff format --check .` — clean for every file this task touched; one pre-existing unformatted
+  file from another in-progress task (`tests/unit/test_datasets.py`, Task 16) is untouched and unstaged.
+- `uv run mypy app` — `Success: no issues found in 79 source files`.
+
+**Files changed:** new — `services/backend/app/domain/clock.py`,
+`services/backend/app/domain/orders/service.py`, `services/backend/app/domain/orders/import_csv.py`,
+`services/backend/app/api/schemas/__init__.py`, `services/backend/app/api/schemas/orders.py`,
+`services/backend/app/api/orders.py`, `services/backend/app/api/imports.py`, `services/backend/app/api/audit.py`,
+`services/backend/app/api/notifications.py`, `services/backend/app/api/reference.py`,
+`services/backend/tests/integration/test_orders_api.py`, `services/backend/tests/integration/test_import_api.py`,
+`services/backend/tests/integration/test_audit_api.py`, `services/backend/tests/unit/test_import_csv.py`,
+`services/backend/tests/security/test_order_access.py`, `scripts/export-openapi.sh`, `contracts/openapi.json`.
+Modified — `services/backend/app/main.py` (registers the new routers), `Makefile` (`contracts` target).
+
+**Known limitations:**
+- `compute_shipment` living in `app.domain.orders.service` (not a quality service) is a deliberate,
+  brief-directed interim: Task 9 owns moving it once inspections/holds/releases get their own write
+  endpoints.
+- `_release_allocations`/`_release_reservations` are private to `app.domain.orders.service`; Task 8 is
+  expected to replace them with the shared capacity/inventory lock helpers without changing
+  `transition_order`'s call sites.
+- No live-LLM or agent-protocol code was touched; nothing here depends on Task 11/12.
+
 ## 2026-09-17 — Task 6: Deterministic synthetic seed data (identity, master data, operations, demo scenario)
 
 Implemented `services/backend/app/seed/generator.py` (`async def seed_demo(session, *,
@@ -1303,3 +1386,113 @@ seed data section).
   `PRODUCTION_COMPLETE` order fails with a hold, second passes with no release, the rest pass
   and get released) rather than a fully independent random distribution per order; the two
   named special cases the brief calls for are still guaranteed to exist.
+
+### 2026-09-17 — Task 16 fix round 1 (post-review): genuine sentence-frame diversity in notes datasets
+
+**Finding:** review found `scripts/build_notes_dataset.py` had only 7 template functions per
+label per split (70 total, not "~140" as the original report claimed), so many notes shared the
+same underlying sentence skeleton with only entity *values* swapped (e.g. "FINAL inspection for
+`{ORDER}` passed with two minor defects noted." reused ~9 times per split). Normalizing entities
+away, 150 train notes collapsed to 93 unique frames and 110 test notes to 75 — inflating
+classifier/NER scores without adding real diversity.
+
+**Fix:**
+- Rewrote `scripts/build_notes_dataset.py`'s template system from per-template Python functions
+  to plain template *strings* with `{ORDER}`/`{ORDER2}`/`{LINE}`/`{STYLE}`/`{MATERIAL}`/
+  `{OPERATION}`/`{DEFECT}`/`{FAKE_ORDER}` placeholders, rendered by one generic
+  `render_template()` that computes entity offsets as it substitutes mentions (a `{LABEL2}` token
+  retries until it draws a mention distinct from the primary `{LABEL}` in the same sentence).
+  Every label/split bank now has **24 genuinely distinct sentence templates** (240 total: 5
+  labels × 2 splits × 24), mixing short fragments ("Quiet shift, nothing to report."),
+  one-clause and multi-clause sentences, 0–3 entity mentions, and a handful that mention a
+  second domain's entity while staying dominantly about their own label (e.g. a `planning` note
+  that mentions a `{MATERIAL}` shortage as the reason for a schedule slip).
+- `generate_split()` now enforces a hard cap: no single template is used more than
+  `MAX_USES_PER_TEMPLATE` (3) times within a split, and `_validate_template_banks()` asserts
+  every bank has at least `MIN_TEMPLATES_PER_LABEL_SPLIT` (20) templates and that no template
+  string is shared between a label's train and test banks (caught and fixed three accidental
+  literal duplicates during this fix). Train/test Jaccard separation is now enforced *during*
+  generation itself (a candidate test note whose token-set Jaccard similarity to any generated
+  train note is ≥ `JACCARD_MAX` is discarded and a different template/rendering is drawn) rather
+  than as a separate post-hoc pass — `enforce_train_test_separation()` was removed as no longer
+  needed.
+- Added `normalize_frame(note)` and `check_frame_diversity(notes, *, context)` to
+  `scripts/validate_datasets.py`: every note is collapsed to its entity-normalized sentence frame
+  (each labelled span replaced by `<label>`, lowercased, whitespace-collapsed); the check fails if
+  any frame is used more than `MAX_FRAME_USES` (3) times in a split, or if fewer than
+  `MIN_UNIQUE_FRAME_FRACTION` (60%) of a split's notes have a unique frame. Wired into
+  `check_notes_file` (runs against `valid_notes`, so a malformed note reported elsewhere doesn't
+  also spuriously affect the diversity count).
+- Added 4 new unit tests to `tests/unit/test_datasets.py`:
+  `test_normalize_frame_collapses_entity_values`, `test_frame_diversity_flags_overused_frame`
+  (4 notes sharing one frame → flagged "used 4 times"), `test_frame_diversity_flags_low_uniqueness`
+  (5 distinct frames × 2 uses = 10 notes, 50% unique → flagged), and
+  `test_frame_diversity_passes_with_enough_distinct_frames` (5 frames / 6 notes, max reuse 2 →
+  zero problems).
+- Regenerated both JSONL files from the fixed generator (same `RANDOM_SEED = 20260917`).
+  Actual counts: `notes_train.jsonl` 150 notes / 92 unique frames (61.3%), max reuse 3;
+  `notes_test.jsonl` 110 notes / 77 unique frames (70.0%), max reuse 3 — both now documented in
+  `data/eval/README.md`'s new "Sentence-frame diversity" section with the exact numbers instead
+  of the prior, since-corrected "~140 templates" claim.
+- Corrected `task-16-report.md`'s inaccurate template-count claim (see that file's own "Fix round
+  1" note).
+- Item 4 from the review (trimming "Related Procedures and Review" sections that exceed ~25% of
+  a document) was explicitly marked minor/optional by the reviewer and was **not** applied in
+  this round — see Known issues below.
+
+**Commands and results:**
+```
+$ cd services/backend && uv run python3 ../../scripts/build_notes_dataset.py
+Wrote 150 train notes to data/eval/notes_train.jsonl
+Wrote 110 test notes to data/eval/notes_test.jsonl
+
+$ make datasets-check
+OK: synthetic dataset validation passed with zero problems.
+
+$ cd services/backend && uv run pytest -q tests/unit/test_datasets.py tests/unit/test_seed_vocabulary.py
+19 passed in 0.08s
+
+$ make test
+400 passed, 146 deselected in 2.62s
+
+$ cd services/backend && uv run ruff check app/seed/__init__.py app/seed/vocabulary.py \
+    tests/unit/test_seed_vocabulary.py tests/unit/test_datasets.py \
+    ../../scripts/validate_datasets.py ../../scripts/build_notes_dataset.py
+All checks passed!
+
+$ uv run mypy app/seed/__init__.py app/seed/vocabulary.py \
+    ../../scripts/validate_datasets.py ../../scripts/build_notes_dataset.py
+Success: no issues found in 4 source files
+```
+
+**Files changed:** modified — `scripts/build_notes_dataset.py` (template system rewrite),
+`scripts/validate_datasets.py` (`normalize_frame`, `check_frame_diversity`, wired into
+`check_notes_file`), `services/backend/tests/unit/test_datasets.py` (4 new tests),
+`data/eval/notes_train.jsonl`, `data/eval/notes_test.jsonl` (regenerated), `data/eval/README.md`
+(new section with actual frame counts).
+
+**Known issues / limitations:**
+- Item 4 (trim oversized "Related Procedures and Review" sections) was not applied: 16 of the 30
+  SOP documents still have that section above 25% of the document's total word count (worst
+  cases: `defect-catalogue` 41.1%, `critical-defect-response` 38.6%,
+  `machine-preventive-maintenance` 37.3%). The reviewer marked this item minor/optional, and this
+  fix round prioritized the three non-optional items (genuine template diversity, the frame-level
+  validator rule, and the corrected template-count claim). The section's content itself is
+  topic-specific per document (verified in the original Task 16 report), not boilerplate text —
+  the finding is about proportion, not substance.
+- While regenerating templates for the `unknown` label, the original bank was almost entirely
+  static text (no entity placeholders), which meant it could not reach 30 unique train notes
+  under the new dedup-plus-cap rules (max ~28 achievable). Fixed by adding more `{LINE}`/
+  `{ORDER}`-bearing templates to that bank so it has enough combinatorial headroom (train
+  capacity now ~40+, comfortably above the 30 needed).
+- `scripts/*.py` remain outside `make typecheck`'s scope (`mypy app`) and were checked directly
+  with `uv run mypy` against the two files, as in the original report.
+- A concurrent task (Task 6) added `app/seed/generator.py`, `scenario.py`, `identities.py`, and
+  `__main__.py` inside `app/seed/`, and edited `app/seed/__init__.py`'s docstring, while this fix
+  round was running. An early, overly broad `uv run ruff check --fix app/seed ...` command in this
+  session (before this was noticed) globbed the whole `app/seed/` directory and could have applied
+  safe auto-fixes to those files; a syntax check (`ast.parse`) confirmed none of them were broken,
+  no changes were staged or committed from that directory beyond this task's own `vocabulary.py`/
+  `__init__.py` (and `__init__.py` was ultimately *not* committed by this task either, since Task 6
+  had already rewritten its docstring — see Files changed above), and every subsequent command in
+  this fix round targeted exact file paths, never the shared directory.
