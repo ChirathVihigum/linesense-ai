@@ -928,3 +928,150 @@ correction and a note that Task 4 implements these formulas), `docs/IMPLEMENTATI
 - Handlers still running after the 20 s shutdown grace period are cancelled. Their jobs are
   recovered only when the lease expires (30 s by default).
 - `CANCELLED` job status is not set by any code path yet.
+
+### 2026-09-17 — Task 16: synthetic SOP corpus and labelled NLP/IR evaluation datasets
+
+**Built:**
+
+- `services/backend/app/seed/vocabulary.py`: the fixed demo vocabulary constants
+  (`KTN_ORDER_REFS`/`BYG_ORDER_REFS`/`DEMO_ORDER_REF`/`ALL_ORDER_REFS`, `MATERIALS`,
+  `OPERATION_CATALOG`, `SKILL_CODES` (derived), `DEFECT_CATALOG`, `KTN_LINES`/`BYG_LINES`,
+  `STYLE_CODES`) per `vocabulary-spec.md`, exactly matching the strings the SOP corpus and
+  the notes/retrieval datasets are authored against; pure data, no I/O. Task 6's seed
+  generator will import these.
+- `data/synthetic/sops/*.md`: exactly 30 SOP/QUALITY_POLICY/IE_STANDARD/OTHER documents
+  (the required slug list from the brief), each with YAML front matter (`slug`, `title`,
+  `doc_type`, `scope`, `acl`, `version`), a single `#` title, the required synthetic
+  disclaimer line, 6 `##` sections (350–1,100 words), consistent numeric rules (FINAL
+  demo policy: sample size 80, max 5 defective units, 0 critical defects, FINAL required)
+  and vocabulary usage (defect codes, materials, operations, lines) matching
+  `app/seed/vocabulary.py` and `docs/architecture/formulas.md`/`glossary.md`.
+  `line-loading-procedure`/`style-changeover` are scope `KTN`; `shift-calendar-and-breaks`
+  is scope `BYG`; `worker-data-privacy` carries `acl: [org_admin, supervisor, ie_engineer]`;
+  all others are scope `org`.
+- `data/synthetic/sops/versions/fabric-receiving-inspection-v1.md`: a superseded version 1
+  of `fabric-receiving-inspection` (inspects 5% of rolls vs. the active version 2's 10%).
+- `data/synthetic/adversarial/injection-sop.md` (slug `adversarial-injection-test`) and
+  `data/synthetic/adversarial/xss-note.md`: the required prompt-injection and XSS fixtures;
+  loaded only by tests/eval, never by `make seed`.
+- `scripts/validate_datasets.py`: importable validator module and CLI
+  (`check_sop_corpus`, `check_version_file`, `check_adversarial_files`, `check_notes_file`,
+  `check_note_object`, `check_label_distribution`, `check_train_test_separation`,
+  `check_retrieval_questions`, `check_relevant_reference`, `validate_all`/`main`) — parses
+  front matter with PyYAML (added via `uv add pyyaml`, plus `uv add --dev types-pyyaml` for
+  mypy), resolves `services/backend` via its own file path (works regardless of cwd), and
+  checks every requirement in the brief (front matter fields, slug/filename match, 30-file
+  count, section/word counts, disclaimer line, defect-code vocabulary, note span integrity,
+  entity-to-master-data resolution, label distribution thresholds, train/test Jaccard <0.8,
+  retrieval doc/section existence, question-vs-heading-copy, personal-name blocklist).
+- `scripts/build_notes_dataset.py`: generates `data/eval/notes_{train,test}.jsonl` from
+  ~140 hand-written sentence templates (disjoint train/test template sets and phrasings per
+  label) plus vocabulary mentions, computing entity offsets programmatically as text is
+  assembled (`render()`); fixed `RANDOM_SEED = 20260917`; self-checks every generated test
+  note's Jaccard similarity against every train note (reusing
+  `validate_datasets.token_set`/`jaccard_similarity`) and regenerates any note at or above
+  the 0.8 threshold. Produces 150 train / 110 test notes, 30/22 per label
+  (`planning`/`materials`/`ie`/`quality`/`unknown`), including varied surface forms
+  (`L3`/`Line 3`/`line 3`, `M01`/material name/lowercase name, defect code/name), notes
+  without entities, and an unresolvable `PO-KTN-9999` mention that is never labelled `ORDER`.
+- `data/eval/retrieval_questions.jsonl`: 56 hand-authored questions (45 `test` + 11 `dev`)
+  spanning 28 of the 30 documents, each `relevant` entry referencing a real `##` heading in
+  the active document version, phrased as questions rather than copied headings.
+- `data/eval/README.md`, `data/synthetic/README.md`: dataset purpose, formats, authoring
+  method, train/test separation rule, licence pointer, and an explicit warning that scores
+  here do not predict real-factory performance.
+- `Makefile` target `datasets-check` (added by this task; landed in the shared working tree
+  and was swept into commit `942b2df` by a concurrently running task before this task's own
+  commit — no separate Makefile change needed here).
+- `services/backend/tests/unit/test_seed_vocabulary.py`: counts/uniqueness/shape checks for
+  every vocabulary constant.
+- `services/backend/tests/unit/test_datasets.py`: loads `scripts/validate_datasets.py` via
+  `importlib.util.spec_from_file_location`, asserts `validate_all() == []` against the real
+  dataset, and exercises `check_note_object`/`check_relevant_reference`/
+  `check_train_test_separation`/`check_label_distribution` against tiny bad fixtures (wrong
+  span offset, unknown label, entity not in master data, missing section, personal name,
+  near-duplicate train/test note, missing label class) to prove the validator detects each.
+
+**TDD evidence:**
+
+- RED: `cd services/backend && uv run pytest -q tests/unit/test_datasets.py` before any
+  corpus/dataset files existed — `test_validate_all_reports_zero_problems_on_real_dataset`
+  failed with `expected exactly 30 SOP files ... found 0` plus a list of every missing
+  slug/file (the version file, both adversarial files, and all three `data/eval/*.jsonl`
+  files); the 7 bad-fixture tests passed immediately since they only exercise pure
+  functions with inline data. One bad-fixture test
+  (`test_label_distribution_flags_missing_class`) initially used a distribution that
+  accidentally satisfied the 8% `unknown` minimum and had to be corrected before it
+  correctly demonstrated detection.
+- GREEN (after authoring the corpus and running `scripts/build_notes_dataset.py` and the
+  retrieval-questions generation script): `9 passed in 0.12s`.
+
+**Commands and results:**
+
+```
+$ cd services/backend && uv run pytest -q tests/unit/test_datasets.py tests/unit/test_seed_vocabulary.py
+15 passed in 0.12s
+
+$ make datasets-check
+OK: synthetic dataset validation passed with zero problems.
+
+$ make test
+342 passed, 98 deselected in 2.51s
+
+$ cd services/backend && uv run ruff check app/seed tests/unit/test_seed_vocabulary.py \
+    tests/unit/test_datasets.py ../../scripts/validate_datasets.py ../../scripts/build_notes_dataset.py
+All checks passed!
+$ uv run ruff format --check app/seed tests/unit/test_seed_vocabulary.py \
+    tests/unit/test_datasets.py ../../scripts/validate_datasets.py ../../scripts/build_notes_dataset.py
+6 files already formatted
+
+$ uv run mypy app/seed
+Success: no issues found in 2 source files
+$ uv run mypy ../../scripts/validate_datasets.py ../../scripts/build_notes_dataset.py
+Success: no issues found in 2 source files
+```
+
+Whole-repo `make lint`/`make typecheck` were clean earlier in this task but, by the time of
+this commit, a concurrently landed task (`app/llm/`, `app/jobs/worker.py`, an import-order
+issue in `app/db/`) made both fail unrelated to this task's files — per the brief's guidance
+for concurrent Task 5/6-adjacent work, lint/typecheck above are scoped to exactly the files
+this task created/changed, all of which are clean; `make test` (whole-repo, unscoped) still
+passes cleanly at 342/342.
+
+**Files changed:** new — `services/backend/app/seed/__init__.py`,
+`services/backend/app/seed/vocabulary.py`,
+`services/backend/tests/unit/test_seed_vocabulary.py`,
+`services/backend/tests/unit/test_datasets.py`, `scripts/validate_datasets.py`,
+`scripts/build_notes_dataset.py`, `data/synthetic/sops/*.md` (30 files),
+`data/synthetic/sops/versions/fabric-receiving-inspection-v1.md`,
+`data/synthetic/adversarial/injection-sop.md`, `data/synthetic/adversarial/xss-note.md`,
+`data/synthetic/README.md`, `data/eval/notes_train.jsonl`, `data/eval/notes_test.jsonl`,
+`data/eval/retrieval_questions.jsonl`, `data/eval/README.md`. Modified —
+`services/backend/pyproject.toml`/`uv.lock` (added `pyyaml`, dev `types-pyyaml`), `Makefile`
+(`datasets-check` target, landed via another task's commit as noted above).
+
+**Self-review:** front matter/body parsing has no `except: pass`; `validate_datasets.py`
+resolves paths from its own file location rather than assuming a cwd, so it works both as
+`uv run python ../../scripts/validate_datasets.py` and when imported via `importlib` from a
+different cwd. No secrets involved. Entity/master-data resolution logic in the validator is
+intentionally duplicated as the single source of truth the notes generator imports
+(`token_set`/`jaccard_similarity`) rather than re-implemented, so the generation and
+validation of the Jaccard rule cannot drift apart. YAGNI: the validator does not attempt to
+verify every prose mention of a material/operation/line name against vocabulary (only
+defect codes, per the brief's explicit item 7 list), since that would require an NLP pass
+the brief does not ask this task to build.
+
+**Known issues / limitations:**
+
+- The SOP corpus's "Related Procedures and Review" sections were added uniformly across
+  all 30 documents to satisfy the 350-word minimum after initial drafts ran short; content
+  is topic-specific per document (not boilerplate text), but the heading name repeats
+  across documents by design (real SOP suites commonly end each document the same way).
+- `scripts/build_notes_dataset.py` and `scripts/validate_datasets.py` are not covered by
+  `make typecheck` (which only checks `app/`) or `make lint`'s repo-root scope beyond what
+  was explicitly run above; both were manually checked clean with `uv run ruff check`/
+  `uv run mypy` against the two files directly (mypy: only the pre-existing untyped-yaml
+  stub note, resolved by adding `types-pyyaml`).
+- Retrieval questions cover 28 of the 30 documents (`worker-data-privacy` and
+  `ai-assistant-usage-policy` are not referenced by any question) — still well above the
+  brief's ≥20-document minimum.
