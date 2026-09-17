@@ -18,8 +18,12 @@ from app.settings import get_settings
 
 @cache
 def get_engine(url: str) -> AsyncEngine:
-    """Return a cached async engine for ``url``, creating it on first use."""
-    return create_async_engine(url, pool_pre_ping=True)
+    """Return a cached async engine for ``url``, creating it on first use.
+
+    ``hide_parameters`` keeps bound values (which may be user data) out of
+    exception messages and logs.
+    """
+    return create_async_engine(url, pool_pre_ping=True, hide_parameters=True)
 
 
 @cache

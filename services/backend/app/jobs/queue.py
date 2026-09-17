@@ -70,7 +70,18 @@ def backoff_seconds(attempt: int) -> float:
 
 
 def format_error(exc: BaseException) -> str:
-    """Short, secret-free description of ``exc`` (type name plus 500 chars of text)."""
+    """Short, secret-free description of ``exc`` (type name plus 500 chars of text).
+
+    SQLAlchemy statement errors embed the SQL text (and possibly bound
+    parameters) in ``str(exc)``; for those only the underlying driver
+    exception's class and first message line are kept.
+    """
+    if isinstance(exc, sa.exc.StatementError):
+        orig = exc.orig
+        if orig is None:
+            return repr(type(exc).__name__)
+        message = str(orig).splitlines()[0] if str(orig) else ""
+        return repr(type(orig).__name__) + ": " + message[:500]
     return repr(type(exc).__name__) + ": " + str(exc)[:500]
 
 
@@ -299,8 +310,10 @@ async def fail(
     error: str,
     retryable: bool,
     on_exhausted: ExhaustedCallback | None = None,
-) -> None:
+) -> bool:
     """Record a failed attempt (fenced; a stale token changes nothing).
+
+    Returns ``False`` when the caller was fenced out (nothing recorded).
 
     Retryable failures with attempts remaining go back to ``READY`` after
     the backoff; everything else becomes ``FAILED`` and ``on_exhausted``
@@ -312,8 +325,7 @@ async def fail(
             sa.select(Job).where(*_fence(job_id, lease_token)).with_for_update()
         )
         if row is None:
-            logger.warning("job.lease_lost", job_id=str(job_id), operation="fail")
-            return
+            return False
         job = ClaimedJob(
             id=row.id,
             queue=row.queue,
@@ -341,3 +353,4 @@ async def fail(
 
     if not will_retry:
         await _run_exhausted(on_exhausted, job, error)
+    return True

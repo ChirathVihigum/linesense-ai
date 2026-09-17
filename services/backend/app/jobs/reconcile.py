@@ -1,6 +1,6 @@
 """Periodic reconciliation of time-based state (initial scope; Task 13 extends it).
 
-- ``idempotency_keys`` past ``expires_at`` are deleted.
+- ``idempotency_keys`` expired for more than an hour are deleted.
 - ``recommendations`` still ``PROPOSED``/``APPROVED`` past ``expires_at``
   become ``EXPIRED`` with a ``SYSTEM`` audit event per row.
 
@@ -13,7 +13,7 @@ audited.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,6 +25,8 @@ from app.settings import Settings
 
 RECONCILER_ACTOR_ID = "reconciler"
 RECOMMENDATION_BATCH_SIZE = 500
+PURGE_BATCH_SIZE = 500
+PURGE_GRACE = timedelta(hours=1)
 _EXPIRABLE = (RecommendationStatus.PROPOSED.value, RecommendationStatus.APPROVED.value)
 
 
@@ -43,11 +45,23 @@ def _cutoff(now: datetime | None) -> sa.ColumnElement[datetime]:
 async def purge_expired_idempotency_keys(
     session: AsyncSession, *, now: datetime | None = None
 ) -> int:
-    """Delete idempotency keys past ``expires_at`` (caller's transaction)."""
+    """Delete idempotency keys expired for more than ``PURGE_GRACE`` (caller's transaction).
+
+    The grace period absorbs clock skew between API hosts (which stamp
+    ``expires_at`` with their own clock) and the database. Rows locked by an
+    in-flight ``idempotency.begin`` are skipped and purged by a later round.
+    """
+    doomed = (
+        sa.select(IdempotencyKey.id)
+        .where(IdempotencyKey.expires_at < _cutoff(now) - PURGE_GRACE)
+        .limit(PURGE_BATCH_SIZE)
+        .with_for_update(skip_locked=True)
+    )
     deleted = await session.scalars(
         sa.delete(IdempotencyKey)
-        .where(IdempotencyKey.expires_at <= _cutoff(now))
+        .where(IdempotencyKey.id.in_(doomed))
         .returning(IdempotencyKey.id)
+        .execution_options(synchronize_session=False)
     )
     return len(deleted.all())
 

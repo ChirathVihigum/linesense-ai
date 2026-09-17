@@ -91,6 +91,49 @@ def _scope(organization_id: uuid.UUID, actor_id: str, operation: str, key: str) 
     ]
 
 
+_MAX_CLAIM_ATTEMPTS = 3
+
+
+async def _insert_pending(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    actor_id: str,
+    operation: str,
+    key: str,
+    digest: str,
+    now: datetime,
+) -> bool:
+    inserted = await session.scalar(
+        insert(IdempotencyKey)
+        .values(
+            id=uuid.uuid4(),
+            organization_id=organization_id,
+            actor_id=actor_id,
+            operation=operation,
+            key=key,
+            request_hash=digest,
+            expires_at=now + RETENTION,
+        )
+        .on_conflict_do_nothing(index_elements=["organization_id", "actor_id", "operation", "key"])
+        .returning(IdempotencyKey.id)
+    )
+    return inserted is not None
+
+
+async def _lock_existing(
+    session: AsyncSession, *, organization_id: uuid.UUID, actor_id: str, operation: str, key: str
+) -> IdempotencyKey | None:
+    return (
+        await session.execute(
+            select(IdempotencyKey)
+            .where(*_scope(organization_id, actor_id, operation, key))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+
+
 async def begin(
     session: AsyncSession,
     *,
@@ -107,32 +150,36 @@ async def begin(
     still in progress (no stored response yet).
     """
     digest = request_hash(request_payload)
+    # Python clock: ``expires_at`` only needs coarse accuracy. The reconciler
+    # deletes keys one hour after expiry (``PURGE_GRACE``), which absorbs any
+    # realistic skew between this host and the database clock.
     now = datetime.now(tz=UTC)
-    inserted = await session.scalar(
-        insert(IdempotencyKey)
-        .values(
-            id=uuid.uuid4(),
+    row: IdempotencyKey | None = None
+    for _ in range(_MAX_CLAIM_ATTEMPTS):
+        inserted = await _insert_pending(
+            session,
             organization_id=organization_id,
             actor_id=actor_id,
             operation=operation,
             key=key,
-            request_hash=digest,
-            expires_at=now + RETENTION,
+            digest=digest,
+            now=now,
         )
-        .on_conflict_do_nothing(index_elements=["organization_id", "actor_id", "operation", "key"])
-        .returning(IdempotencyKey.id)
-    )
-    if inserted is not None:
-        return None
-
-    row = (
-        await session.execute(
-            select(IdempotencyKey)
-            .where(*_scope(organization_id, actor_id, operation, key))
-            .with_for_update()
-            .execution_options(populate_existing=True)
+        if inserted:
+            return None
+        # The conflicting row can vanish (purged by the reconciler) between
+        # the INSERT and this SELECT; then simply try the INSERT again.
+        row = await _lock_existing(
+            session,
+            organization_id=organization_id,
+            actor_id=actor_id,
+            operation=operation,
+            key=key,
         )
-    ).scalar_one()
+        if row is not None:
+            break
+    if row is None:
+        raise RuntimeError("idempotency key kept disappearing while being claimed")
 
     if row.expires_at <= now:
         # Past retention: the old key no longer protects anything; start fresh.

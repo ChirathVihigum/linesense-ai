@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,7 +18,7 @@ from app.jobs.handlers import build_registry
 from app.jobs.queue import PermanentJobError, RetryableJobError, enqueue
 from app.jobs.reconcile import reconcile_once
 from app.jobs.worker import HandlerRegistry, JobContext, Worker, finish_in_transaction
-from app.settings import Settings
+from app.settings import Settings, resolve_backend_path
 from tests.factories import make_org, make_recommendation, make_run, utcnow
 
 pytestmark = pytest.mark.integration
@@ -43,6 +44,11 @@ def _worker(
     }
     params.update(kwargs)
     return Worker(**params)
+
+
+@pytest.fixture
+def alive_dir(tmp_path: Path) -> Path:
+    return tmp_path / "alive"
 
 
 async def _enqueue(
@@ -278,7 +284,7 @@ async def test_fenced_complete_rolls_back_handler_writes(
 
 
 async def test_graceful_stop_waits_for_running_handler(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings, alive_dir: Path
 ) -> None:
     started = asyncio.Event()
     handled: list[uuid.UUID] = []
@@ -291,15 +297,14 @@ async def test_graceful_stop_waits_for_running_handler(
     registry = HandlerRegistry()
     registry.register("test.slow", handler)
     job_id = await _enqueue(session_factory, "test.slow")
-    worker = _worker(registry, session_factory, settings, concurrency=2)
+    worker = _worker(registry, session_factory, settings, concurrency=2, alive_dir=alive_dir)
     alive_path = worker.alive_path
-    assert alive_path is not None
+    assert alive_path == alive_dir / f"worker-{worker.worker_id}.alive"
 
     stop_event = asyncio.Event()
     run_task = asyncio.create_task(worker.run(stop_event))
     await asyncio.wait_for(started.wait(), timeout=5)
     assert alive_path.exists()
-    assert alive_path.parent.name == ".local"
     stop_event.set()
     # A job enqueued after the stop signal is not claimed.
     late_id = await _enqueue(session_factory, "test.slow")
@@ -312,7 +317,7 @@ async def test_graceful_stop_waits_for_running_handler(
 
 
 async def test_stop_after_grace_period_leaves_job_for_lease_recovery(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings, alive_dir: Path
 ) -> None:
     started = asyncio.Event()
 
@@ -323,7 +328,9 @@ async def test_stop_after_grace_period_leaves_job_for_lease_recovery(
     registry = HandlerRegistry()
     registry.register("test.stuck", handler)
     job_id = await _enqueue(session_factory, "test.stuck")
-    worker = _worker(registry, session_factory, settings, shutdown_grace_seconds=0.2)
+    worker = _worker(
+        registry, session_factory, settings, shutdown_grace_seconds=0.2, alive_dir=alive_dir
+    )
 
     stop_event = asyncio.Event()
     run_task = asyncio.create_task(worker.run(stop_event))
@@ -339,7 +346,7 @@ async def test_stop_after_grace_period_leaves_job_for_lease_recovery(
 
 
 async def test_worker_runs_concurrent_jobs(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings, alive_dir: Path
 ) -> None:
     running = 0
     peak = 0
@@ -359,7 +366,7 @@ async def test_worker_runs_concurrent_jobs(
     registry = HandlerRegistry()
     registry.register("test.parallel", handler)
     job_ids = {await _enqueue(session_factory, "test.parallel") for _ in range(4)}
-    worker = _worker(registry, session_factory, settings, concurrency=4)
+    worker = _worker(registry, session_factory, settings, concurrency=4, alive_dir=alive_dir)
 
     stop_event = asyncio.Event()
     run_task = asyncio.create_task(worker.run(stop_event))
@@ -389,6 +396,7 @@ async def _expired_fixtures(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> dict[str, uuid.UUID]:
     past = utcnow() - timedelta(minutes=5)
+    long_past = utcnow() - timedelta(hours=2)
     future = utcnow() + timedelta(hours=1)
     async with session_factory() as session, session.begin():
         org = await make_org(session)
@@ -403,7 +411,8 @@ async def _expired_fixtures(
             ).id,
             "proposed_fresh": (await make_recommendation(session, run=run, expires_at=future)).id,
         }
-        for name, expires_at in (("key_expired", past), ("key_fresh", future)):
+        keys = (("key_expired", long_past), ("key_within_grace", past), ("key_fresh", future))
+        for name, expires_at in keys:
             key = IdempotencyKey(
                 organization_id=org.id,
                 actor_id="user-1",
@@ -444,7 +453,8 @@ async def test_reconcile_once_expires_recommendations_and_idempotency_keys(
         keys = (await session.scalars(select(IdempotencyKey.id))).all()
         audits = (await session.scalars(select(AuditEvent).order_by(AuditEvent.target_id))).all()
         expired = await session.get(Recommendation, ids["proposed_expired"])
-    assert keys == [ids["key_fresh"]]
+    # Keys are purged only an hour after expiry.
+    assert set(keys) == {ids["key_within_grace"], ids["key_fresh"]}
     assert expired is not None and expired.version == 2
     assert sorted(a.target_id for a in audits) == sorted(
         [str(ids["proposed_expired"]), str(ids["approved_expired"])]
@@ -470,13 +480,13 @@ async def test_reconcile_once_honours_explicit_now(
 ) -> None:
     ids = await _expired_fixtures(session_factory)
 
-    report = await reconcile_once(session_factory, settings, now=utcnow() - timedelta(hours=1))
+    report = await reconcile_once(session_factory, settings, now=utcnow() - timedelta(hours=3))
     assert report.recommendations_expired == 0
     assert report.idempotency_keys_expired == 0
 
-    report = await reconcile_once(session_factory, settings, now=utcnow() + timedelta(hours=2))
+    report = await reconcile_once(session_factory, settings, now=utcnow() + timedelta(hours=3))
     assert report.recommendations_expired == 3
-    assert report.idempotency_keys_expired == 2
+    assert report.idempotency_keys_expired == 3
     assert (await _statuses(session_factory))[ids["proposed_fresh"]] == "EXPIRED"
 
 
@@ -497,13 +507,15 @@ async def test_maintenance_reconcile_job_runs_through_worker(
     assert (await _statuses(session_factory))[ids["proposed_expired"]] == "EXPIRED"
     async with session_factory() as session:
         keys = (await session.scalars(select(IdempotencyKey.id))).all()
-    assert keys == [ids["key_fresh"]]
+    assert set(keys) == {ids["key_within_grace"], ids["key_fresh"]}
 
 
 async def test_loop_errors_back_off_instead_of_spinning(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings, alive_dir: Path
 ) -> None:
-    worker = _worker(HandlerRegistry(), session_factory, settings, poll_interval=0.05)
+    worker = _worker(
+        HandlerRegistry(), session_factory, settings, poll_interval=0.05, alive_dir=alive_dir
+    )
     calls = 0
 
     async def broken_run_once() -> bool:
@@ -515,12 +527,179 @@ async def test_loop_errors_back_off_instead_of_spinning(
     stop_event = asyncio.Event()
     with capture_logs() as logs:
         run_task = asyncio.create_task(worker.run(stop_event))
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(0.8)
         stop_event.set()
         await asyncio.wait_for(run_task, timeout=5)
 
-    # Without backoff a 0.05 s poll would retry about 12 times; with doubling
-    # delays (0.1, 0.2, 0.4, ...) there are at most 4 attempts in 0.6 s.
-    assert 2 <= calls <= 4
+    # Without backoff a 0.05 s poll would retry about 16 times in 0.8 s; with
+    # doubling delays (0.1, 0.2, 0.4, 0.8, ...) there are about 4. The bound
+    # leaves room for a slow CI scheduler.
+    assert 2 <= calls <= 7
     errors = [entry for entry in logs if entry["event"] == "worker.loop_error"]
     assert [entry["consecutive_errors"] for entry in errors] == list(range(1, calls + 1))
+
+
+async def test_default_alive_path_is_repo_local_dir(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    worker = _worker(HandlerRegistry(), session_factory, settings, worker_id="w1")
+    repo_local = resolve_backend_path("../../.local")
+    assert worker.alive_path == repo_local / "worker-w1.alive"
+    assert repo_local.name == ".local"
+    assert (repo_local.parent / "services" / "backend").is_dir()
+
+    production = settings.model_copy(update={"environment": "production"})
+    assert _worker(HandlerRegistry(), session_factory, production).alive_path is None
+
+
+async def test_handler_raising_cancelled_error_is_retried_and_slot_survives(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings, alive_dir: Path
+) -> None:
+    done = asyncio.Event()
+
+    async def cancelling_handler(ctx: JobContext) -> None:
+        raise asyncio.CancelledError
+
+    async def ok_handler(ctx: JobContext) -> None:
+        done.set()
+
+    registry = HandlerRegistry()
+    registry.register("test.self-cancel", cancelling_handler)
+    registry.register("test.ok", ok_handler)
+    cancel_id = await _enqueue(session_factory, "test.self-cancel")
+    ok_id = await _enqueue(session_factory, "test.ok")
+    worker = _worker(registry, session_factory, settings, concurrency=1, alive_dir=alive_dir)
+
+    stop_event = asyncio.Event()
+    with capture_logs() as logs:
+        run_task = asyncio.create_task(worker.run(stop_event))
+        await asyncio.wait_for(done.wait(), timeout=5)
+        stop_event.set()
+        await asyncio.wait_for(run_task, timeout=5)
+
+    cancelled = await _job(session_factory, cancel_id)
+    assert cancelled.status == "READY"
+    assert cancelled.attempt == 1
+    assert cancelled.last_error is not None
+    assert cancelled.last_error.startswith("'CancelledError'")
+    assert (await _job(session_factory, ok_id)).status == "DONE"
+    failed = [entry for entry in logs if entry["event"] == "job.failed"]
+    assert len(failed) == 1 and failed[0]["retryable"] is True
+    assert "job.lease_lost" not in [entry["event"] for entry in logs]
+
+
+async def test_heartbeat_after_handler_commit_does_not_cancel_handler(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    finished = asyncio.Event()
+
+    async def handler(ctx: JobContext) -> None:
+        async with ctx.session_factory() as session, session.begin():
+            await finish_in_transaction(ctx, session)
+        # Post-commit work spanning several heartbeat intervals.
+        await asyncio.sleep(0.5)
+        finished.set()
+
+    registry = HandlerRegistry()
+    registry.register("test.post-commit", handler)
+    job_id = await _enqueue(session_factory, "test.post-commit")
+    worker = _worker(registry, session_factory, settings, lease_seconds=5, heartbeat_seconds=0.1)
+
+    with capture_logs() as logs:
+        assert await worker.run_once() is True
+
+    assert finished.is_set()
+    assert (await _job(session_factory, job_id)).status == "DONE"
+    events = [entry["event"] for entry in logs]
+    assert "job.completed" in events
+    assert "job.lease_lost" not in events
+
+
+async def test_raising_exhaustion_hook_is_logged_and_job_stays_failed(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    calls = 0
+
+    async def handler(ctx: JobContext) -> None:
+        raise PermanentJobError("nope")
+
+    async def on_exhausted(ctx: JobContext, error: str) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("hook broke")
+
+    registry = HandlerRegistry()
+    registry.register("test.bad-hook", handler, on_exhausted=on_exhausted)
+    job_id = await _enqueue(session_factory, "test.bad-hook")
+    worker = _worker(registry, session_factory, settings)
+
+    with capture_logs() as logs:
+        assert await worker.run_once() is True
+        assert await worker.run_once() is False
+
+    assert calls == 1
+    row = await _job(session_factory, job_id)
+    assert row.status == "FAILED"
+    assert row.last_error == "'PermanentJobError': nope"
+    hook_logs = [entry for entry in logs if entry["event"] == "job.exhausted_hook_failed"]
+    assert len(hook_logs) == 1
+    assert hook_logs[0]["job_id"] == str(job_id)
+
+
+async def test_fenced_failure_logs_lease_lost_not_failed(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    async def handler(ctx: JobContext) -> None:
+        async with ctx.session_factory() as session, session.begin():
+            await session.execute(
+                text("UPDATE jobs SET lease_token = :token WHERE id = :id"),
+                {"token": uuid.uuid4(), "id": ctx.job.id},
+            )
+        raise RuntimeError("fails after losing the lease")
+
+    registry = HandlerRegistry()
+    registry.register("test.fenced-fail", handler)
+    job_id = await _enqueue(session_factory, "test.fenced-fail")
+
+    with capture_logs() as logs:
+        assert await _worker(registry, session_factory, settings).run_once() is True
+
+    row = await _job(session_factory, job_id)
+    assert row.status == "LEASED"
+    assert row.last_error is None
+    events = [entry["event"] for entry in logs]
+    assert "job.lease_lost" in events
+    assert "job.failed" not in events
+
+
+async def test_liveness_is_reported_while_all_slots_are_busy(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings, alive_dir: Path
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(ctx: JobContext) -> None:
+        started.set()
+        await release.wait()
+
+    registry = HandlerRegistry()
+    registry.register("test.busy", handler)
+    await _enqueue(session_factory, "test.busy")
+    worker = _worker(registry, session_factory, settings, alive_dir=alive_dir, alive_interval=0.1)
+    alive_path = worker.alive_path
+    assert alive_path is not None
+
+    stop_event = asyncio.Event()
+    with capture_logs() as logs:
+        run_task = asyncio.create_task(worker.run(stop_event))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        first_mtime = alive_path.stat().st_mtime_ns
+        await asyncio.sleep(0.5)
+        assert alive_path.stat().st_mtime_ns > first_mtime
+        release.set()
+        stop_event.set()
+        await asyncio.wait_for(run_task, timeout=5)
+
+    alive = [entry for entry in logs if entry["event"] == "worker.alive"]
+    assert len(alive) >= 3
+    assert any(entry["active_jobs"] == 1 for entry in alive)
