@@ -1,5 +1,6 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
-        lint format typecheck test test-integration test-all docs-check idp worker datasets-check seed
+        lint format typecheck test test-integration test-all docs-check idp worker datasets-check seed \
+        contracts
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -66,3 +67,6 @@ worker:
 
 seed:
 	cd services/backend && uv run python -m app.seed
+
+contracts:
+	bash scripts/export-openapi.sh
