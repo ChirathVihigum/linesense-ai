@@ -19,6 +19,7 @@ from app.db.types import (
     created_at,
     enum_check,
     factory_id_col,
+    org_factory_index,
     org_fk,
     uuid_pk,
 )
@@ -29,6 +30,7 @@ class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         composite_factory_fk("documents"),
+        org_factory_index("documents"),
         sa.UniqueConstraint("organization_id", "slug", name="uq_documents_organization_id_slug"),
         enum_check("doc_type_valid", "doc_type", [t.value for t in DocumentType]),
     )
@@ -86,6 +88,8 @@ class DocumentAcl(Base):
 class Chunk(Base):
     __tablename__ = "chunks"
     __table_args__ = (
+        composite_factory_fk("chunks"),
+        org_factory_index("chunks"),
         sa.UniqueConstraint(
             "document_version_id",
             "chunk_index",

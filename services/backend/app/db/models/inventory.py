@@ -19,6 +19,7 @@ from app.db.types import (
     enum_check,
     factory_id_col,
     money,
+    org_factory_index,
     org_fk,
     updated_at,
     uuid_pk,
@@ -35,6 +36,7 @@ class MaterialLot(Base):
     __tablename__ = "material_lots"
     __table_args__ = (
         composite_factory_fk("material_lots"),
+        org_factory_index("material_lots"),
         sa.UniqueConstraint("factory_id", "lot_code", name="uq_material_lots_factory_id_lot_code"),
         enum_check("status_valid", "status", [s.value for s in MaterialLotStatus]),
     )
@@ -53,6 +55,7 @@ class StockMovement(Base):
     __tablename__ = "stock_movements"
     __table_args__ = (
         composite_factory_fk("stock_movements"),
+        org_factory_index("stock_movements"),
         sa.Index(
             "ix_stock_movements_factory_id_material_id_created_at",
             "factory_id",
@@ -90,6 +93,7 @@ class MaterialBalance(Base):
     __tablename__ = "material_balances"
     __table_args__ = (
         composite_factory_fk("material_balances"),
+        org_factory_index("material_balances"),
         sa.UniqueConstraint(
             "factory_id", "material_id", name="uq_material_balances_factory_id_material_id"
         ),
@@ -112,6 +116,7 @@ class Reservation(Base):
     __tablename__ = "reservations"
     __table_args__ = (
         composite_factory_fk("reservations"),
+        org_factory_index("reservations"),
         sa.CheckConstraint("quantity > 0", name="quantity_positive"),
         enum_check("status_valid", "status", [s.value for s in ReservationStatus]),
     )
@@ -134,6 +139,7 @@ class ExpectedReceipt(Base):
     __tablename__ = "expected_receipts"
     __table_args__ = (
         composite_factory_fk("expected_receipts"),
+        org_factory_index("expected_receipts"),
         sa.CheckConstraint("quantity > 0", name="quantity_positive"),
         enum_check("status_valid", "status", [s.value for s in ExpectedReceiptStatus]),
     )

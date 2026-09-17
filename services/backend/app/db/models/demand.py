@@ -19,6 +19,7 @@ from app.db.types import (
     enum_check,
     factory_id_col,
     money,
+    org_factory_index,
     org_fk,
     updated_at,
     uuid_pk,
@@ -135,6 +136,8 @@ class Order(Base):
     __tablename__ = "orders"
     __table_args__ = (
         composite_factory_fk("orders"),
+        org_factory_index("orders"),
+        sa.Index("ix_orders_factory_id_due_date", "factory_id", "due_date"),
         sa.UniqueConstraint(
             "organization_id", "external_ref", name="uq_orders_organization_id_external_ref"
         ),

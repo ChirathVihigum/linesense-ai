@@ -85,6 +85,12 @@ class RoleAssignment(Base):
             "factory_id",
             "role",
             name="uq_role_assignments_membership_id_factory_id_role",
+            # NULLS NOT DISTINCT (Postgres 15+): factory_id IS NULL means the
+            # role applies org-wide, so two org-wide rows for the same
+            # (membership, role) must collide just like two rows that name
+            # the same factory would (plain UNIQUE treats NULLs as distinct
+            # from each other, which would silently allow duplicates here).
+            postgresql_nulls_not_distinct=True,
         ),
         enum_check("role_valid", "role", ROLES),
     )

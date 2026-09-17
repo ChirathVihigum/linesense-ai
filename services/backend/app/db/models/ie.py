@@ -14,13 +14,22 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.db.types import composite_factory_fk, created_at, factory_id_col, money, org_fk, uuid_pk
+from app.db.types import (
+    composite_factory_fk,
+    created_at,
+    factory_id_col,
+    money,
+    org_factory_index,
+    org_fk,
+    uuid_pk,
+)
 
 
 class OperatorAlias(Base):
     __tablename__ = "operator_aliases"
     __table_args__ = (
         composite_factory_fk("operator_aliases"),
+        org_factory_index("operator_aliases"),
         sa.UniqueConstraint(
             "factory_id", "alias_code", name="uq_operator_aliases_factory_id_alias_code"
         ),
@@ -56,6 +65,7 @@ class OperationStaffing(Base):
     __tablename__ = "operation_staffing"
     __table_args__ = (
         composite_factory_fk("operation_staffing"),
+        org_factory_index("operation_staffing"),
         sa.UniqueConstraint(
             "line_id",
             "style_id",
@@ -80,6 +90,7 @@ class CycleObservation(Base):
     __tablename__ = "cycle_observations"
     __table_args__ = (
         composite_factory_fk("cycle_observations"),
+        org_factory_index("cycle_observations"),
         sa.CheckConstraint("observed_seconds > 0", name="observed_seconds_positive"),
     )
 
@@ -108,6 +119,7 @@ class LineMeasurement(Base):
     __tablename__ = "line_measurements"
     __table_args__ = (
         composite_factory_fk("line_measurements"),
+        org_factory_index("line_measurements"),
         sa.CheckConstraint("hours > 0", name="hours_positive"),
         sa.CheckConstraint("units_output >= 0", name="units_output_non_negative"),
     )

@@ -19,6 +19,7 @@ from app.db.types import (
     enum_check,
     factory_id_col,
     money,
+    org_factory_index,
     org_fk,
     uuid_pk,
 )
@@ -29,6 +30,7 @@ class Line(Base):
     __tablename__ = "lines"
     __table_args__ = (
         composite_factory_fk("lines"),
+        org_factory_index("lines"),
         sa.UniqueConstraint("factory_id", "code", name="uq_lines_factory_id_code"),
         sa.CheckConstraint("operator_count > 0", name="operator_count_positive"),
     )
@@ -62,6 +64,7 @@ class LineCapacitySlot(Base):
     __tablename__ = "line_capacity_slots"
     __table_args__ = (
         composite_factory_fk("line_capacity_slots"),
+        org_factory_index("line_capacity_slots"),
         sa.UniqueConstraint(
             "line_id",
             "slot_date",
@@ -102,6 +105,7 @@ class Allocation(Base):
     __tablename__ = "allocations"
     __table_args__ = (
         composite_factory_fk("allocations"),
+        org_factory_index("allocations"),
         sa.CheckConstraint("standard_minutes > 0", name="standard_minutes_positive"),
         sa.CheckConstraint("units > 0", name="units_positive"),
         enum_check("status_valid", "status", [s.value for s in AllocationStatus]),

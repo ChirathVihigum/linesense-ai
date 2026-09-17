@@ -78,6 +78,20 @@ def composite_factory_fk(table_name: str) -> sa.ForeignKeyConstraint:
     )
 
 
+def org_factory_index(table_name: str) -> sa.Index:
+    """``INDEX (organization_id, factory_id)``.
+
+    Required by ``backend-contracts.md`` section 2 ("Indexes: every
+    ``(organization_id, factory_id)`` pair") for every table that carries
+    both columns, in addition to any unique constraint or index that table
+    already has (unless that constraint/index already leads with exactly
+    ``(organization_id, factory_id)``, in which case this would be a
+    redundant duplicate — see each model module for the tables where that
+    applies).
+    """
+    return sa.Index(f"ix_{table_name}_organization_id_factory_id", "organization_id", "factory_id")
+
+
 def money(precision: int, scale: int) -> sa.Numeric[Decimal]:
     """A ``Numeric`` alias for quantity/currency columns (never ``float``)."""
     return sa.Numeric(precision, scale)
