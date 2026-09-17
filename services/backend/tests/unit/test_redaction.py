@@ -94,3 +94,23 @@ def test_punctuated_phone_numbers_are_still_redacted() -> None:
     assert redact_text("call +94 77 123 4567 now") == f"call {REDACTED} now"
     assert redact_text("call (011) 234-5678 now") == f"call {REDACTED} now"
     assert redact_text("call 077.123.4567 now") == f"call {REDACTED} now"
+
+
+def test_date_and_time_combinations_survive() -> None:
+    # Regression: a date's "4-2-2" digit grouping, or a date plus an
+    # adjacent time, is structurally indistinguishable from a phone number
+    # by digit count and punctuation alone -- dates/times are masked before
+    # phone detection runs specifically to avoid this.
+    assert redact_text("2026-09-17 08:30") == "2026-09-17 08:30"
+    assert redact_text("2026-09-17T08:30:00+05:30") == "2026-09-17T08:30:00+05:30"
+    assert redact_text("2026-09-17 2026-09-22") == "2026-09-17 2026-09-22"
+    assert redact_text("2026-09-17 to 2026-09-22") == "2026-09-17 to 2026-09-22"
+    assert redact_text("due 2026-09-22, 1,260.000 m") == "due 2026-09-22, 1,260.000 m"
+    assert (
+        redact_text("slots 2026-09-17 A and 2026-09-18 B") == "slots 2026-09-17 A and 2026-09-18 B"
+    )
+
+
+def test_phone_number_redacted_alongside_a_surviving_date() -> None:
+    text = "Call +94 77 123 4567 before 2026-09-17 08:30"
+    assert redact_text(text) == f"Call {REDACTED} before 2026-09-17 08:30"
