@@ -91,12 +91,14 @@ async def _record_exists_in_scope(
         row = await session.get(model, record_id)
         if row is None:
             return False
-        style_id = row.style_id
         if isinstance(row, BomLine):
+            # A BOM line has no style of its own; it belongs to a BOM version.
             bom_version = await session.get(BomVersion, row.bom_version_id)
             if bom_version is None:
                 return False
             style_id = bom_version.style_id
+        else:
+            style_id = row.style_id
         style = await session.get(Style, style_id)
         return style is not None and style.organization_id == run.organization_id
     model = RECORD_MODELS.get(record_type)

@@ -45,6 +45,7 @@ from app.jobs.queue import (
     heartbeat,
 )
 from app.jobs.reconcile import reconcile_once
+from app.orchestration.dispatch import AgentDispatchClient
 from app.settings import Settings, resolve_backend_path
 
 logger = structlog.get_logger("app.jobs")
@@ -62,6 +63,10 @@ class JobContext:
     session_factory: async_sessionmaker[AsyncSession]
     settings: Settings
     worker_id: str
+    # The orchestrator dispatches agent tasks over the internal HTTP API; the
+    # worker owns the client so a handler never builds one (and tests can bind
+    # it to an in-process transport).
+    dispatch_client: AgentDispatchClient | None = None
 
 
 JobHandler = Callable[[JobContext], Awaitable[None]]
@@ -131,6 +136,7 @@ class Worker:
         shutdown_grace_seconds: float = SHUTDOWN_GRACE_SECONDS,
         alive_dir: Path | None = None,
         alive_interval: float = ALIVE_INTERVAL_SECONDS,
+        dispatch_client: AgentDispatchClient | None = None,
     ) -> None:
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
@@ -152,6 +158,9 @@ class Worker:
         self.alive_dir = alive_dir or resolve_backend_path(settings.worker_alive_dir)
         self.alive_interval = alive_interval
         self.active_jobs = 0
+        self.dispatch_client = dispatch_client or AgentDispatchClient(
+            settings.api_internal_url, settings.service_token.get_secret_value()
+        )
 
     # ------------------------------------------------------------------ liveness
 
@@ -202,6 +211,7 @@ class Worker:
             session_factory=self.session_factory,
             settings=self.settings,
             worker_id=self.worker_id,
+            dispatch_client=self.dispatch_client,
         )
 
     async def _on_exhausted(self, job: ClaimedJob, error: str) -> None:
@@ -405,12 +415,17 @@ class Worker:
             except Exception:
                 logger.exception("worker.reconcile_error", worker_id=self.worker_id)
             else:
-                if report.idempotency_keys_expired or report.recommendations_expired:
+                if (
+                    report.idempotency_keys_expired
+                    or report.recommendations_expired
+                    or report.runs_advanced
+                ):
                     logger.info(
                         "worker.reconciled",
                         worker_id=self.worker_id,
                         idempotency_keys_expired=report.idempotency_keys_expired,
                         recommendations_expired=report.recommendations_expired,
+                        runs_advanced=report.runs_advanced,
                     )
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)

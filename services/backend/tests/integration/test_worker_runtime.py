@@ -388,6 +388,7 @@ async def test_registry_rejects_duplicates_and_lists_maintenance_jobs(settings: 
         "maintenance.purge_idempotency",
         "maintenance.reconcile",
         "maintenance.refresh_material_states",
+        "orchestrator.advance",
     ]
 
     async def handler(ctx: JobContext) -> None:
