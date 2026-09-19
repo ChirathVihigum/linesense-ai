@@ -56,6 +56,26 @@ and use `npm`.
   silent `except: pass`, hardcoded production secrets, fabricated test
   output, or mock numbers presented as live data.
 - Every task: write failing tests first, run `make lint`/`make typecheck`
-  and the relevant test targets, append a dated entry to
+  and only the tests relevant to the change (see the heat policy below), append a dated entry to
   `docs/IMPLEMENTATION_STATUS.md`, and commit with a conventional message.
   Never skip, weaken, or delete a failing test to get green.
+
+## Machine heat and workload policy (overrides test/build guidance above)
+
+Protect this MacBook from unnecessary heat and sustained heavy workloads.
+
+- Default to lightweight local work: editing, inspection, and focused checks.
+- Before running a command, consider its CPU, GPU, memory, and duration.
+- Run only the tests relevant to the change (`uv run pytest <path>::<test>`). Do not repeat successful tests unless something changed.
+- Run only one resource-heavy job at a time across all agents (test runs, builds, `npm install`, Playwright, seeding, evaluation). Do not run parallel test suites or builds. Wrap heavy commands with `scripts/heavy-job.sh <command>`, which serializes them through a lock under `.local/`.
+- Do not start local model training, large inference jobs, benchmarks, load tests (`make perf`), evaluations (`make eval`), or full test suites (`make test`, `make test-integration`, `make test-e2e`, `make test-all`) without asking the user first.
+- Prefer an approved development server or CI for heavy work. Do not move workloads onto production or create paid resources without permission.
+- Use supported worker limits and reduced concurrency (e.g. worker `--concurrency 1`, pytest without `-n`). Avoid background watchers, polling loops, and jobs left running unnecessarily; stop any dev server/worker/IdP you started when done.
+- If the user reports heat, stop your heavy jobs promptly. Check for any child processes you started and report what remains running. Do not stop unrelated applications.
+- If macOS reports thermal pressure or throttling (`pmset -g therm`), pause heavy work. Resume only after conditions improve; ask the user before restarting a workload that caused overheating.
+- Do not invent a universal safe temperature or claim the Mac is cool without evidence. If thermal readings are unavailable, say so.
+- Never disable macOS thermal protections or change fan controls.
+- If a required check is too heavy to run safely, report it as pending and suggest running it in CI. Do not claim it passed.
+- Include this policy in every subagent's task.
+
+Keep status updates short: what is running, what was stopped, and what still needs checking.
