@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.errors import AppError
-from app.db.models import Allocation, AuditEvent, LineCapability, LineCapacitySlot
+from app.db.models import Allocation, AuditEvent, LineCapability, LineCapacitySlot, Order
 from app.domain.capacity import service as capacity_service
 from tests.factories import make_line, make_order, make_slot, make_style_with_operations
 from tests.helpers.auth import IdentityFixture, login_as, seed_identity
@@ -303,3 +303,69 @@ async def test_capacity_routes_require_authentication(app: Any) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
         response = await c.get("/api/v1/factories/00000000-0000-0000-0000-000000000000/lines")
     assert response.status_code == 401
+
+
+async def test_style_without_operations_has_no_compatible_line(
+    db_session: AsyncSession, identity: IdentityFixture
+) -> None:
+    ktn = identity.factories["KTN"]
+    style = await make_style_with_operations(
+        db_session, organization=identity.organization, operation_count=0
+    )
+    line = await make_line(db_session, organization=identity.organization, factory=ktn)
+    db_session.add(LineCapability(line_id=line.id, skill_code="SEW"))
+    await db_session.flush()
+    assert await capacity_service.compatible_line_ids(db_session, ktn.id, style.id) == frozenset()
+    await db_session.rollback()
+
+
+@pytest.mark.parametrize("repeat", range(5))
+async def test_concurrent_order_allocation_releases_apply_once(
+    repeat: int,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    ktn = identity.factories["KTN"]
+    line = await make_line(db_session, organization=identity.organization, factory=ktn)
+    slot = await make_slot(
+        db_session, line=line, available_operator_minutes=100, planned_efficiency=1
+    )
+    order = await make_order(db_session, organization=identity.organization, factory=ktn)
+    await db_session.commit()
+    async with session_factory() as session:
+        await capacity_service.lock_slots(session, [slot.id])
+        await capacity_service.allocate(
+            session,
+            slot_id=slot.id,
+            order_id=order.id,
+            standard_minutes=D(60),
+            units=D(20),
+            actor_user_id=None,
+            recommendation_id=None,
+        )
+        await session.commit()
+
+    locked = asyncio.Event()
+
+    async def release(first: bool) -> int:
+        async with session_factory() as session:
+            refreshed = await session.get(Order, order.id)
+            assert refreshed is not None
+            if first:
+                await capacity_service.lock_slots(session, [slot.id])
+                locked.set()
+                await session.execute(text("SELECT pg_sleep(0.2)"))
+            else:
+                await locked.wait()
+            released = await capacity_service.release_order_allocations(session, refreshed)
+            await session.commit()
+            return len(released)
+
+    outcomes = await asyncio.gather(release(True), release(False))
+    assert outcomes == [1, 0], repeat
+    async with session_factory() as check:
+        final = await check.get(LineCapacitySlot, slot.id)
+    assert final is not None
+    assert final.allocated_standard_minutes == D(0)
+    assert final.version == 3  # created, allocated, released exactly once
