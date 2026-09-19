@@ -123,7 +123,7 @@ function OrderCreateForm() {
         <input
           className="input font-mono"
           autoComplete="off"
-          {...fieldAria('external_ref', errors.external_ref?.message, 'hint')}
+          {...fieldAria('external_ref', errors.external_ref?.message, 'hint', true)}
           {...register('external_ref')}
         />
       </FormField>
@@ -133,7 +133,7 @@ function OrderCreateForm() {
           <select
             className="input"
             disabled={customers.isPending}
-            {...fieldAria('customer_id', errors.customer_id?.message)}
+            {...fieldAria('customer_id', errors.customer_id?.message, undefined, true)}
             {...register('customer_id')}
           >
             <option value="">{customers.isPending ? 'Loading customers…' : 'Select a customer'}</option>
@@ -148,7 +148,7 @@ function OrderCreateForm() {
           <select
             className="input"
             disabled={styles.isPending}
-            {...fieldAria('style_id', errors.style_id?.message)}
+            {...fieldAria('style_id', errors.style_id?.message, undefined, true)}
             {...register('style_id')}
           >
             <option value="">{styles.isPending ? 'Loading styles…' : 'Select a style'}</option>
@@ -170,7 +170,7 @@ function OrderCreateForm() {
             max={1_000_000}
             step={1}
             className="input tabular-nums"
-            {...fieldAria('quantity', errors.quantity?.message)}
+            {...fieldAria('quantity', errors.quantity?.message, undefined, true)}
             {...register('quantity', { valueAsNumber: true })}
           />
         </FormField>
@@ -178,7 +178,7 @@ function OrderCreateForm() {
           <input
             type="date"
             className="input"
-            {...fieldAria('due_date', errors.due_date?.message)}
+            {...fieldAria('due_date', errors.due_date?.message, undefined, true)}
             {...register('due_date')}
           />
         </FormField>
@@ -196,7 +196,7 @@ function OrderCreateForm() {
             max={5}
             step={1}
             className="input tabular-nums"
-            {...fieldAria('priority', errors.priority?.message, 'hint')}
+            {...fieldAria('priority', errors.priority?.message, 'hint', true)}
             {...register('priority', { valueAsNumber: true })}
           />
         </FormField>

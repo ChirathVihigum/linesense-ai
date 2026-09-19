@@ -52,6 +52,12 @@ export function makeMe(roles: string[], permissions: string[]): Schemas['MeRespo
 
 export const plannerMe = makeMe(['planner'], PLANNER_PERMISSIONS)
 export const viewerMe = makeMe(['viewer'], READ_PERMISSIONS)
+export const storekeeperMe = makeMe(['storekeeper'], [...READ_PERMISSIONS, 'inventory:write', 'note:create'])
+export const ieEngineerMe = makeMe(['ie_engineer'], [...READ_PERMISSIONS, 'ie:write', 'note:create'])
+export const qualityManagerMe = makeMe(
+  ['quality_manager'],
+  [...READ_PERMISSIONS, 'quality:inspect', 'quality:hold', 'quality:release', 'note:create'],
+)
 
 export function makeOrder(overrides: Partial<Schemas['OrderSummary']> = {}): Schemas['OrderSummary'] {
   return {
