@@ -5,12 +5,14 @@ from __future__ import annotations
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.api.analyses import router as analyses_router
 from app.api.audit import router as audit_router
 from app.api.capacity import router as capacity_router
 from app.api.errors import register_exception_handlers
 from app.api.health import router as health_router
 from app.api.ie import router as ie_router
 from app.api.imports import router as imports_router
+from app.api.internal import router as internal_router
 from app.api.inventory import router as inventory_router
 from app.api.me import router as me_router
 from app.api.middleware import SecurityHeadersMiddleware, TraceIdMiddleware
@@ -18,6 +20,7 @@ from app.api.notifications import router as notifications_router
 from app.api.orders import router as orders_router
 from app.api.quality import router as quality_router
 from app.api.reference import router as reference_router
+from app.api.runs import router as runs_router
 from app.auth.csrf import CsrfMiddleware
 from app.auth.oidc import build_oauth
 from app.auth.routes import router as auth_router
@@ -69,5 +72,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(capacity_router)
     app.include_router(ie_router)
     app.include_router(quality_router)
+    app.include_router(analyses_router)
+    app.include_router(runs_router)
+    app.include_router(internal_router)
 
     return app

@@ -75,6 +75,7 @@ seed:
 
 contracts:
 	bash scripts/export-openapi.sh
+	cd services/backend && uv run python ../../scripts/export-protocol-schemas.py
 	cd $(WEB_DIR) && npm run generate:api
 
 contracts-check:

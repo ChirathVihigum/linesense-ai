@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -134,6 +135,40 @@ async def list_reservations(
     return list(rows), int(total or 0)
 
 
+async def daily_issues(
+    session: AsyncSession,
+    factory: Factory,
+    as_of: date,
+    material_ids: Collection[uuid.UUID] | None = None,
+) -> dict[uuid.UUID, list[tuple[date, Decimal]]]:
+    """Signed ISSUE totals per material and factory-local day, from
+    `as_of - (CONSUMPTION_WINDOW_DAYS + 1)` days onward (callers window them
+    precisely, e.g. with `average_daily_consumption`)."""
+    local_date = sa.cast(sa.func.timezone(factory.timezone, StockMovement.created_at), sa.Date)
+    conditions: list[Any] = [
+        StockMovement.factory_id == factory.id,
+        StockMovement.movement_type == MovementType.ISSUE.value,
+        StockMovement.created_at
+        >= sa.func.timezone(
+            factory.timezone,
+            sa.cast(as_of - timedelta(days=CONSUMPTION_WINDOW_DAYS + 1), sa.DateTime),
+        ),
+    ]
+    if material_ids is not None:
+        conditions.append(StockMovement.material_id.in_(list(material_ids)))
+    issues: dict[uuid.UUID, list[tuple[date, Decimal]]] = defaultdict(list)
+    for material_id, issued_on, total in (
+        await session.execute(
+            select(StockMovement.material_id, local_date, sa.func.sum(StockMovement.quantity))
+            .where(*conditions)
+            .group_by(StockMovement.material_id, local_date)
+            .order_by(StockMovement.material_id, local_date)
+        )
+    ).all():
+        issues[material_id].append((issued_on, Decimal(total)))
+    return issues
+
+
 async def material_overview(
     session: AsyncSession, factory_id: uuid.UUID, as_of: date
 ) -> list[MaterialStatusRow]:
@@ -180,24 +215,7 @@ async def material_overview(
         ).all()
     }
 
-    local_date = sa.cast(sa.func.timezone(factory.timezone, StockMovement.created_at), sa.Date)
-    issues: dict[uuid.UUID, list[tuple[date, Decimal]]] = defaultdict(list)
-    for material_id, issued_on, total in (
-        await session.execute(
-            select(StockMovement.material_id, local_date, sa.func.sum(StockMovement.quantity))
-            .where(
-                StockMovement.factory_id == factory_id,
-                StockMovement.movement_type == MovementType.ISSUE.value,
-                StockMovement.created_at
-                >= sa.func.timezone(
-                    factory.timezone,
-                    sa.cast(as_of - timedelta(days=CONSUMPTION_WINDOW_DAYS + 1), sa.DateTime),
-                ),
-            )
-            .group_by(StockMovement.material_id, local_date)
-        )
-    ).all():
-        issues[material_id].append((issued_on, Decimal(total)))
+    issues = await daily_issues(session, factory, as_of)
 
     rows: list[MaterialStatusRow] = []
     for material in materials:

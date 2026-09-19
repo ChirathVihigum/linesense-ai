@@ -1,0 +1,186 @@
+{
+  "$defs": {
+    "InputRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "order",
+            "snapshot",
+            "agent_result",
+            "material_balance",
+            "capacity_slot",
+            "policy"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "title": "InputRef",
+      "type": "object"
+    },
+    "TaskConstraints": {
+      "additionalProperties": false,
+      "properties": {
+        "max_tool_calls": {
+          "default": 4,
+          "maximum": 4,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "read_only": {
+          "const": true,
+          "default": true,
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "title": "TaskConstraints",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "constraints": {
+      "$ref": "#/$defs/TaskConstraints"
+    },
+    "deadline_at": {
+      "format": "date-time",
+      "title": "Deadline At",
+      "type": "string"
+    },
+    "factory_id": {
+      "format": "uuid",
+      "title": "Factory Id",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "maxLength": 300,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "input_refs": {
+      "items": {
+        "$ref": "#/$defs/InputRef"
+      },
+      "title": "Input Refs",
+      "type": "array"
+    },
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "order_id": {
+      "format": "uuid",
+      "title": "Order Id",
+      "type": "string"
+    },
+    "organization_id": {
+      "format": "uuid",
+      "title": "Organization Id",
+      "type": "string"
+    },
+    "parent_task_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parent Task Id"
+    },
+    "recipient": {
+      "enum": [
+        "planning",
+        "rm",
+        "ie",
+        "quality"
+      ],
+      "title": "Recipient",
+      "type": "string"
+    },
+    "round": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Round",
+      "type": "integer"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sender": {
+      "const": "orchestrator",
+      "title": "Sender",
+      "type": "string"
+    },
+    "snapshot_id": {
+      "format": "uuid",
+      "title": "Snapshot Id",
+      "type": "string"
+    },
+    "task_type": {
+      "title": "Task Type",
+      "type": "string"
+    },
+    "trace_id": {
+      "maxLength": 200,
+      "title": "Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "message_id",
+    "run_id",
+    "parent_task_id",
+    "organization_id",
+    "factory_id",
+    "order_id",
+    "snapshot_id",
+    "sender",
+    "recipient",
+    "task_type",
+    "idempotency_key",
+    "round",
+    "deadline_at",
+    "input_refs",
+    "constraints",
+    "trace_id"
+  ],
+  "title": "TaskEnvelope",
+  "type": "object"
+}

@@ -1,0 +1,115 @@
+{
+  "agent": "rm",
+  "data_quality": {
+    "complete": true,
+    "missing": [],
+    "notes": []
+  },
+  "error_code": null,
+  "evidence_refs": [
+    {
+      "chunk_id": null,
+      "description": "M01 balance at KTN: 1500 on hand, 400 reserved (version 4).",
+      "document_id": null,
+      "document_version_id": null,
+      "evidence_id": "ev-1",
+      "kind": "record",
+      "page_number": null,
+      "record_id": "3f8b1a52-0000-4000-8000-000000000008",
+      "record_type": "material_balance",
+      "record_version": 4,
+      "section": null
+    },
+    {
+      "chunk_id": null,
+      "description": "gross_demand(1000, 1.2, 0.05) = 1260 m",
+      "document_id": null,
+      "document_version_id": null,
+      "evidence_id": "ev-2",
+      "kind": "calculation",
+      "page_number": null,
+      "record_id": null,
+      "record_type": null,
+      "record_version": null,
+      "section": null
+    }
+  ],
+  "execution_metadata": {
+    "completed_at": "2026-09-17T08:30:04Z",
+    "degraded": false,
+    "degraded_reason": null,
+    "input_tokens": 1200,
+    "model": "fixture-scripted-v1",
+    "model_calls": 2,
+    "output_tokens": 180,
+    "prompt_version": "rm-v1",
+    "provider": "fixture",
+    "started_at": "2026-09-17T08:30:00Z",
+    "tool_calls": [
+      "get_material_position",
+      "get_bom_demand"
+    ]
+  },
+  "findings": [
+    {
+      "code": "MATERIAL_SHORTAGE",
+      "evidence_ids": [
+        "ev-1",
+        "ev-2"
+      ],
+      "finding_id": "rm-1",
+      "message": "M01: demand 1260 m exceeds available 1100 m (shortage 160 m).",
+      "severity": "critical",
+      "source": "deterministic"
+    }
+  ],
+  "input_versions": {
+    "capacity_slots": {},
+    "material_balances": {
+      "3f8b1a52-0000-4000-8000-000000000008": 4
+    },
+    "order": {
+      "3f8b1a52-0000-4000-8000-000000000004": 3
+    },
+    "quality_policy": {}
+  },
+  "metrics": [
+    {
+      "name": "coverable_units",
+      "note": null,
+      "unit": "units",
+      "value": "873"
+    },
+    {
+      "name": "shortage:M01",
+      "note": null,
+      "unit": "m",
+      "value": "160"
+    }
+  ],
+  "recommended_actions": [
+    {
+      "action_id": "rm-replenish-M01",
+      "evidence_ids": [
+        "ev-1"
+      ],
+      "kind": "REPLENISHMENT_SUGGESTION",
+      "payload": {
+        "material_code": "M01",
+        "needed_by": "2026-09-20",
+        "note": "Suggestion only \u2014 no purchase order is created",
+        "suggested_quantity": "160",
+        "unit": "m"
+      },
+      "rank": 0,
+      "source": "deterministic",
+      "summary": "Suggest replenishing 160 m of M01 before 2026-09-20."
+    }
+  ],
+  "schema_version": "1.0",
+  "status": "SUCCEEDED",
+  "summary": "Material M01 is short by 160 m for the remaining 1000 units.",
+  "summary_source": "model",
+  "task_id": "3f8b1a52-0000-4000-8000-000000000002",
+  "warnings": []
+}

@@ -383,7 +383,12 @@ async def test_worker_runs_concurrent_jobs(
 
 async def test_registry_rejects_duplicates_and_lists_maintenance_jobs(settings: Settings) -> None:
     registry = build_registry(settings)
-    assert registry.job_types() == ["maintenance.purge_idempotency", "maintenance.reconcile"]
+    assert registry.job_types() == [
+        "agent.execute",
+        "maintenance.purge_idempotency",
+        "maintenance.reconcile",
+        "maintenance.refresh_material_states",
+    ]
 
     async def handler(ctx: JobContext) -> None:
         return None

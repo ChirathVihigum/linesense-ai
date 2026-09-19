@@ -1833,3 +1833,90 @@ user approval or CI.
 system instruction, not the "Claude Opus 5 (1M context)" text the fix-round note asked for (see
 the task report for the reasoning); the previous round's `babaa15` commit is left as-is per
 "never rewrite history".
+
+## 2026-09-20 — Task 12: agent protocol, internal dispatch, run snapshots, analysis API, bounded agent loop, fenced executor
+
+**Built**
+- `app/orchestration/protocol.py`: the versioned (`schema_version "1.0"`) task/result models of
+  backend-contracts.md §6 (`TaskEnvelope`, `AgentResult`, `EvidenceRef`, `Finding`, `Metric`,
+  `RecommendedAction`, `DataQuality`, `ExecutionMetadata`, `AgentErrorCode`, `RETRYABLE`,
+  `ALLOWED_TASK_TYPES`, `DispatchReceipt`). All models forbid unknown fields; `read_only` is
+  `Literal[True]`, `max_tool_calls` is `0..4`, `round` is `0..1`, and a task type that does not
+  belong to its recipient is rejected by the model itself.
+- `app/orchestration/snapshot.py`: `SnapshotData` + `build_snapshot(session, order)` — order, BOM,
+  per-material balances/receipts/14-day issues, style operations and SAM total, lines (with
+  `compatible` / `missing_skills`), capacity slots for compatible lines within `as_of..due_date`,
+  per-line IE analyses (reusing `line_style_analysis`), quality facts (reusing
+  `quality.service.active_policy/shipment_facts` + `shipment_eligibility`), and `input_versions`
+  for order, material balances, capacity slots and the quality policy.
+- `app/api/internal.py` (`/internal/v1`, `include_in_schema=False`): constant-time bearer service
+  token; envelope re-validated against the run (ids, status, task type, parent/`input_refs`
+  membership, idempotency-key format, deadline ≤ run deadline); creates the task, enqueues
+  `agent.execute` (queue `agent`, dedupe `task:<id>`, `max_attempts=3`) and appends
+  `task.dispatched` in one transaction; duplicates return `200` with the existing task;
+  rejections are audited as `SERVICE`/`DENIED`. `GET /internal/v1/agent-tasks/{id}` returns task +
+  result.
+- `app/orchestration/dispatch.py`: `AgentDispatchClient` (ASGI-transport friendly) with
+  `submit`/`get` and `DispatchError(retryable)`, plus `make_envelope`.
+- `app/api/analyses.py` / `app/api/runs.py` / `app/api/schemas/runs.py`: `POST
+  /api/v1/orders/{id}/analyses` (locks the order; stale version → 409 `STALE_INPUT`; cancelled or
+  dispatched order → 409 `INVALID_TRANSITION`; active run → 409 `CONFLICT` naming the run; >5
+  active runs in the factory → 429 `RATE_LIMITED` with `retry_after_seconds=30`; creates run +
+  snapshot + `run.created` + `orchestrator.advance` + audit, returns 202), `GET /runs/{id}` with
+  the provider label, `GET /runs/{id}/events?after_id=`, `GET /orders/{id}/runs`, `POST
+  /runs/{id}/cancel` (cancels tasks and their READY jobs, supersedes recommendations) and `POST
+  /runs/{id}/retry` (terminal runs only).
+- `app/agents/base.py`: `ToolResult`, `ToolError`, `AgentTool`, `Assessment`, `SubmitAssessment`,
+  `AgentContext`, `BaseAgent`, `AgentExecutionError`, `MAX_TOOL_CALLS=4`, `MAX_REPAIR_CALLS=1` —
+  the bounded loop (budget reservation per call, redacted tool output, one repair turn, hard
+  iteration cap, merge that re-ranks but never rewrites action payloads). `app/agents/registry.py`
+  holds `AGENTS` (empty until Task 13) with `register_agent`/`temporary_agent` for tests.
+- `app/orchestration/executor.py`: `execute_agent_task` (job `agent.execute`) and
+  `on_agent_task_exhausted`, registered in `app/jobs/handlers.py`. The agent runs outside any
+  transaction; the outcome (validation, `agent_results` insert with `ON CONFLICT DO NOTHING`, task
+  status, `task.completed`, advance job) commits together with the fenced job completion.
+- `app/orchestration/validation.py` (`validate_result`) and `app/orchestration/events.py`
+  (`append_event`).
+- `scripts/export-protocol-schemas.py` + `make contracts`: deterministic
+  `contracts/agent-task-envelope.schema.json`, `contracts/agent-result.schema.json` and the two
+  example messages; `contracts/openapi.json` and `apps/web/src/generated/api.ts` regenerated.
+- `docs/architecture/agent-protocol.md`: envelope/result tables, error-code retryability, the
+  dispatch → execute → advance sequence diagram, the loop's guarantees, and the explicit
+  "not A2A, not MCP" statement.
+- Extra item: `app.domain.orders.service.compute_shipment` now calls
+  `app.domain.quality.service.shipment_facts` (duplicate single-order fact gathering deleted) and
+  the batched `_load_shipment_inputs` used by the orders list reuses `quality.service.active_policy`;
+  `app.domain.inventory.queries.daily_issues` was extracted from `material_overview` and is reused
+  by the snapshot builder.
+
+**Commands** (machine-heat policy: only the touched files, each via `scripts/heavy-job.sh`, test DB
+letter `a`)
+```
+$ uv run ruff check app/orchestration app/agents app/api tests ../../scripts/export-protocol-schemas.py
+  All checks passed!
+$ uv run ruff format --check app tests ../../scripts/export-protocol-schemas.py   # 166 files already formatted
+$ uv run mypy app                                   # Success: no issues found in 108 source files
+$ LS_TEST_DATABASE_URL=...linesense_test_a LS_TEST_MIGRATION_DATABASE_URL=...linesense_test_a \
+  uv run pytest tests/unit/test_protocol.py tests/agents tests/integration/test_internal_dispatch.py \
+    tests/integration/test_analysis_api.py tests/integration/test_executor.py -q
+  52 passed
+$ ... uv run pytest tests/integration/test_orders_api.py tests/integration/test_quality_api.py \
+    tests/integration/test_inventory_api.py tests/integration/test_worker_runtime.py \
+    tests/security/test_order_access.py -q
+  61 passed (after updating the stale job-type assertion in test_worker_runtime.py)
+$ bash scripts/export-openapi.sh && cd services/backend && uv run python ../../scripts/export-protocol-schemas.py
+$ cd apps/web && npm run generate:api
+$ bash scripts/check-doc-links.sh                   # checked 47 relative link target(s)
+```
+`make test` / `make test-integration` / `make contracts-check` (full suites) were **not** run per
+the heat policy — PENDING user approval or CI.
+
+**Limitations**
+- `AGENTS` is empty until Task 13, so the executor's end-to-end coverage uses fake agents
+  registered by the tests; no live-provider call was made anywhere (fixture provider only).
+- `orchestrator.advance` is enqueued but has no handler yet (Task 13); the `report` field of
+  `GET /runs/{id}` reads a `run.report` event that Task 15 will write.
+- `tests/integration/test_worker_runtime.py::test_registry_rejects_duplicates_and_lists_maintenance_jobs`
+  asserted a job-type list that was already stale at HEAD (it did not include
+  `maintenance.refresh_material_states` added in Task 7's fix round); it now lists all four
+  registered job types.
