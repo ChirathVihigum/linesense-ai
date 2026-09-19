@@ -29,7 +29,7 @@ from app.db.session import get_db_session
 from app.domain.clock import utcnow
 from app.domain.vocab import ActorType, AuditOutcome, ProductionState, RunStatus
 from app.jobs.queue import enqueue
-from app.llm import build_llm_client
+from app.llm import FixtureLLMClient
 from app.orchestration.events import append_event
 from app.orchestration.executor import ORCHESTRATOR_ADVANCE_JOB
 from app.orchestration.snapshot import build_snapshot
@@ -58,8 +58,16 @@ async def lock_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
 
 
 def llm_identity(settings: Settings) -> tuple[str, str]:
-    client = build_llm_client(settings)
-    return ("disabled", "disabled") if client is None else (client.provider, client.model)
+    """The provider/model labels a run records, read from configuration only.
+
+    Creating a client here would be a side effect (and would fail a run request
+    when a provider is misconfigured) just to read two strings.
+    """
+    if settings.llm_provider == "disabled":
+        return ("disabled", "disabled")
+    if settings.llm_provider == "fixture":
+        return (FixtureLLMClient.provider, FixtureLLMClient.model)
+    return (settings.llm_provider, settings.anthropic_model)
 
 
 async def start_run(

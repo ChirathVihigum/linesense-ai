@@ -46,13 +46,19 @@ _DISPATCHABLE_RUN_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 async def require_service_token(
     request: Request, authorization: str | None = Header(default=None)
 ) -> None:
-    """Constant-time bearer check against ``LS_SERVICE_TOKEN``."""
-    expected = request.app.state.settings.service_token.get_secret_value()
-    presented = ""
+    """Constant-time bearer check against ``LS_SERVICE_TOKEN``.
+
+    Both sides are compared as bytes: ``secrets.compare_digest`` raises
+    ``TypeError`` for a ``str`` holding non-ASCII characters, and a header is
+    attacker-controlled (Starlette decodes it as latin-1, so any byte can
+    appear there).
+    """
+    expected = request.app.state.settings.service_token.get_secret_value().encode("utf-8")
+    presented = b""
     if authorization is not None:
         scheme, _, value = authorization.partition(" ")
         if scheme.lower() == "bearer":  # noqa: S105 - a scheme name, not a secret
-            presented = value.strip()
+            presented = value.strip().encode("utf-8", errors="surrogateescape")
     if not secrets.compare_digest(presented, expected) or not presented:
         raise AppError(401, "UNAUTHENTICATED", "A valid service token is required.")
 

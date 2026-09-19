@@ -17,8 +17,8 @@ from app.db.models import AnalysisRun
 from app.orchestration.protocol import (
     SCHEMA_VERSION,
     DispatchReceipt,
-    Recipient,
     InputRef,
+    Recipient,
     TaskConstraints,
     TaskEnvelope,
     idempotency_key_for,

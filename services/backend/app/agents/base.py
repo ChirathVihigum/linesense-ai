@@ -29,6 +29,7 @@ from app.domain.clock import utcnow
 from app.llm import (
     LLMClient,
     LLMDisabledError,
+    LLMError,
     LLMInvalidResponseError,
     LLMRateLimitedError,
     LLMRefusalError,
@@ -43,12 +44,12 @@ from app.orchestration.protocol import (
     SCHEMA_VERSION,
     AgentErrorCode,
     AgentResult,
-    Recipient,
     DataQuality,
     EvidenceRef,
     ExecutionMetadata,
     Finding,
     Metric,
+    Recipient,
     RecommendedAction,
 )
 from app.orchestration.snapshot import SnapshotData
@@ -78,6 +79,13 @@ NO_TOOL_CALL_MESSAGE = (
 )
 AI_UNAVAILABLE_WARNING = "AI explanation unavailable"
 LLM_DISABLED_REASON = "LLM_DISABLED"
+# Every ``degraded_reason`` is SCREAMING_SNAKE, like the error codes, so the UI
+# and the report can treat them as one vocabulary.
+PROVIDER_FAILURE_REASONS: dict[type[LLMError], str] = {
+    LLMRefusalError: "LLM_REFUSAL",
+    LLMInvalidResponseError: "LLM_INVALID_RESPONSE",
+    LLMDisabledError: LLM_DISABLED_REASON,
+}
 
 
 # --------------------------------------------------------------------------
@@ -325,7 +333,7 @@ class BaseAgent(ABC):
                     AgentErrorCode.PROVIDER_UNAVAILABLE, retryable=True, detail=str(exc)
                 ) from exc
             except (LLMRefusalError, LLMInvalidResponseError, LLMDisabledError) as exc:
-                reason = type(exc).__name__.removesuffix("Error")
+                reason = PROVIDER_FAILURE_REASONS[type(exc)]
                 return self._degraded(
                     ctx,
                     assessment,
@@ -576,6 +584,10 @@ class BaseAgent(ABC):
             summary_source="deterministic",
             started_at=started_at,
             metadata_extra=extra,
+            # A degradation that maps onto a protocol error code carries it, so
+            # `agent_tasks.error_code` records *why* the result is deterministic
+            # (LLM_DISABLED / LLM_REFUSAL / ... have no code and stay null).
+            error_code=_as_error_code(reason),
         )
 
     def _build(
@@ -634,6 +646,13 @@ class _Counters:
     input_tokens: int = 0
     output_tokens: int = 0
     tool_calls: list[str] = field(default_factory=list)
+
+
+def _as_error_code(reason: str) -> AgentErrorCode | None:
+    try:
+        return AgentErrorCode(reason)
+    except ValueError:
+        return None
 
 
 def _submit_spec() -> LLMToolSpec:

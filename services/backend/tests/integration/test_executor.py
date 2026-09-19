@@ -387,6 +387,8 @@ async def test_exhausted_provider_outage_stores_a_degraded_deterministic_result(
         assert result.payload["summary_source"] == "deterministic"
         stored_task = await session.get(AgentTask, task.id)
         assert stored_task is not None and stored_task.status == TaskStatus.SUCCEEDED.value
+        assert stored_task.error_code == AgentErrorCode.PROVIDER_UNAVAILABLE.value
+        assert result.payload["error_code"] == AgentErrorCode.PROVIDER_UNAVAILABLE.value
         job = await session.get(Job, job_id)
         assert job is not None and job.status == JobStatus.FAILED.value
         advance = await session.scalar(
