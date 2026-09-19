@@ -475,4 +475,32 @@ async def _full_digest(session: AsyncSession) -> tuple[tuple[object, ...], ...]:
         sorted((ref, released_at.isoformat()) for ref, released_at in release_rows)
     )
 
-    return (orders_digest, bom_digest, policy_digest, inspection_digest, release_digest)
+    # Fix round 2: per-order total allocated standard minutes and allocation
+    # row count, keyed by external_ref — proves `Line.id` determinism fixed
+    # the allocation-row-count instability (`plan_earliest_slots` tie-breaks
+    # same-date-same-shift slots on different lines by `str(line_id)`).
+    allocation_rows = (
+        await session.execute(
+            select(
+                Order.external_ref,
+                sa.func.sum(Allocation.standard_minutes),
+                sa.func.count(),
+            )
+            .select_from(Allocation)
+            .join(Order, Allocation.order_id == Order.id)
+            .where(Allocation.status == "ACTIVE")
+            .group_by(Order.external_ref)
+        )
+    ).all()
+    allocation_digest = tuple(
+        sorted((ref, str(total_minutes), count) for ref, total_minutes, count in allocation_rows)
+    )
+
+    return (
+        orders_digest,
+        bom_digest,
+        policy_digest,
+        inspection_digest,
+        release_digest,
+        allocation_digest,
+    )
