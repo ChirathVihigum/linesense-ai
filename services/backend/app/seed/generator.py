@@ -187,6 +187,18 @@ _MATERIAL_STATE_SEVERITY: dict[MaterialState, int] = {
 }
 
 
+def _deterministic_uuid(rng: random.Random) -> uuid.UUID:
+    """A UUID drawn from the seeded rng rather than `uuid.uuid4()`.
+
+    `Line.id` uses this: `plan_earliest_slots` tie-breaks same-date-
+    same-shift slots on different lines by `str(line_id)` (fix round 2),
+    so leaving line ids as genuinely random `uuid4()` values made the
+    exact allocation-row split (though never any order's own business
+    facts) vary between otherwise-identical runs of the same `rng_seed`.
+    """
+    return uuid.UUID(int=rng.getrandbits(128), version=4)
+
+
 def _anchor_datetime(anchor_date: date) -> datetime:
     """08:00 Asia/Colombo on `anchor_date`, converted to UTC.
 
@@ -557,6 +569,7 @@ async def _seed_lines(
         factory = factories[factory_code]
         for code, name in line_defs:
             line = Line(
+                id=_deterministic_uuid(rng),
                 organization_id=factory.organization_id,
                 factory_id=factory.id,
                 code=code,
