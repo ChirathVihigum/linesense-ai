@@ -187,6 +187,17 @@ async def idempotent_finish(
     return JSONResponse(status_code=status_code, content=payload)
 
 
+def request_trace_id(request: Request) -> str | None:
+    """The request's trace ID (set by `TraceIdMiddleware`), if any.
+
+    Passed explicitly to every `record_audit`/`audit_denied` call in this
+    task's routes rather than relying on `record_audit`'s own
+    `trace_id_var` context-variable fallback.
+    """
+    trace_id = getattr(request.state, "trace_id", None)
+    return str(trace_id) if trace_id else None
+
+
 async def audit_denial_from_error(
     request: Request,
     principal: Principal,
@@ -216,6 +227,7 @@ async def audit_denial_from_error(
         target_type=target_type,
         target_id=target_id,
         reason=exc.message,
+        trace_id=request_trace_id(request),
     )
 
 
@@ -287,6 +299,7 @@ async def create_order(
                 due_date=body.due_date,
                 priority=body.priority,
             ),
+            trace_id=request_trace_id(request),
         )
     except AppError as exc:
         await audit_denial_from_error(
@@ -295,7 +308,7 @@ async def create_order(
             exc,
             factory_id=factory_id,
             action="order.create",
-            target_type="order",
+            target_type="factory",
             target_id=str(factory_id),
         )
         raise
@@ -348,7 +361,13 @@ async def transition_order(
 
     try:
         await orders_service.transition_order(
-            session, principal, order_id, body.target_state, body.expected_version, body.reason
+            session,
+            principal,
+            order_id,
+            body.target_state,
+            body.expected_version,
+            body.reason,
+            trace_id=request_trace_id(request),
         )
     except AppError as exc:
         await audit_denial_from_error(
@@ -402,6 +421,7 @@ async def progress_order(
             produced_units=body.produced_units,
             packed_units=body.packed_units,
             expected_version=body.expected_version,
+            trace_id=request_trace_id(request),
         )
     except AppError as exc:
         await audit_denial_from_error(

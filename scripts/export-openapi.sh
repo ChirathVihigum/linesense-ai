@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Export the backend's OpenAPI schema to contracts/openapi.json.
 #
-# Deterministic output: the app is built without touching the database or
-# reading local environment overrides (default `Settings()`), and the JSON
-# keys are sorted, so re-running this against unchanged routes produces a
-# byte-identical file (safe to commit and diff in review).
+# Deterministic output: `Settings()` does read process/`.env` environment
+# variables (as it always does), but none of them change which routes exist
+# or their request/response schemas (only connection strings, secrets, and
+# similar runtime config do, none of which reach the OpenAPI document), and
+# the app is built without touching the database. Combined with sorted JSON
+# keys, re-running this against unchanged routes produces a byte-identical
+# file (safe to commit and diff in review) regardless of environment.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

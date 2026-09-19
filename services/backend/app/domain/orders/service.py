@@ -6,10 +6,18 @@ and `app.domain.quality.calc` modules); every write happens inside the
 caller's transaction (the `get_db_session` FastAPI dependency commits or
 rolls back around the route handler).
 
-Cancelling an order releases its active allocations and reservations
-through the shared, row-locking helpers of `app.domain.capacity.service`
-and `app.domain.inventory.service` (lock order: order -> slots ->
-balances).
+Concurrency: every command that mutates an order locks the order row
+(``SELECT ... FOR UPDATE``) *before* comparing ``expected_version`` or
+touching anything else, closing the race between the scope check (a plain
+read) and the write. Cancelling an order then releases its active
+allocations and reservations through the shared, row-locking helpers of
+`app.domain.capacity.service` and `app.domain.inventory.service` (lock
+order: order -> slots -> balances). Recomputing *other* orders'
+`material_state` after a release would need to lock those orders too,
+which would happen after the balance lock above and so could violate that
+same lock order; instead, cancellation enqueues a `maintenance` job
+(`app.jobs.handlers.handle_refresh_material_states`) that recomputes them
+in its own, later transaction.
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ from typing import Any, cast
 
 import sqlalchemy as sa
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import AppError
@@ -46,8 +55,8 @@ from app.db.models import (
     Style,
     StyleOperation,
 )
+from app.domain import clock
 from app.domain.capacity.service import release_order_allocations
-from app.domain.clock import today_in
 from app.domain.inventory.service import release_order_reservations
 from app.domain.orders.lifecycle import TRANSITIONS, InvalidTransition, get_transition
 from app.domain.quality.calc import ShipmentEligibility, ShipmentFacts, shipment_eligibility
@@ -64,8 +73,20 @@ from app.domain.vocab import (
     QualityState,
     Role,
 )
+from app.jobs.queue import enqueue
 
 DEMO_POLICY_CODE = "QP-DEMO"
+
+# The job type the cancellation path enqueues (app.jobs.handlers registers the
+# handler under this same literal string; kept as a constant here too so a
+# typo in either place fails a test rather than silently mismatching).
+REFRESH_MATERIAL_STATES_JOB = "maintenance.refresh_material_states"
+
+# States in which production progress may be recorded.
+PROGRESS_ALLOWED_STATES = (
+    ProductionState.IN_PRODUCTION.value,
+    ProductionState.PRODUCTION_COMPLETE.value,
+)
 
 # `VALIDATED -> PLANNED` is a real transition in the lifecycle policy (it is
 # how a run's applied recommendation moves an order to PLANNED), but it is
@@ -125,17 +146,60 @@ def _order_snapshot(order: Order) -> dict[str, Any]:
     }
 
 
-async def compute_shipment(session: AsyncSession, order: Order) -> ShipmentEligibility:
-    """Build `ShipmentFacts` straight from the database and evaluate them.
+async def _lock_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
+    """Re-select ``order_id`` under ``FOR UPDATE``.
 
-    Task 9 will move this into the quality service; kept here for now
-    because orders is the only caller until inspections/holds get their own
-    write endpoints.
+    The caller has already established scope/permission via `load_scoped`
+    on a plain (unlocked) read; this closes the race between that check and
+    a subsequent version compare or mutation by re-fetching the current row
+    under lock (`populate_existing=True` refreshes any attributes another
+    committed transaction changed in the meantime).
     """
+    return (
+        await session.scalars(
+            select(Order)
+            .where(Order.id == order_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).one()
+
+
+# --------------------------------------------------------------------------
+# Shipment eligibility (single order and bulk, for list_orders)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ShipmentInputs:
+    policy_known: bool
+    required_types: frozenset[str]
+    passed_types_by_order: dict[uuid.UUID, frozenset[str]]
+    hold_order_ids: frozenset[uuid.UUID]
+    valid_release_order_ids: frozenset[uuid.UUID]
+
+
+async def _load_shipment_inputs(session: AsyncSession, orders: list[Order]) -> _ShipmentInputs:
+    """Fetch every DB fact `shipment_eligibility` needs for `orders`, in a
+    handful of queries regardless of how many orders there are (the N+1 that
+    a naive per-order `compute_shipment` call would otherwise cause).
+    """
+    if not orders:
+        return _ShipmentInputs(
+            policy_known=False,
+            required_types=frozenset(),
+            passed_types_by_order={},
+            hold_order_ids=frozenset(),
+            valid_release_order_ids=frozenset(),
+        )
+
+    organization_id = orders[0].organization_id
+    order_ids = [order.id for order in orders]
+
     policy = await session.scalar(
         select(QualityPolicyVersion)
         .where(
-            QualityPolicyVersion.organization_id == order.organization_id,
+            QualityPolicyVersion.organization_id == organization_id,
             QualityPolicyVersion.code == DEMO_POLICY_CODE,
             QualityPolicyVersion.status == PolicyStatus.ACTIVE.value,
         )
@@ -149,59 +213,89 @@ async def compute_shipment(session: AsyncSession, order: Order) -> ShipmentEligi
         else frozenset()
     )
 
-    passed_types: set[str] = set()
-    latest_final: Inspection | None = None
-    for inspection_type in InspectionType:
-        latest = await session.scalar(
+    # The latest inspection per (order, type): fetched newest-first so the
+    # first occurrence seen per key is the latest one.
+    inspections = (
+        await session.scalars(
             select(Inspection)
-            .where(
-                Inspection.order_id == order.id,
-                Inspection.inspection_type == inspection_type.value,
-            )
-            .order_by(Inspection.inspected_at.desc(), Inspection.id.desc())
-            .limit(1)
+            .where(Inspection.order_id.in_(order_ids))
+            .order_by(Inspection.order_id, Inspection.inspected_at.desc(), Inspection.id.desc())
         )
-        if latest is None:
-            continue
-        if inspection_type == InspectionType.FINAL:
-            latest_final = latest
-        if latest.result == InspectionResult.PASS_.value:
-            passed_types.add(inspection_type.value)
+    ).all()
+    latest_by_key: dict[tuple[uuid.UUID, str], Inspection] = {}
+    for inspection in inspections:
+        key = (inspection.order_id, inspection.inspection_type)
+        latest_by_key.setdefault(key, inspection)
 
-    has_active_hold = bool(
-        await session.scalar(
-            select(
-                sa.exists().where(
-                    QualityHold.order_id == order.id,
+    passed_types_by_order: dict[uuid.UUID, set[str]] = {order_id: set() for order_id in order_ids}
+    latest_final_by_order: dict[uuid.UUID, Inspection] = {}
+    for (order_id, inspection_type), inspection in latest_by_key.items():
+        if inspection_type == InspectionType.FINAL.value:
+            latest_final_by_order[order_id] = inspection
+        if inspection.result == InspectionResult.PASS_.value:
+            passed_types_by_order[order_id].add(inspection_type)
+
+    hold_order_ids = frozenset(
+        (
+            await session.scalars(
+                select(QualityHold.order_id).where(
+                    QualityHold.order_id.in_(order_ids),
                     QualityHold.status == QualityHoldStatus.ACTIVE.value,
                 )
             )
-        )
+        ).all()
     )
-    has_valid_release = False
-    if latest_final is not None:
-        has_valid_release = bool(
-            await session.scalar(
-                select(
-                    sa.exists().where(
-                        QualityRelease.order_id == order.id,
-                        QualityRelease.inspection_id == latest_final.id,
-                    )
+
+    release_pairs = frozenset(
+        (order_id, inspection_id)
+        for order_id, inspection_id in (
+            await session.execute(
+                select(QualityRelease.order_id, QualityRelease.inspection_id).where(
+                    QualityRelease.order_id.in_(order_ids)
                 )
             )
-        )
+        ).all()
+    )
+    valid_release_order_ids = frozenset(
+        order_id
+        for order_id, latest_final in latest_final_by_order.items()
+        if (order_id, latest_final.id) in release_pairs
+    )
 
+    return _ShipmentInputs(
+        policy_known=policy_known,
+        required_types=required_types,
+        passed_types_by_order={
+            order_id: frozenset(types) for order_id, types in passed_types_by_order.items()
+        },
+        hold_order_ids=hold_order_ids,
+        valid_release_order_ids=valid_release_order_ids,
+    )
+
+
+def _evaluate_shipment(order: Order, inputs: _ShipmentInputs) -> ShipmentEligibility:
     facts = ShipmentFacts(
         production_state=order.production_state,
         quantity=order.quantity,
         packed_units=order.packed_units,
-        passed_inspection_types=frozenset(passed_types),
-        required_inspection_types=required_types,
-        has_active_hold=has_active_hold,
-        has_valid_release=has_valid_release,
-        policy_known=policy_known,
+        passed_inspection_types=inputs.passed_types_by_order.get(order.id, frozenset()),
+        required_inspection_types=inputs.required_types,
+        has_active_hold=order.id in inputs.hold_order_ids,
+        has_valid_release=order.id in inputs.valid_release_order_ids,
+        policy_known=inputs.policy_known,
     )
     return shipment_eligibility(facts)
+
+
+async def compute_shipment(session: AsyncSession, order: Order) -> ShipmentEligibility:
+    """Build `ShipmentFacts` straight from the database and evaluate them.
+
+    Task 9 will move this into the quality service; kept here for now
+    because orders is the only caller until inspections/holds get their own
+    write endpoints.
+    """
+    inputs = await _load_shipment_inputs(session, [order])
+    return _evaluate_shipment(order, inputs)
 
 
 async def list_orders(
@@ -251,11 +345,16 @@ async def list_orders(
         )
     ).all()
 
-    result: list[OrderListRow] = []
-    for order, customer, style in rows:
-        shipment = await compute_shipment(session, order)
-        result.append(OrderListRow(order=order, customer=customer, style=style, shipment=shipment))
-    return result, int(total or 0)
+    shipment_inputs = await _load_shipment_inputs(session, [order for order, _, _ in rows])
+    return [
+        OrderListRow(
+            order=order,
+            customer=customer,
+            style=style,
+            shipment=_evaluate_shipment(order, shipment_inputs),
+        )
+        for order, customer, style in rows
+    ], int(total or 0)
 
 
 async def create_order(
@@ -263,6 +362,8 @@ async def create_order(
     principal: Principal,
     factory_id: uuid.UUID,
     data: NewOrderInput,
+    *,
+    trace_id: str | None = None,
 ) -> Order:
     factory = await load_scoped(session, Factory, factory_id, principal, "order:create")
 
@@ -326,7 +427,19 @@ async def create_order(
         created_by=principal.user_id,
     )
     session.add(order)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # A concurrent request created the same external_ref between the
+        # pre-check above and this insert; the unique constraint is the
+        # actual race-free guard, the pre-check is only a friendlier error
+        # for the common (non-concurrent) case.
+        raise AppError(
+            409,
+            "CONFLICT",
+            "An order with this external reference already exists.",
+            field_errors=[{"field": "external_ref", "message": "Already exists."}],
+        ) from exc
 
     await record_audit(
         session,
@@ -338,6 +451,7 @@ async def create_order(
         target_type="order",
         target_id=str(order.id),
         outcome=AuditOutcome.SUCCESS.value,
+        trace_id=trace_id,
         after=_order_snapshot(order),
     )
     return order
@@ -352,7 +466,7 @@ async def _order_data_incomplete_reason(session: AsyncSession, order: Order) -> 
     factory = await session.get(Factory, order.factory_id)
     if factory is None:
         return "Order's factory could not be found."
-    if order.due_date < today_in(factory.timezone):
+    if order.due_date < clock.today_in(factory.timezone):
         return "Due date must not be in the past."
     return None
 
@@ -422,6 +536,32 @@ async def _notify_supervisors(
     await session.flush()
 
 
+async def _release_and_enqueue_refresh(session: AsyncSession, order: Order) -> None:
+    """Release the cancelled order's allocations/reservations and, if any
+    material balance was touched, enqueue an async recompute of *other*
+    orders' `material_state` rather than doing it inline.
+
+    Recomputing inline would need to lock other orders that use the same
+    materials; by this point the balance locks are already held (order ->
+    slots -> balances), so locking additional orders here would risk
+    locking an order row *after* a balance lock, which is exactly the
+    ordering `app.domain.inventory.service`/`app.domain.capacity.service`
+    require callers never do.
+    """
+    await release_order_allocations(session, order)
+    released_reservations = await release_order_reservations(session, order)
+    material_ids = sorted({str(reservation.material_id) for reservation in released_reservations})
+    if not material_ids:
+        return
+    await enqueue(
+        session,
+        queue="maintenance",
+        job_type=REFRESH_MATERIAL_STATES_JOB,
+        payload={"factory_id": str(order.factory_id), "material_ids": material_ids},
+        dedupe_key=f"refresh:{order.id}:{order.version}",
+    )
+
+
 async def transition_order(
     session: AsyncSession,
     principal: Principal,
@@ -429,8 +569,12 @@ async def transition_order(
     target: str,
     expected_version: int,
     reason: str | None = None,
+    *,
+    trace_id: str | None = None,
 ) -> Order:
-    order = await load_scoped(session, Order, order_id, principal, "order:read")
+    scoped = await load_scoped(session, Order, order_id, principal, "order:read")
+    order = await _lock_order(session, scoped.id)
+
     source_state = ProductionState(order.production_state)
     try:
         target_state = ProductionState(target)
@@ -458,8 +602,7 @@ async def transition_order(
     order.version += 1
 
     if target_state == ProductionState.CANCELLED:
-        await release_order_allocations(session, order)
-        await release_order_reservations(session, order)
+        await _release_and_enqueue_refresh(session, order)
 
     await session.flush()
     after = _order_snapshot(order)
@@ -475,6 +618,7 @@ async def transition_order(
         target_id=str(order.id),
         outcome=AuditOutcome.SUCCESS.value,
         reason=reason,
+        trace_id=trace_id,
         before=before,
         after=after,
     )
@@ -497,8 +641,17 @@ async def progress_order(
     produced_units: int,
     packed_units: int,
     expected_version: int,
+    trace_id: str | None = None,
 ) -> Order:
-    order = await load_scoped(session, Order, order_id, principal, "order:transition")
+    scoped = await load_scoped(session, Order, order_id, principal, "order:transition")
+    order = await _lock_order(session, scoped.id)
+
+    if order.production_state not in PROGRESS_ALLOWED_STATES:
+        raise AppError(
+            409,
+            "INVALID_TRANSITION",
+            f"Production progress cannot be recorded while the order is {order.production_state}.",
+        )
 
     if expected_version != order.version:
         raise AppError(409, "STALE_INPUT", "The order has changed since it was loaded.")
@@ -541,6 +694,7 @@ async def progress_order(
         target_type="order",
         target_id=str(order.id),
         outcome=AuditOutcome.SUCCESS.value,
+        trace_id=trace_id,
         before=before,
         after=after,
     )

@@ -65,7 +65,9 @@ async def list_notifications(
     total = await session.scalar(select(sa.func.count()).select_from(base.subquery()))
     rows = (
         await session.scalars(
-            base.order_by(Notification.created_at.desc()).limit(page.limit).offset(page.offset)
+            base.order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(page.limit)
+            .offset(page.offset)
         )
     ).all()
     items = [NotificationOut.model_validate(row) for row in rows]
@@ -94,7 +96,10 @@ async def mark_notification_read(
         and notification.role in roles
     )
     if not visible:
-        raise AppError(403, "FORBIDDEN", "This notification is not addressed to you.")
+        # Existence of another user's/role's notification is never revealed,
+        # matching every other resource's scoping (404, not 403, for
+        # something the caller cannot see at all).
+        raise AppError(404, "NOT_FOUND", "Resource not found.")
 
     if notification.read_at is None:
         notification.read_at = utcnow()
