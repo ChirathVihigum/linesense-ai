@@ -117,6 +117,75 @@ the last error was `PROVIDER_UNAVAILABLE` it re-runs only the deterministic
 FAILED result with the last error code. Both paths append `task.completed` and
 enqueue `orchestrator.advance`, so a run never stalls on a dead task.
 
+## The orchestration graph
+
+`orchestrator.advance` (payload `{"run_id"}`, handler
+[`app/orchestration/orchestrator.py`](../../services/backend/app/orchestration/orchestrator.py))
+is the **only** component that creates agent tasks — a task can never create
+another task. Every delivery locks the run row, does exactly one thing
+(start, dispatch, or finalize), commits, and only then dispatches over HTTP;
+the run lock is never held across a network call.
+
+```mermaid
+flowchart TD
+    Q[run QUEUED] -->|run.started| RM0["rm round 0<br/>assess_material_readiness"]
+    RM0 --> P0["planning round 0<br/>propose_allocation<br/>(input: snapshot + RM result)"]
+    P0 --> DEC{"needs_replan?"}
+    DEC -->|"yes, replan_count == 0"| P1["planning round 1<br/>revise_allocation<br/>(parent: planning r0)"]
+    DEC -->|no| FIN0
+    P1 --> FIN0{"final plan allocates<br/>units > 0?"}
+    FIN0 -->|yes| RM1["rm round 1<br/>validate_plan_materials<br/>(parent: final planning task)"]
+    FIN0 -->|no| F[finalize]
+    RM1 --> F
+    F -->|recommendation created| AR[AWAITING_REVIEW]
+    F -->|no recommendation, all SUCCEEDED| C[COMPLETED]
+    F -->|no recommendation, any DEGRADED/FAILED| D[DEGRADED]
+    F -->|rm r0 and final planning both FAILED| X[FAILED]
+    Q -.->|past deadline_at| DL["cancel open tasks<br/>DEGRADED if a planning result SUCCEEDED, else FAILED<br/>error_code DEADLINE_EXCEEDED"]
+```
+
+At most **one** replan happens per run (`analysis_runs.replan_count` goes
+0 → 1 and is never raised again).
+
+### The replan rule
+
+`needs_replan(planning_result, rm_result)` returns a reason string only when
+the rank-0 `ALLOCATION` action of the planning result commits more units than
+the RM agent's `coverable_units` metric:
+
+```
+MATERIAL_SHORTAGE_CONFLICT: selected plan allocates <x> units but materials cover <y>
+```
+
+It returns `None` when either result is missing or `FAILED`, when the plan has
+no allocation action, or when `allocated_units <= coverable_units`. The reason
+is recorded verbatim in the `orchestrator.replan` run event. The revision task
+(`revise_allocation`) ranks the `MATERIAL_LIMITED` option first and adds a
+`REVISED_FOR_MATERIAL` warning quoting the allocated and requested units, the
+shortage and the first open receipt date.
+
+### Finalization
+
+In one transaction the orchestrator creates the recommendation (if there is a
+plan to propose), supersedes every earlier `PROPOSED`/`APPROVED`
+recommendation of the same order with `NEWER_ANALYSIS`, sets the run status
+per the graph above, appends `run.finalized`, notifies the `supervisor` role
+(link `/runs/<id>`) and audits `analysis.completed`.
+
+`recommendations.evidence_refs` is stored as `{"items": [...]}`, each item
+being an `EvidenceRef` the selected actions cited plus the `agent` that found
+it. `proposal_hash` is the sha256 hex of
+`json.dumps(proposal, sort_keys=True, separators=(",", ":"), default=str)`.
+
+### Reconciliation
+
+`reconcile_once` enqueues `orchestrator.advance` (dedupe key
+`run:<id>:reconcile:<YYYYMMDDHHMM>`) for every `QUEUED`/`RUNNING` run that has
+been quiet for more than 30 s with no runnable `orchestrator.advance` or
+`agent.execute` job of its own, and for every run past its deadline. A worker
+that dies mid-task is therefore always recovered, either by the job lease
+expiring or by this sweep.
+
 ## The bounded agent loop
 
 `BaseAgent.run` (see [`app/agents/base.py`](../../services/backend/app/agents/base.py)):
