@@ -436,6 +436,171 @@
         "title": "CustomerRef",
         "type": "object"
       },
+      "DefectCodeTrendOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "defect_code": {
+            "title": "Defect Code",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "defect_code",
+          "severity",
+          "count"
+        ],
+        "title": "DefectCodeTrendOut",
+        "type": "object"
+      },
+      "DefectIn": {
+        "properties": {
+          "count": {
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "defect_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Defect Code",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
+          "severity": {
+            "enum": [
+              "MINOR",
+              "MAJOR",
+              "CRITICAL"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "defect_code",
+          "severity",
+          "count"
+        ],
+        "title": "DefectIn",
+        "type": "object"
+      },
+      "DefectOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "defect_code": {
+            "title": "Defect Code",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "defect_code",
+          "severity",
+          "count",
+          "operation_id"
+        ],
+        "title": "DefectOut",
+        "type": "object"
+      },
+      "DefectTrendOut": {
+        "properties": {
+          "by_defect_code": {
+            "items": {
+              "$ref": "#/components/schemas/DefectCodeTrendOut"
+            },
+            "title": "By Defect Code",
+            "type": "array"
+          },
+          "defective_rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defective Rate"
+          },
+          "defective_units": {
+            "title": "Defective Units",
+            "type": "integer"
+          },
+          "defects_per_hundred_units": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defects Per Hundred Units"
+          },
+          "factory_id": {
+            "format": "uuid",
+            "title": "Factory Id",
+            "type": "string"
+          },
+          "inspected_units": {
+            "title": "Inspected Units",
+            "type": "integer"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "factory_id",
+          "window_days",
+          "inspected_units",
+          "defective_units",
+          "defective_rate",
+          "defects_per_hundred_units",
+          "by_defect_code"
+        ],
+        "title": "DefectTrendOut",
+        "type": "object"
+      },
       "FactoryRef": {
         "properties": {
           "code": {
@@ -471,6 +636,21 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HoldCreate": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "HoldCreate",
         "type": "object"
       },
       "HoldOut": {
@@ -606,6 +786,54 @@
         "title": "ImportRowErrorOut",
         "type": "object"
       },
+      "InspectionCreate": {
+        "properties": {
+          "defective_units": {
+            "minimum": 0.0,
+            "title": "Defective Units",
+            "type": "integer"
+          },
+          "defects": {
+            "items": {
+              "$ref": "#/components/schemas/DefectIn"
+            },
+            "title": "Defects",
+            "type": "array"
+          },
+          "inspected_units": {
+            "minimum": 0.0,
+            "title": "Inspected Units",
+            "type": "integer"
+          },
+          "inspection_type": {
+            "enum": [
+              "INLINE",
+              "FINAL"
+            ],
+            "title": "Inspection Type",
+            "type": "string"
+          },
+          "line_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Id"
+          }
+        },
+        "required": [
+          "inspection_type",
+          "inspected_units",
+          "defective_units"
+        ],
+        "title": "InspectionCreate",
+        "type": "object"
+      },
       "InspectionOut": {
         "properties": {
           "defective_units": {
@@ -730,6 +958,37 @@
         "title": "LatestRunOut",
         "type": "object"
       },
+      "LineBalanceOut": {
+        "properties": {
+          "balance_index_percent": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance Index Percent",
+            "type": "string"
+          },
+          "bottleneck_effective_seconds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Bottleneck Effective Seconds",
+            "type": "string"
+          },
+          "bottleneck_index": {
+            "title": "Bottleneck Index",
+            "type": "integer"
+          },
+          "units_per_hour": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Units Per Hour",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bottleneck_index",
+          "bottleneck_effective_seconds",
+          "units_per_hour",
+          "balance_index_percent"
+        ],
+        "title": "LineBalanceOut",
+        "type": "object"
+      },
       "LineOut": {
         "properties": {
           "code": {
@@ -770,6 +1029,93 @@
           "skill_codes"
         ],
         "title": "LineOut",
+        "type": "object"
+      },
+      "LineStyleAnalysisOut": {
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "balance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LineBalanceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data_versions": {
+            "additionalProperties": true,
+            "title": "Data Versions",
+            "type": "object"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "observed_units_per_hour": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Units Per Hour"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationAnalysisOut"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "sam_units_per_hour": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sam Units Per Hour"
+          },
+          "style_id": {
+            "format": "uuid",
+            "title": "Style Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_id",
+          "style_id",
+          "operations",
+          "balance",
+          "observed_units_per_hour",
+          "sam_units_per_hour",
+          "assumptions",
+          "limitations",
+          "data_versions"
+        ],
+        "title": "LineStyleAnalysisOut",
         "type": "object"
       },
       "LotAcceptResult": {
@@ -1329,6 +1675,218 @@
         "title": "NotificationOut",
         "type": "object"
       },
+      "ObservationCreate": {
+        "properties": {
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "observed_seconds": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 3600.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Observed Seconds"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "operator_alias_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Operator Alias Code",
+            "type": "string"
+          },
+          "style_id": {
+            "format": "uuid",
+            "title": "Style Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_id",
+          "style_id",
+          "operation_id",
+          "operator_alias_code",
+          "observed_seconds",
+          "observed_at"
+        ],
+        "title": "ObservationCreate",
+        "type": "object"
+      },
+      "ObservationOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_outlier": {
+            "title": "Is Outlier",
+            "type": "boolean"
+          },
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "observed_seconds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Observed Seconds",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "operator_alias_id": {
+            "format": "uuid",
+            "title": "Operator Alias Id",
+            "type": "string"
+          },
+          "outlier_approved_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outlier Approved By"
+          },
+          "recorded_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded By"
+          },
+          "style_id": {
+            "format": "uuid",
+            "title": "Style Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "line_id",
+          "style_id",
+          "operation_id",
+          "operator_alias_id",
+          "observed_seconds",
+          "observed_at",
+          "is_outlier",
+          "outlier_approved_by",
+          "recorded_by",
+          "created_at"
+        ],
+        "title": "ObservationOut",
+        "type": "object"
+      },
+      "OperationAnalysisOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "effective_seconds": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Seconds"
+          },
+          "insufficient_samples": {
+            "title": "Insufficient Samples",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "parallel_operators": {
+            "title": "Parallel Operators",
+            "type": "integer"
+          },
+          "representative_seconds": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representative Seconds"
+          },
+          "sam_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Sam Minutes",
+            "type": "string"
+          },
+          "sample_count": {
+            "title": "Sample Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation_id",
+          "code",
+          "name",
+          "sam_minutes",
+          "sample_count",
+          "representative_seconds",
+          "parallel_operators",
+          "effective_seconds",
+          "insufficient_samples"
+        ],
+        "title": "OperationAnalysisOut",
+        "type": "object"
+      },
       "OperationOut": {
         "properties": {
           "code": {
@@ -1356,6 +1914,43 @@
           "sam_minutes"
         ],
         "title": "OperationOut",
+        "type": "object"
+      },
+      "OperatorAliasOut": {
+        "properties": {
+          "alias_code": {
+            "title": "Alias Code",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "line_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Id"
+          }
+        },
+        "required": [
+          "id",
+          "alias_code",
+          "line_id",
+          "is_active"
+        ],
+        "title": "OperatorAliasOut",
         "type": "object"
       },
       "OrderCreate": {
@@ -1581,6 +2176,69 @@
         "title": "OrderProgressRequest",
         "type": "object"
       },
+      "OrderQualityOut": {
+        "properties": {
+          "holds": {
+            "items": {
+              "$ref": "#/components/schemas/QualityHoldOut"
+            },
+            "title": "Holds",
+            "type": "array"
+          },
+          "inspections": {
+            "items": {
+              "$ref": "#/components/schemas/QualityInspectionOut"
+            },
+            "title": "Inspections",
+            "type": "array"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "order_version": {
+            "title": "Order Version",
+            "type": "integer"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quality_state": {
+            "title": "Quality State",
+            "type": "string"
+          },
+          "releases": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseOut"
+            },
+            "title": "Releases",
+            "type": "array"
+          },
+          "shipment": {
+            "$ref": "#/components/schemas/ShipmentOut"
+          }
+        },
+        "required": [
+          "order_id",
+          "order_version",
+          "quality_state",
+          "inspections",
+          "holds",
+          "releases",
+          "shipment",
+          "policy"
+        ],
+        "title": "OrderQualityOut",
+        "type": "object"
+      },
       "OrderSummary": {
         "properties": {
           "customer": {
@@ -1692,6 +2350,24 @@
           "expected_version"
         ],
         "title": "OrderTransitionRequest",
+        "type": "object"
+      },
+      "OutlierMarkRequest": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "OutlierMarkRequest",
         "type": "object"
       },
       "Page_AuditEventOut_": {
@@ -1880,6 +2556,37 @@
         "title": "Page[NotificationOut]",
         "type": "object"
       },
+      "Page_OperatorAliasOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorAliasOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[OperatorAliasOut]",
+        "type": "object"
+      },
       "Page_OrderSummary_": {
         "properties": {
           "items": {
@@ -1909,6 +2616,68 @@
           "offset"
         ],
         "title": "Page[OrderSummary]",
+        "type": "object"
+      },
+      "Page_PolicyOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[PolicyOut]",
+        "type": "object"
+      },
+      "Page_QualityHoldOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QualityHoldOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[QualityHoldOut]",
         "type": "object"
       },
       "Page_StyleOut_": {
@@ -1942,6 +2711,58 @@
         "title": "Page[StyleOut]",
         "type": "object"
       },
+      "PolicyOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_demo": {
+            "title": "Is Demo",
+            "type": "boolean"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "rules": {
+            "additionalProperties": true,
+            "title": "Rules",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "version_no",
+          "is_demo",
+          "status",
+          "rules",
+          "label"
+        ],
+        "title": "PolicyOut",
+        "type": "object"
+      },
       "ProductionState": {
         "enum": [
           "DRAFT",
@@ -1954,6 +2775,193 @@
         ],
         "title": "ProductionState",
         "type": "string"
+      },
+      "QualityHoldOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inspection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspection Id"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "released_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released By"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "inspection_id",
+          "reason",
+          "status",
+          "created_by",
+          "created_at",
+          "released_by",
+          "released_at",
+          "release_id"
+        ],
+        "title": "QualityHoldOut",
+        "type": "object"
+      },
+      "QualityInspectionOut": {
+        "properties": {
+          "defective_units": {
+            "title": "Defective Units",
+            "type": "integer"
+          },
+          "defects": {
+            "items": {
+              "$ref": "#/components/schemas/DefectOut"
+            },
+            "title": "Defects",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inspected_at": {
+            "format": "date-time",
+            "title": "Inspected At",
+            "type": "string"
+          },
+          "inspected_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspected By"
+          },
+          "inspected_units": {
+            "title": "Inspected Units",
+            "type": "integer"
+          },
+          "inspection_type": {
+            "title": "Inspection Type",
+            "type": "string"
+          },
+          "line_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Id"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "policy_version_id": {
+            "format": "uuid",
+            "title": "Policy Version Id",
+            "type": "string"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "line_id",
+          "inspection_type",
+          "inspected_units",
+          "defective_units",
+          "policy_version_id",
+          "result",
+          "inspected_by",
+          "inspected_at",
+          "defects"
+        ],
+        "title": "QualityInspectionOut",
+        "type": "object"
       },
       "QualityState": {
         "enum": [
@@ -2005,6 +3013,94 @@
           "accept"
         ],
         "title": "ReceiptCreate",
+        "type": "object"
+      },
+      "ReleaseCreate": {
+        "properties": {
+          "expected_order_version": {
+            "minimum": 1.0,
+            "title": "Expected Order Version",
+            "type": "integer"
+          },
+          "inspection_id": {
+            "format": "uuid",
+            "title": "Inspection Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "required": [
+          "inspection_id",
+          "expected_order_version"
+        ],
+        "title": "ReleaseCreate",
+        "type": "object"
+      },
+      "ReleaseOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inspection_id": {
+            "format": "uuid",
+            "title": "Inspection Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "policy_version_id": {
+            "format": "uuid",
+            "title": "Policy Version Id",
+            "type": "string"
+          },
+          "released_at": {
+            "format": "date-time",
+            "title": "Released At",
+            "type": "string"
+          },
+          "released_by": {
+            "format": "uuid",
+            "title": "Released By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "inspection_id",
+          "policy_version_id",
+          "released_by",
+          "released_at",
+          "notes"
+        ],
+        "title": "ReleaseOut",
         "type": "object"
       },
       "ReservationCommandResult": {
@@ -2087,6 +3183,27 @@
           "status"
         ],
         "title": "ReservationOut",
+        "type": "object"
+      },
+      "ShipmentOut": {
+        "properties": {
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "eligible",
+          "reasons"
+        ],
+        "title": "ShipmentOut",
         "type": "object"
       },
       "ShipmentStatus": {
@@ -2626,6 +3743,211 @@
         ]
       }
     },
+    "/api/v1/factories/{factory_id}/ie/lines/{line_id}/styles/{style_id}/analysis": {
+      "get": {
+        "operationId": "line_style_analysis_api_v1_factories__factory_id__ie_lines__line_id__styles__style_id__analysis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "style_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Style Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Window Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineStyleAnalysisOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Line Style Analysis",
+        "tags": [
+          "ie"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/ie/observations": {
+      "post": {
+        "operationId": "record_observation_api_v1_factories__factory_id__ie_observations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Observation",
+        "tags": [
+          "ie"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/ie/operator-aliases": {
+      "get": {
+        "operationId": "list_operator_aliases_api_v1_factories__factory_id__ie_operator_aliases_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OperatorAliasOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Operator Aliases",
+        "tags": [
+          "ie"
+        ]
+      }
+    },
     "/api/v1/factories/{factory_id}/imports/orders": {
       "post": {
         "operationId": "upload_orders_csv_api_v1_factories__factory_id__imports_orders_post",
@@ -3151,6 +4473,209 @@
         ]
       }
     },
+    "/api/v1/factories/{factory_id}/quality/holds": {
+      "get": {
+        "operationId": "list_factory_holds_api_v1_factories__factory_id__quality_holds_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_QualityHoldOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Factory Holds",
+        "tags": [
+          "quality"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/quality/policies": {
+      "get": {
+        "operationId": "list_quality_policies_api_v1_factories__factory_id__quality_policies_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PolicyOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Quality Policies",
+        "tags": [
+          "quality"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/quality/trends": {
+      "get": {
+        "operationId": "factory_defect_trends_api_v1_factories__factory_id__quality_trends_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefectTrendOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Factory Defect Trends",
+        "tags": [
+          "quality"
+        ]
+      }
+    },
     "/api/v1/factories/{factory_id}/reservations": {
       "get": {
         "operationId": "list_reservations_api_v1_factories__factory_id__reservations_get",
@@ -3618,6 +5143,70 @@
         ]
       }
     },
+    "/api/v1/ie/observations/{observation_id}/outlier": {
+      "post": {
+        "operationId": "mark_outlier_api_v1_ie_observations__observation_id__outlier_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "observation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Observation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutlierMarkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Outlier",
+        "tags": [
+          "ie"
+        ]
+      }
+    },
     "/api/v1/imports/templates/orders.csv": {
       "get": {
         "operationId": "orders_csv_template_api_v1_imports_templates_orders_csv_get",
@@ -3843,6 +5432,134 @@
         ]
       }
     },
+    "/api/v1/orders/{order_id}/holds": {
+      "post": {
+        "operationId": "create_hold_api_v1_orders__order_id__holds_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HoldCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderQualityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Hold",
+        "tags": [
+          "quality"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_id}/inspections": {
+      "post": {
+        "operationId": "create_inspection_api_v1_orders__order_id__inspections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderQualityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Inspection",
+        "tags": [
+          "quality"
+        ]
+      }
+    },
     "/api/v1/orders/{order_id}/progress": {
       "post": {
         "operationId": "progress_order_api_v1_orders__order_id__progress_post",
@@ -3904,6 +5621,113 @@
         "summary": "Progress Order",
         "tags": [
           "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_id}/quality": {
+      "get": {
+        "operationId": "order_quality_api_v1_orders__order_id__quality_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderQualityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Order Quality",
+        "tags": [
+          "quality"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_id}/quality-release": {
+      "post": {
+        "operationId": "release_order_api_v1_orders__order_id__quality_release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderQualityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Order",
+        "tags": [
+          "quality"
         ]
       }
     },

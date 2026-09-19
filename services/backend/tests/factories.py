@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,14 +19,19 @@ from app.db.models import (
     AnalysisRun,
     BomVersion,
     Customer,
+    CycleObservation,
     Factory,
+    Inspection,
     Line,
     LineCapacitySlot,
     Material,
     MaterialBalance,
     Membership,
+    OperationStaffing,
+    OperatorAlias,
     Order,
     Organization,
+    QualityPolicyVersion,
     Recommendation,
     Style,
     StyleOperation,
@@ -33,8 +39,11 @@ from app.db.models import (
 )
 from app.domain.vocab import (
     GeneratedBy,
+    InspectionResult,
+    InspectionType,
     MaterialState,
     OrderSource,
+    PolicyStatus,
     ProductionState,
     QualityState,
     RecommendationKind,
@@ -349,6 +358,119 @@ async def make_recommendation(
     session.add(recommendation)
     await session.flush()
     return recommendation
+
+
+async def make_operator_alias(
+    session: AsyncSession,
+    organization: Organization | None = None,
+    factory: Factory | None = None,
+    **overrides: Any,
+) -> OperatorAlias:
+    organization = organization or await make_org(session)
+    factory = factory or await make_factory(session, organization=organization)
+    suffix = _slug()
+    defaults: dict[str, Any] = {
+        "organization_id": organization.id,
+        "factory_id": factory.id,
+        "alias_code": f"ALIAS-{suffix}",
+        "line_id": None,
+        "is_active": True,
+    }
+    defaults.update(overrides)
+    alias = OperatorAlias(**defaults)
+    session.add(alias)
+    await session.flush()
+    return alias
+
+
+async def make_operation_staffing(
+    session: AsyncSession, line: Line, operation: StyleOperation, **overrides: Any
+) -> OperationStaffing:
+    defaults: dict[str, Any] = {
+        "organization_id": line.organization_id,
+        "factory_id": line.factory_id,
+        "line_id": line.id,
+        "style_id": operation.style_id,
+        "operation_id": operation.id,
+        "parallel_operators": 1,
+    }
+    defaults.update(overrides)
+    staffing = OperationStaffing(**defaults)
+    session.add(staffing)
+    await session.flush()
+    return staffing
+
+
+async def make_cycle_observation(
+    session: AsyncSession,
+    line: Line,
+    operation: StyleOperation,
+    alias: OperatorAlias,
+    **overrides: Any,
+) -> CycleObservation:
+    defaults: dict[str, Any] = {
+        "organization_id": line.organization_id,
+        "factory_id": line.factory_id,
+        "line_id": line.id,
+        "style_id": operation.style_id,
+        "operation_id": operation.id,
+        "operator_alias_id": alias.id,
+        "observed_seconds": Decimal("40"),
+        "observed_at": utcnow(),
+        "is_outlier": False,
+    }
+    defaults.update(overrides)
+    observation = CycleObservation(**defaults)
+    session.add(observation)
+    await session.flush()
+    return observation
+
+
+async def make_quality_policy(
+    session: AsyncSession, organization: Organization | None = None, **overrides: Any
+) -> QualityPolicyVersion:
+    organization = organization or await make_org(session)
+    defaults: dict[str, Any] = {
+        "organization_id": organization.id,
+        "code": "QP-TEST",
+        "version_no": 1,
+        "is_demo": False,
+        "status": PolicyStatus.ACTIVE.value,
+        "rules": {
+            "sample_size": 5,
+            "max_defective_units": 2,
+            "max_critical_defects": 0,
+            "required_inspection_types": ["FINAL"],
+        },
+    }
+    defaults.update(overrides)
+    policy = QualityPolicyVersion(**defaults)
+    session.add(policy)
+    await session.flush()
+    return policy
+
+
+async def make_inspection(
+    session: AsyncSession, order: Order, policy: QualityPolicyVersion, **overrides: Any
+) -> Inspection:
+    defaults: dict[str, Any] = {
+        "organization_id": order.organization_id,
+        "factory_id": order.factory_id,
+        "order_id": order.id,
+        "line_id": None,
+        "inspection_type": InspectionType.FINAL.value,
+        "inspected_units": 10,
+        "defective_units": 0,
+        "policy_version_id": policy.id,
+        "result": InspectionResult.PASS_.value,
+        "inspected_by": None,
+        "inspected_at": utcnow(),
+    }
+    defaults.update(overrides)
+    inspection = Inspection(**defaults)
+    session.add(inspection)
+    await session.flush()
+    return inspection
 
 
 def utcnow() -> datetime:
