@@ -34,6 +34,26 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: 'Import orders', to: 'orders/import', permission: 'order:import' },
     ],
   },
+  {
+    label: 'Planning',
+    permission: 'capacity:read',
+    items: [{ label: 'Planning board', to: 'planning', permission: 'capacity:read', end: true }],
+  },
+  {
+    label: 'Materials',
+    permission: 'inventory:read',
+    items: [{ label: 'Materials', to: 'materials', permission: 'inventory:read', end: true }],
+  },
+  {
+    label: 'Industrial engineering',
+    permission: 'ie:read',
+    items: [{ label: 'Line balance', to: 'ie', permission: 'ie:read', end: true }],
+  },
+  {
+    label: 'Quality',
+    permission: 'quality:read',
+    items: [{ label: 'Inspections and holds', to: 'quality', permission: 'quality:read', end: true }],
+  },
 ]
 
 function FactorySelector() {

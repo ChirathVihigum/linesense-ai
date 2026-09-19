@@ -66,6 +66,28 @@ export const routes: RouteObject[] = [
               Component: (await import('../features/orders/OrderImportPage')).OrderImportPage,
             }),
           },
+          {
+            path: 'planning',
+            lazy: async () => ({
+              Component: (await import('../features/planning/PlanningBoardPage')).PlanningBoardPage,
+            }),
+          },
+          {
+            path: 'materials',
+            lazy: async () => ({
+              Component: (await import('../features/materials/MaterialsPage')).MaterialsPage,
+            }),
+          },
+          {
+            path: 'ie',
+            lazy: async () => ({ Component: (await import('../features/ie/IEPage')).IEPage }),
+          },
+          {
+            path: 'quality',
+            lazy: async () => ({
+              Component: (await import('../features/quality/QualityPage')).QualityPage,
+            }),
+          },
           { path: '*', element: <NotFoundPage /> },
         ],
       },

@@ -1920,3 +1920,89 @@ the heat policy — PENDING user approval or CI.
   asserted a job-type list that was already stale at HEAD (it did not include
   `maintenance.refresh_material_states` added in Task 7's fix round); it now lists all four
   registered job types.
+
+## 2026-09-20 — Task 23: web planning board, materials, IE and quality workspaces
+
+- New workspaces under `apps/web/src/features/`: `planning/` (`PlanningBoardPage`, `CapacityGrid`,
+  `RecommendationCompare`), `materials/` (`MaterialsPage`, `LedgerDrawer`, `StockMovementForms`,
+  `ReservationTable`), `ie/` (`IEPage`, `BottleneckChart`, `ObservationForm`, `SampleTable`),
+  `quality/` (`QualityPage`, `InspectionForm`, `HoldsTable`, `DefectTrendChart`, `ReleaseReview`),
+  wired into `src/app/router.tsx` (`planning`, `materials`, `ie`, `quality`) and `src/app/Layout.tsx`
+  (`NAV_SECTIONS`).
+- Planning board: a start/end date picker capped at 31 days (`features/planning/dateRange.ts`)
+  feeds `GET .../capacity`; `CapacityGrid` shows one table per line (dates across, shifts A/B down)
+  with capacity/allocated/remaining, a utilization bar plus numeric text, an icon+text "High
+  utilization" flag at 95% and above, and allocation chips linking to the orders list filtered by
+  `external_ref`. The "compare PROPOSED recommendations" panel is **not wired in**: the
+  recommendation list routes it needs (Task 14) do not exist in the backend or in
+  `src/generated/api.ts` (confirmed: no `/recommendations` collection route, only a
+  `RecommendationOut` schema embedded in Task 12's run/analysis responses). `RecommendationCompare`
+  is built and unit-tested as a standalone presentational component (typed on its own props, not
+  the generated client) so it drops in once Task 14 adds the route; per the brief, no placeholder
+  UI or mock data is shown in the meantime, only a code comment in `PlanningBoardPage.tsx`.
+- Materials: `MaterialsPage` renders the overview table (on hand, reserved, available now, open
+  receipts, average daily consumption, coverage days rendered "Unknown" via the existing
+  `formatDecimal(null)`, reorder point, an icon+text below/above-reorder-point badge, and
+  `SourceLabel` "Calculated from records"). `LedgerDrawer` is a paginated, non-modal panel (no
+  focus trap needed) showing type/lot/signed quantity/reason/actor/correction reference.
+  `StockMovementForms` (storekeeper-only, gated by `inventory:write` in `MaterialsPage`) has
+  receipt/accept-lot/issue/correction tabs; every write carries `Idempotency-Key`, the UI only
+  updates from the server's response (no optimistic updates), and a 409 renders inline via
+  `ErrorState`. There is no "list lots" endpoint, so the accept/issue lot pickers are built from
+  distinct lots observed in that material's ledger (a real, non-fabricated source). `ReservationTable`
+  lists factory reservations (the endpoint returns bare ids, so material/order/reservation ids are
+  shown short and monospace with the full id on hover rather than invented labels) with a
+  storekeeper release action behind `ConfirmDialog`.
+- IE: line/style selectors feed `GET .../ie/{line}/{style}/analysis`; `BottleneckChart` is a
+  Recharts bar chart using the `shape` prop (not the deprecated `Cell`) to fill the bottleneck bar
+  differently and suffix its axis tick with "(bottleneck)", plus a `bottleneckSummary` text (e.g.
+  "Bottleneck: OP-04 sleeve set, 60.0 s effective, ≈ 60 units/hour") in a `<figcaption>` and an
+  `aria-label` on the `<figure>`; `SampleTable` is the data-table alternative with an
+  "Insufficient samples" icon+text marker. `ObservationForm` (ie-engineer-only) selects an
+  operator by alias code only (`OperatorAliasOut` has no name field anywhere in the contract);
+  since there is no endpoint to list historical observations, newly recorded ones appear in a
+  session-local list with an inline "mark as outlier" action (reason optional per
+  `OutlierMarkRequest`).
+- Quality: `HoldsTable` (factory-wide ACTIVE holds) and an order search feed `QualityPage`.
+  `InspectionForm` (`quality:inspect`) validates `defective_units <= inspected_units` client-side
+  (mirroring the server) with a dynamic defect-row list (catalog code, severity, count); defect
+  `operation_id` is omitted because `OperationOut` (the only order-scoped operations list) has no
+  `id` field to reference, so there is no valid id to send. It shows the server's deterministic
+  `result` (PASS/FAIL/INSUFFICIENT_SAMPLE) after submit. `DefectTrendChart` is a 30-day by-code bar
+  chart with a summary and a data-table alternative. `ReleaseReview` (`quality:release`) shows the
+  latest FINAL inspection, the policy's exact `label` string from the server
+  ("Demo policy — not a certified AQL standard", never the unrelated AI-fixture `SourceLabel`
+  wording), shipment-eligibility reasons, and disables release with an explanation when the viewer
+  is the inspector (also handled if the server still returns 403 `SELF_APPROVAL_DENIED`).
+- Fixes from the Task 20 review: `ConfirmDialog` now traps Tab/Shift+Tab inside the dialog (cycles
+  between its focusable elements) in addition to the existing focus-on-open and
+  restore-on-close/Escape; `fieldAria` now accepts a `required` flag that sets both
+  `aria-required` and the native `required` attribute, applied to every required field in
+  `OrderCreatePage` and to the new required fields added in this task.
+- Deviation from the brief: "order detail tabs to link into these workspaces" was not modified —
+  the order detail page (Task 21) does not exist yet in this codebase (only Task 20's orders list/
+  create/import screens are built; confirmed via `docs/IMPLEMENTATION_STATUS.md`'s Task 20 entry
+  and a repo search). Allocation chips and order references instead link to the orders list
+  filtered by `external_ref` (the only available order route). No placeholder order-detail page was
+  created.
+- `contracts/openapi.json` / `apps/web/src/generated/api.ts` already contained the inventory,
+  capacity, IE and quality routes (Task 12 ran `make contracts` after Task 9); re-ran
+  `scripts/heavy-job.sh make contracts` and diffed — byte-identical, nothing to commit.
+- Commands (backend untouched, so no backend tests were run):
+  ```
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npx vitest run <touched test files>"   # TDD loop
+  $ scripts/heavy-job.sh make contracts        # no diff
+  $ scripts/heavy-job.sh make contracts-check  # up to date
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run lint"        # clean
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run typecheck"   # clean
+  $ scripts/heavy-job.sh make web-test         # 19 files, 79 passed
+  $ scripts/heavy-job.sh make build            # backend import check + vite build, succeeded
+  ```
+  Full suites beyond `make web-test` (there is no other web suite) are not applicable; nothing was
+  skipped for the heat policy on the web side. Backend `make test`/`make test-integration` were not
+  run (out of scope: no backend files were changed).
+- **Limitations:** the recommendation-comparison panel is unwired pending Task 14 (see above); IE
+  observation outlier-marking only covers observations recorded in the current session (no list
+  endpoint exists for historical ones); reservation and defect rows show raw/short ids where the
+  API does not join in human-readable names; the CSV/order-detail integration point named in the
+  brief does not exist yet.
