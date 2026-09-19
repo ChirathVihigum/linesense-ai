@@ -46,6 +46,12 @@ async def test_missing_and_wrong_tokens_are_unauthenticated(
         PATH, json=payload, headers={"Authorization": "Bearer not-the-service-token"}
     )
     assert wrong.status_code == 401
+
+    # A non-ASCII token byte must be rejected, not crash the constant-time
+    # comparison (`secrets.compare_digest` refuses non-ASCII `str`).
+    non_ascii = await client.post(PATH, json=payload, headers={b"Authorization": b"Bearer \xff"})
+    assert non_ascii.status_code == 401
+    assert non_ascii.json()["error"]["code"] == "UNAUTHENTICATED"
     assert await db_session.scalar(select(func.count()).select_from(AgentTask)) == 0
 
 
@@ -222,6 +228,18 @@ async def test_deadline_may_not_exceed_the_run_deadline(
     response = await _post(client, payload, settings)
     assert response.status_code == 422
     assert response.json()["error"]["field_errors"][0]["field"] == "deadline_at"
+
+    # A naive timestamp cannot be compared with the run's timestamptz deadline,
+    # so the protocol refuses it up front instead of failing later.
+    naive = envelope_for(run, snapshot)
+    naive["deadline_at"] = run.deadline_at.replace(tzinfo=None).isoformat()
+    naive_response = await _post(client, naive, settings)
+    assert naive_response.status_code == 422
+    assert naive_response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert any(
+        error["field"].endswith("deadline_at")
+        for error in naive_response.json()["error"]["field_errors"]
+    )
 
 
 async def test_dispatch_client_submits_and_reads_back(

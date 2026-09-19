@@ -244,6 +244,7 @@ async def test_unknown_evidence_is_repaired_once_then_degrades() -> None:
     assert result.summary_source == "deterministic"
     assert result.summary == "Deterministic: M01 is short by 160 m."
     assert result.execution_metadata.degraded_reason == AgentErrorCode.INVALID_AGENT_OUTPUT.value
+    assert result.error_code is AgentErrorCode.INVALID_AGENT_OUTPUT
     assert [finding.code for finding in result.findings] == ["MATERIAL_SHORTAGE"]
     assert [action.action_id for action in result.recommended_actions] == [
         "act-full",
@@ -308,6 +309,7 @@ async def test_disabled_provider_degrades_deterministically() -> None:
     assert result.status == "DEGRADED"
     assert result.summary_source == "deterministic"
     assert result.execution_metadata.degraded_reason == "LLM_DISABLED"
+    assert result.error_code is None, "a disabled provider is configuration, not a task error"
     assert result.execution_metadata.provider == "disabled"
     assert "AI explanation unavailable" in result.warnings
 
@@ -326,6 +328,7 @@ async def test_exhausted_budget_degrades_before_the_first_call(budget: dict[str,
     assert called is False
     assert result.status == "DEGRADED"
     assert result.execution_metadata.degraded_reason == AgentErrorCode.BUDGET_EXCEEDED.value
+    assert result.error_code is AgentErrorCode.BUDGET_EXCEEDED
     assert result.execution_metadata.model_calls == 0
 
 
@@ -347,7 +350,8 @@ async def test_invalid_provider_response_degrades_without_retry() -> None:
     result = await FakeAgent().run(agent_context(llm=FixtureLLMClient(script)))
 
     assert result.status == "DEGRADED"
-    assert result.execution_metadata.degraded_reason == "LLMInvalidResponse"
+    assert result.execution_metadata.degraded_reason == "LLM_INVALID_RESPONSE"
+    assert result.error_code is None
 
 
 async def test_prompt_injection_in_tool_output_changes_nothing() -> None:

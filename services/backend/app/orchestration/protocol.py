@@ -12,7 +12,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.0"
 
@@ -83,7 +83,9 @@ class TaskEnvelope(_Strict):
     task_type: str
     idempotency_key: str = Field(min_length=1, max_length=300)
     round: int = Field(ge=0, le=1)
-    deadline_at: datetime
+    # Timezone-aware only: a naive value would raise TypeError the moment it is
+    # compared with the run's timestamptz deadline.
+    deadline_at: AwareDatetime
     input_refs: list[InputRef]
     constraints: TaskConstraints
     trace_id: str = Field(max_length=200)
