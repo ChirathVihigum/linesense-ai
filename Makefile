@@ -1,9 +1,11 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
         lint format typecheck test test-integration test-all docs-check idp worker datasets-check seed \
-        contracts
+        contracts contracts-check build web-install web-dev web-lint web-typecheck web-test web-build
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
+
+WEB_DIR := apps/web
 
 TEST_DB_URL ?= postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test
 
@@ -36,6 +38,7 @@ migration-check:
 lint:
 	cd services/backend && uv run ruff check .
 	cd services/backend && uv run ruff format --check .
+	cd $(WEB_DIR) && npm run lint
 
 format:
 	cd services/backend && uv run ruff format .
@@ -43,9 +46,11 @@ format:
 
 typecheck:
 	cd services/backend && uv run mypy app
+	cd $(WEB_DIR) && npm run typecheck
 
 test:
 	cd services/backend && uv run pytest -m "not integration" -q
+	cd $(WEB_DIR) && npm test
 
 test-integration:
 	scripts/dev-db.sh start
@@ -70,3 +75,30 @@ seed:
 
 contracts:
 	bash scripts/export-openapi.sh
+	cd $(WEB_DIR) && npm run generate:api
+
+contracts-check:
+	bash scripts/check-contracts.sh
+
+# Backend import check (the app factory builds without a database) + web production build.
+build:
+	cd services/backend && uv run python -c "from app.main import create_app; create_app()"
+	cd $(WEB_DIR) && npm run build
+
+web-install:
+	cd $(WEB_DIR) && npm ci
+
+web-dev:
+	cd $(WEB_DIR) && npm run dev
+
+web-lint:
+	cd $(WEB_DIR) && npm run lint
+
+web-typecheck:
+	cd $(WEB_DIR) && npm run typecheck
+
+web-test:
+	cd $(WEB_DIR) && npm test
+
+web-build:
+	cd $(WEB_DIR) && npm run build

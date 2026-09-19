@@ -1683,3 +1683,38 @@ updated for both-factory inventory).
   `queries.py` (overview, ledger, reservation lists), re-exported from `service.py`.
 - Tests (DB `linesense_test_c`): full integration 207 passed, unit 419 passed, `ruff`,
   `ruff format --check`, `mypy app` clean. Reverting the fixes makes 16 new tests fail.
+
+## 2026-09-20 — Task 20: web foundation, generated API client, orders screens
+
+- Built `apps/web` (Vite 8, React 19, TypeScript 6 strict, React Router 8 data router, TanStack
+  Query 5, React Hook Form + Zod 4, Tailwind CSS 4 via `@tailwindcss/vite` with CSS-first
+  tokens, Phosphor icons, self-hosted Geist fonts). Design rules in `apps/web/DESIGN.md`.
+- `src/lib/api.ts`: openapi-fetch client typed from `src/generated/api.ts` (generated from the
+  committed `contracts/openapi.json`), same-origin credentials, `X-CSRF-Token` on unsafe methods
+  (token from `/api/v1/me`, in memory only), 401 → `/login?next=`, `ApiError` from the contract
+  error body (trace id). `useIdempotencyKey` reuses one key per unchanged submission attempt.
+- Routes: `/login`, `/no-access`, `/` → `/f/<factory>/orders`, `/f/:factoryCode/orders`,
+  `orders/new`, `orders/import` (lazy-loaded), 404. Layout: skip link, factory selector,
+  user menu with roles and CSRF logout, permission-filtered sidebar collapsing below 1024 px.
+- Shared components: StateBadge (5 vocabularies, icon + text + colour), SourceLabel, DataTable,
+  Pagination, Empty/Error(trace id)/PermissionDenied/Loading(skeleton), Stale/Degraded banners,
+  ConfirmDialog, FormField, PageHeader, Tabs.
+- Orders list (debounced search, 3 state filters, due-before, server pagination, sort indicator,
+  shipment eligibility), create form (Zod mirrors `OrderCreate`, server field errors mapped,
+  idempotent retry, toast + back to list until Task 21), CSV import (≤ 1 MB .csv, validate →
+  preview/row errors → confirmed commit → summary).
+- Makefile: `web-install/dev/lint/typecheck/test/build`, `contracts` also regenerates TS,
+  `contracts-check` (`scripts/check-contracts.sh`, non-destructive), `build`; `lint`,
+  `typecheck`, `test` include web.
+- Commands (each via `scripts/heavy-job.sh`, from `apps/web`): `npx eslint . --max-warnings=0`
+  (clean), `npx tsc -b` (clean), `npx vitest run` (8 files, 46 tests passed), `npx vite build`
+  (main chunk 142 kB gzip, no warnings); backend import check OK.
+- `make contracts-check`: TS and git-diff checks pass; the fresh-export check currently fails only
+  because other agents' uncommitted backend routes are in the working tree (expected until
+  they run `make contracts` and commit). Full backend suites not run (heat policy): PENDING.
+- Limitations: `/` lands on orders until the overview screen exists (Task 22 switches
+  `DEFAULT_FACTORY_SECTION`); order create returns to the list until Task 21 adds detail; dark
+  mode and layout not yet checked in a real browser (Playwright is Task 24); `openapi-typescript`
+  7.13 declares a TypeScript 5 peer, satisfied via an npm `overrides` entry (output verified
+  reproducible from the committed contract); import tests use Node `FormData`/`File` because Vitest 5's jsdom bridge cannot
+  serialise jsdom 30 Blobs.
