@@ -49,7 +49,6 @@ from app.db.models import (
     Notification,
     Order,
     QualityHold,
-    QualityPolicyVersion,
     QualityRelease,
     Reservation,
     Style,
@@ -59,6 +58,7 @@ from app.domain import clock
 from app.domain.capacity.service import release_order_allocations
 from app.domain.inventory.service import release_order_reservations
 from app.domain.orders.lifecycle import TRANSITIONS, InvalidTransition, get_transition
+from app.domain.quality import service as quality_service
 from app.domain.quality.calc import ShipmentEligibility, ShipmentFacts, shipment_eligibility
 from app.domain.vocab import (
     ActorType,
@@ -67,15 +67,12 @@ from app.domain.vocab import (
     InspectionType,
     MaterialState,
     OrderSource,
-    PolicyStatus,
     ProductionState,
     QualityHoldStatus,
     QualityState,
     Role,
 )
 from app.jobs.queue import enqueue
-
-DEMO_POLICY_CODE = "QP-DEMO"
 
 # The job type the cancellation path enqueues (app.jobs.handlers registers the
 # handler under this same literal string; kept as a constant here too so a
@@ -196,16 +193,7 @@ async def _load_shipment_inputs(session: AsyncSession, orders: list[Order]) -> _
     organization_id = orders[0].organization_id
     order_ids = [order.id for order in orders]
 
-    policy = await session.scalar(
-        select(QualityPolicyVersion)
-        .where(
-            QualityPolicyVersion.organization_id == organization_id,
-            QualityPolicyVersion.code == DEMO_POLICY_CODE,
-            QualityPolicyVersion.status == PolicyStatus.ACTIVE.value,
-        )
-        .order_by(QualityPolicyVersion.version_no.desc())
-        .limit(1)
-    )
+    policy = await quality_service.active_policy(session, organization_id)
     policy_known = policy is not None
     required_types = (
         frozenset(cast("list[str]", policy.rules["required_inspection_types"]))
@@ -288,14 +276,13 @@ def _evaluate_shipment(order: Order, inputs: _ShipmentInputs) -> ShipmentEligibi
 
 
 async def compute_shipment(session: AsyncSession, order: Order) -> ShipmentEligibility:
-    """Build `ShipmentFacts` straight from the database and evaluate them.
+    """Shipment eligibility for one order, from the quality service's facts.
 
-    Task 9 will move this into the quality service; kept here for now
-    because orders is the only caller until inspections/holds get their own
-    write endpoints.
+    `list_orders` keeps its own batched fact loader (`_load_shipment_inputs`)
+    because a per-order call here would be an N+1 across a page of orders;
+    both paths end in `app.domain.quality.calc.shipment_eligibility`.
     """
-    inputs = await _load_shipment_inputs(session, [order])
-    return _evaluate_shipment(order, inputs)
+    return shipment_eligibility(await quality_service.shipment_facts(session, order))
 
 
 async def list_orders(

@@ -1,0 +1,33 @@
+{
+  "constraints": {
+    "max_tool_calls": 4,
+    "read_only": true
+  },
+  "deadline_at": "2026-09-17T08:32:00Z",
+  "factory_id": "3f8b1a52-0000-4000-8000-000000000006",
+  "idempotency_key": "3f8b1a52-0000-4000-8000-000000000001:rm:3f8b1a52-0000-4000-8000-000000000003:round-0",
+  "input_refs": [
+    {
+      "id": "3f8b1a52-0000-4000-8000-000000000003",
+      "type": "snapshot",
+      "version": null
+    },
+    {
+      "id": "3f8b1a52-0000-4000-8000-000000000004",
+      "type": "order",
+      "version": 3
+    }
+  ],
+  "message_id": "3f8b1a52-0000-4000-8000-000000000007",
+  "order_id": "3f8b1a52-0000-4000-8000-000000000004",
+  "organization_id": "3f8b1a52-0000-4000-8000-000000000005",
+  "parent_task_id": null,
+  "recipient": "rm",
+  "round": 0,
+  "run_id": "3f8b1a52-0000-4000-8000-000000000001",
+  "schema_version": "1.0",
+  "sender": "orchestrator",
+  "snapshot_id": "3f8b1a52-0000-4000-8000-000000000003",
+  "task_type": "assess_material_readiness",
+  "trace_id": "9d2b0f6c-1111-4000-8000-000000000000"
+}

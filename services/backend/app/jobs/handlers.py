@@ -12,6 +12,11 @@ import structlog
 from app.domain.inventory.service import recompute_material_states
 from app.jobs.reconcile import purge_expired_idempotency_keys, reconcile_in_transaction
 from app.jobs.worker import HandlerRegistry, JobContext, finish_in_transaction
+from app.orchestration.executor import (
+    AGENT_EXECUTE_JOB,
+    execute_agent_task,
+    on_agent_task_exhausted,
+)
 from app.settings import Settings
 
 logger = structlog.get_logger("app.jobs")
@@ -70,4 +75,5 @@ def build_registry(settings: Settings) -> HandlerRegistry:
     registry.register(MAINTENANCE_RECONCILE, handle_reconcile)
     registry.register(MAINTENANCE_PURGE_IDEMPOTENCY, handle_purge_idempotency)
     registry.register(MAINTENANCE_REFRESH_MATERIAL_STATES, handle_refresh_material_states)
+    registry.register(AGENT_EXECUTE_JOB, execute_agent_task, on_exhausted=on_agent_task_exhausted)
     return registry
