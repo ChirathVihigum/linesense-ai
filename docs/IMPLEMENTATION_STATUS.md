@@ -1666,3 +1666,20 @@ Success: no issues found in 86 source files
 **Files changed:** modified -- `services/backend/app/seed/generator.py`,
 `services/backend/tests/integration/test_seed.py`, `docs/evaluation/synthetic-data.md` (sizes table
 updated for both-factory inventory).
+
+## 2026-09-20 — Task 8 fix round 1 (post-review)
+
+- `release_order_reservations` / `release_order_allocations` lock balances/slots for every
+  material/slot the order has touched (ascending id), then re-read the ACTIVE rows `FOR UPDATE`,
+  so a concurrent storekeeper release or consuming issue is never applied twice (409 `CONFLICT`
+  if a row outside the locked set appears).
+- Storekeeper commands pass the order ids they locked before the balance to
+  `recompute_material_states(order_ids=...)`, which never locks orders it was not given; release,
+  issue and manual reservation also lock the order they name.
+- Overdue orders: demand is dated `min(as_of, due_date)` (was AT_RISK, now SHORTAGE).
+- `record_issue` validates availability before touching reservations; manual reservations require
+  the material on the order's BOM (422); a style without operations has no compatible line.
+- Split: `app/domain/inventory/readiness.py` (order locking + material-state recompute) and
+  `queries.py` (overview, ledger, reservation lists), re-exported from `service.py`.
+- Tests (DB `linesense_test_c`): full integration 207 passed, unit 419 passed, `ruff`,
+  `ruff format --check`, `mypy app` clean. Reverting the fixes makes 16 new tests fail.

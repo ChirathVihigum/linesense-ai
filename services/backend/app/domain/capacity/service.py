@@ -113,7 +113,10 @@ async def lock_slots(
 async def compatible_line_ids(
     session: AsyncSession, factory_id: uuid.UUID, style_id: uuid.UUID
 ) -> frozenset[uuid.UUID]:
-    """Active lines of ``factory_id`` holding every skill the style's operations need."""
+    """Active lines of ``factory_id`` holding every skill the style's operations need.
+
+    A style without operations has no defined routing, so no line is compatible.
+    """
     required = set(
         (
             await session.scalars(
@@ -121,6 +124,8 @@ async def compatible_line_ids(
             )
         ).all()
     )
+    if not required:
+        return frozenset()
     lines = (
         await session.scalars(
             select(Line.id).where(Line.factory_id == factory_id, Line.is_active.is_(True))
@@ -261,9 +266,22 @@ async def allocate(
 async def release_order_allocations(session: AsyncSession, order: Order) -> list[Allocation]:
     """Release every ACTIVE allocation of ``order`` under slot row locks.
 
-    Returns the released allocations. The caller owns auditing of the
-    command that triggered the release (e.g. the order cancellation).
+    Slots of every allocation the order has ever had are locked (ascending
+    id), then the ACTIVE allocations are re-read ``FOR UPDATE`` so a
+    concurrent release that committed first is never applied twice. An
+    ACTIVE allocation on a slot outside the locked set (created
+    concurrently) aborts with 409 ``CONFLICT`` so the caller can retry,
+    rather than locking out of order. Returns the released allocations;
+    the caller (e.g. the order cancellation) owns the audit event.
     """
+    slot_ids = (
+        await session.scalars(
+            select(Allocation.slot_id).where(Allocation.order_id == order.id).distinct()
+        )
+    ).all()
+    if not slot_ids:
+        return []
+    slots = await lock_slots(session, slot_ids)
     allocations = list(
         (
             await session.scalars(
@@ -273,12 +291,15 @@ async def release_order_allocations(session: AsyncSession, order: Order) -> list
                     Allocation.status == AllocationStatus.ACTIVE.value,
                 )
                 .order_by(Allocation.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).all()
     )
-    if not allocations:
-        return []
-    slots = await lock_slots(session, (allocation.slot_id for allocation in allocations))
+    if any(allocation.slot_id not in slots for allocation in allocations):
+        raise AppError(
+            409, "CONFLICT", "The order's allocations changed concurrently; please retry."
+        )
     for allocation in allocations:
         slot = slots[allocation.slot_id]
         slot.allocated_standard_minutes -= allocation.standard_minutes

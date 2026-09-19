@@ -768,3 +768,92 @@ async def test_random_command_sequence_keeps_ledger_equal_to_balance(
 
     assert successes >= 15
     assert conflicts >= 1
+
+
+async def test_overdue_order_short_on_material_is_shortage(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    ktn = identity.factories["KTN"]
+    overdue = utcnow().date() - timedelta(days=10)
+    material, order = await make_material_order(
+        db_session, identity.organization, ktn, quantity=100, due_date=overdue
+    )
+    # A receipt expected after the (past) due date must not rescue the order.
+    db_session.add(
+        ExpectedReceipt(
+            organization_id=identity.organization.id,
+            factory_id=ktn.id,
+            material_id=material.id,
+            quantity=D(500),
+            expected_date=utcnow().date() + timedelta(days=5),
+            supplier_ref="SUP-LATE",
+            status="OPEN",
+        )
+    )
+    await db_session.commit()
+    storekeeper = await login_as(client, session_factory, "storekeeper@demo.test")
+    await _receive(storekeeper, ktn.id, material.id, "40", "LOT-OD1")
+    async with session_factory() as check:
+        refreshed = await check.get(Order, order.id)
+    assert refreshed is not None and refreshed.material_state == "SHORTAGE"
+
+
+async def test_issue_from_quarantined_lot_conflicts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    ktn = identity.factories["KTN"]
+    material = await make_material(db_session, organization=identity.organization)
+    await db_session.commit()
+    storekeeper = await login_as(client, session_factory, "storekeeper@demo.test")
+    await _receive(storekeeper, ktn.id, material.id, "50", "LOT-OK1")
+    quarantined = await storekeeper.post(
+        f"/api/v1/factories/{ktn.id}/stock/receipts",
+        json={
+            "material_id": str(material.id),
+            "lot_code": "LOT-QI1",
+            "quantity": "20",
+            "accept": False,
+        },
+        headers=_key(),
+    )
+    assert quarantined.status_code == 201
+    issue = await storekeeper.post(
+        f"/api/v1/factories/{ktn.id}/stock/issues",
+        json={
+            "material_id": str(material.id),
+            "lot_id": quarantined.json()["lot"]["id"],
+            "quantity": "5",
+        },
+        headers=_key(),
+    )
+    assert issue.status_code == 409
+    assert issue.json()["error"]["code"] == "CONFLICT"
+    balance = await _balance(session_factory, ktn.id, material.id)
+    assert balance.on_hand_accepted == D(50)
+
+
+async def test_reservation_requires_material_on_order_bom(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    ktn = identity.factories["KTN"]
+    _, order = await make_material_order(db_session, identity.organization, ktn)
+    other = await make_material(db_session, organization=identity.organization)
+    await db_session.commit()
+    storekeeper = await login_as(client, session_factory, "storekeeper@demo.test")
+    await _receive(storekeeper, ktn.id, other.id, "50", "LOT-NB1")
+    response = await storekeeper.post(
+        f"/api/v1/factories/{ktn.id}/reservations",
+        json={"material_id": str(other.id), "order_id": str(order.id), "quantity": "5"},
+        headers=_key(),
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["field_errors"][0]["field"] == "material_id"
