@@ -70,8 +70,23 @@ required to reproduce).
 | Skill records / operation staffing / cycle observations / line measurements | ~300 / ~144 / ~720 / ~108 |
 | Quality policy versions / inspections / defects / holds / releases | 1 / ~40 / ~32 / 1 / ~18 |
 
-Exact counts vary slightly run-to-run **only** based on `rng_seed` (they
-are always identical for a fixed seed); a live `make seed` run prints the
+Every business fact — customer/style/material/order counts, each order's
+`external_ref`/`quantity`/`due_date`/production/material/quality state, and
+every generated timestamp — is exactly reproducible for a fixed `rng_seed`
+and `anchor_date` (`tests/integration/test_seed.py
+::test_seed_is_deterministic_across_fresh_databases` proves this with a
+digest across five tables). The `allocations`/`capacity_slots` row-level
+counts in the table above can vary by a handful of rows between otherwise
+identical runs: `line_capacity_slots`/`lines` primary keys are genuine
+`uuid.uuid4()` values (contracts §1: "Identifiers are UUIDv4 generated in
+Python", never seeded), and `app.domain.planning.calc.plan_earliest_slots`
+breaks ties between same-date-same-shift slots on different lines by
+`str(line_id)` — so when two lines are otherwise equally eligible, *which*
+one a given order's demand lands on (and therefore how many separate
+allocation rows a given order's minutes get split across) is not
+reproducible. This never affects any order's own stored facts (it still
+gets *an* allocation, on *a* compatible line, satisfying its required
+minutes) — only the low-level row count. A live `make seed` run prints the
 authoritative `SeedSummary.counts` for the dataset it just built or found.
 
 ## The `PO-DEMO-001` demo scenario
