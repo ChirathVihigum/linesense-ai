@@ -10,6 +10,7 @@ const VOCABULARIES: Record<StateVocabulary, string[]> = {
   quality: ['NOT_INSPECTED', 'PENDING', 'HOLD', 'RELEASED'],
   analysis: ['QUEUED', 'RUNNING', 'AWAITING_REVIEW', 'COMPLETED', 'DEGRADED', 'FAILED', 'CANCELLED'],
   recommendation: ['DRAFT', 'PROPOSED', 'APPROVED', 'REJECTED', 'EXPIRED', 'APPLIED', 'SUPERSEDED'],
+  reservation: ['ACTIVE', 'RELEASED', 'CONSUMED'],
 }
 
 describe('StateBadge', () => {

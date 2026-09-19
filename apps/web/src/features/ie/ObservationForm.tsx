@@ -43,24 +43,37 @@ function useOperatorAliases(factoryId: string) {
   })
 }
 
-function OutlierAction({ observation }: { observation: Observation }) {
+function OutlierAction({
+  observation,
+  onMarked,
+}: {
+  observation: Observation
+  onMarked: (updated: Observation) => void
+}) {
   const [reason, setReason] = useState('')
   const [open, setOpen] = useState(false)
   const idempotency = useIdempotencyKey()
   const queryClient = useQueryClient()
   const factory = useFactory()
 
+  const trimmedReason = reason.trim()
+  const reasonMissing = trimmedReason === ''
+  const reasonErrorId = `outlier-reason-error-${observation.id}`
+
   const mutation = useMutation({
-    mutationFn: ({ key }: { key: string }) =>
+    mutationFn: ({ key, reason: reasonToSend }: { key: string; reason: string }) =>
       unwrap(
         api.POST('/api/v1/ie/observations/{observation_id}/outlier', {
           params: { path: { observation_id: observation.id }, header: { 'Idempotency-Key': key } },
-          body: { reason: reason || null },
+          body: { reason: reasonToSend },
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (updated) => {
       idempotency.reset()
       setOpen(false)
+      // The server's response is the source of truth for `is_outlier`; the parent's
+      // session-local list is updated from it (no optimistic update).
+      onMarked(updated)
       await queryClient.invalidateQueries({ queryKey: ['ie-analysis', factory.id] })
     },
   })
@@ -98,6 +111,10 @@ function OutlierAction({ observation }: { observation: Observation }) {
         className="input h-8 w-48"
         placeholder="Reason"
         value={reason}
+        required
+        aria-required="true"
+        aria-invalid={reasonMissing || undefined}
+        aria-describedby={reasonMissing ? reasonErrorId : undefined}
         onChange={(event) => {
           setReason(event.target.value)
         }}
@@ -105,13 +122,22 @@ function OutlierAction({ observation }: { observation: Observation }) {
       <button
         type="button"
         className="btn-secondary h-8"
-        disabled={mutation.isPending}
+        disabled={mutation.isPending || reasonMissing}
         onClick={() => {
-          mutation.mutate({ key: idempotency.keyFor({ observation_id: observation.id, reason }) })
+          if (reasonMissing) return
+          mutation.mutate({
+            key: idempotency.keyFor({ observation_id: observation.id, reason: trimmedReason }),
+            reason: trimmedReason,
+          })
         }}
       >
         {mutation.isPending ? 'Marking…' : 'Confirm'}
       </button>
+      {reasonMissing && (
+        <p id={reasonErrorId} className="w-full text-xs font-medium text-bad-fg">
+          Enter a reason for marking this observation an outlier.
+        </p>
+      )}
       {mutation.isError && <ErrorState title="Could not mark as outlier" error={mutation.error} />}
     </div>
   )
@@ -252,7 +278,12 @@ export function ObservationForm({
                 {formatDecimal(observation.observed_seconds, 2)} s at{' '}
                 {formatDateTime(observation.observed_at, 'UTC')}
               </span>
-              <OutlierAction observation={observation} />
+              <OutlierAction
+                observation={observation}
+                onMarked={(updated) => {
+                  setRecorded((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+                }}
+              />
             </li>
           ))}
         </ul>

@@ -112,4 +112,83 @@ describe('ObservationForm (via IEPage)', () => {
     expect(await screen.findByText('Mark as outlier')).toBeInTheDocument()
     expect(idempotencyKey).toMatch(/^[0-9a-f-]{36}$/)
   })
+
+  it('requires a non-blank reason before an observation can be marked an outlier', async () => {
+    mockIeRoutes()
+    let outlierBody: unknown = null
+    server.use(
+      http.post('/api/v1/factories/:factoryId/ie/observations', () =>
+        HttpResponse.json(
+          {
+            id: 'obs-1',
+            line_id: LINE_ID,
+            style_id: STYLE_ID,
+            operation_id: 'op-1',
+            operator_alias_id: 'alias-1',
+            observed_seconds: '61.00',
+            observed_at: '2026-09-20T10:00:00Z',
+            is_outlier: false,
+            outlier_approved_by: null,
+            recorded_by: null,
+            created_at: '2026-09-20T10:00:00Z',
+          },
+          { status: 201 },
+        ),
+      ),
+      http.post('/api/v1/ie/observations/:observationId/outlier', async ({ request }) => {
+        outlierBody = await request.json()
+        return HttpResponse.json(
+          {
+            id: 'obs-1',
+            line_id: LINE_ID,
+            style_id: STYLE_ID,
+            operation_id: 'op-1',
+            operator_alias_id: 'alias-1',
+            observed_seconds: '61.00',
+            observed_at: '2026-09-20T10:00:00Z',
+            is_outlier: true,
+            outlier_approved_by: 'user-1',
+            recorded_by: null,
+            created_at: '2026-09-20T10:00:00Z',
+          },
+          { status: 200 },
+        )
+      }),
+    )
+    const { user } = renderRoute(`/f/F1/ie`)
+    const lineSelect = await screen.findByLabelText('Line')
+    await screen.findByRole('option', { name: 'Line 1 (L1)' })
+    await user.selectOptions(lineSelect, LINE_ID)
+    await screen.findByRole('option', { name: 'Crew tee (STY-1)' })
+    await user.selectOptions(screen.getByLabelText('Style'), STYLE_ID)
+
+    await user.selectOptions(await screen.findByLabelText(/^Operation/), 'op-1')
+    await user.selectOptions(screen.getByLabelText(/Operator alias/), 'OP-A1')
+    await user.type(screen.getByLabelText(/Observed cycle time/), '61')
+    await user.type(screen.getByLabelText(/Observed at/), '2026-09-20T10:00')
+    await user.click(screen.getByRole('button', { name: 'Record observation' }))
+
+    await user.click(await screen.findByRole('button', { name: 'Mark as outlier' }))
+    const reasonInput = screen.getByLabelText('Reason for marking this observation an outlier')
+    const confirmButton = screen.getByRole('button', { name: 'Confirm' })
+
+    // Blank: blocked, with an inline validation message.
+    expect(confirmButton).toBeDisabled()
+    expect(screen.getByText('Enter a reason for marking this observation an outlier.')).toBeInTheDocument()
+
+    // Whitespace only: still blocked.
+    await user.type(reasonInput, '   ')
+    expect(confirmButton).toBeDisabled()
+    expect(screen.getByText('Enter a reason for marking this observation an outlier.')).toBeInTheDocument()
+
+    // A real reason (with surrounding whitespace) enables submit and is trimmed before sending.
+    await user.type(reasonInput, ' Sewing machine jam ')
+    expect(confirmButton).toBeEnabled()
+    expect(screen.queryByText('Enter a reason for marking this observation an outlier.')).not.toBeInTheDocument()
+
+    await user.click(confirmButton)
+
+    expect(await screen.findByText('Marked as outlier')).toBeInTheDocument()
+    expect(outlierBody).toEqual({ reason: 'Sewing machine jam' })
+  })
 })
