@@ -1,0 +1,146 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/*
+ * LineSense design tokens (see apps/web/DESIGN.md). Tailwind CSS v4 is
+ * configured CSS-first: there is no tailwind.config.js; the @tailwindcss/vite
+ * plugin compiles this file. Semantic colours are CSS variables swapped for dark
+ * mode, and exposed to Tailwind as utilities (bg-surface, text-fg, border-line...).
+ */
+:root {
+  --canvas: #f4f4f5;
+  --surface: #fcfcfc;
+  --surface-sunken: #f0f0f2;
+  --line: #e4e4e7;
+  --line-strong: #71717a;
+  --fg: #18181b;
+  --fg-muted: #52525b;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-fg: #fafafa;
+  --accent-soft: #eaf0ff;
+  --focus: #2563eb;
+
+  --ok-bg: #ecfdf5;
+  --ok-fg: #065f46;
+  --ok-line: #6ee7b7;
+  --warn-bg: #fffbeb;
+  --warn-fg: #92400e;
+  --warn-line: #f5c451;
+  --bad-bg: #fef2f2;
+  --bad-fg: #991b1b;
+  --bad-line: #fca5a5;
+  --info-bg: #eff6ff;
+  --info-fg: #1e40af;
+  --info-line: #93c5fd;
+  --neutral-bg: #f4f4f5;
+  --neutral-fg: #3f3f46;
+  --neutral-line: #d4d4d8;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --canvas: #0c0c0e;
+    --surface: #151518;
+    --surface-sunken: #1c1c20;
+    --line: #2a2a30;
+    --line-strong: #8a8a93;
+    --fg: #f4f4f5;
+    --fg-muted: #a1a1aa;
+    --accent: #6ea0ff;
+    --accent-hover: #93b8ff;
+    --accent-fg: #0c0c0e;
+    --accent-soft: #172243;
+    --focus: #6ea0ff;
+
+    --ok-bg: #062a20;
+    --ok-fg: #7ee2b8;
+    --ok-line: #0f6b4f;
+    --warn-bg: #2b1d06;
+    --warn-fg: #fcd34d;
+    --warn-line: #8a5a0c;
+    --bad-bg: #2d0f0f;
+    --bad-fg: #fca5a5;
+    --bad-line: #8f2424;
+    --info-bg: #0f1c3a;
+    --info-fg: #a8c6ff;
+    --info-line: #2c4a94;
+    --neutral-bg: #1c1c20;
+    --neutral-fg: #d4d4d8;
+    --neutral-line: #3f3f46;
+
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-focus: var(--focus);
+
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-fg: var(--ok-fg);
+  --color-ok-line: var(--ok-line);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-fg: var(--warn-fg);
+  --color-warn-line: var(--warn-line);
+  --color-bad-bg: var(--bad-bg);
+  --color-bad-fg: var(--bad-fg);
+  --color-bad-line: var(--bad-line);
+  --color-info-bg: var(--info-bg);
+  --color-info-fg: var(--info-fg);
+  --color-info-line: var(--info-line);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-neutral-fg: var(--neutral-fg);
+  --color-neutral-line: var(--neutral-line);
+}
+
+@layer base {
+  body {
+    @apply bg-canvas font-sans text-sm text-fg antialiased;
+  }
+  /* Visible keyboard focus on every interactive element. */
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex h-9 items-center gap-2 rounded-md bg-accent px-4 text-sm font-medium whitespace-nowrap text-accent-fg transition-transform hover:bg-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none;
+  }
+  .btn-secondary {
+    @apply inline-flex h-9 items-center gap-2 rounded-md border border-line-strong/60 bg-surface px-3 text-sm font-medium whitespace-nowrap text-fg transition-transform hover:bg-surface-sunken active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none;
+  }
+  .input {
+    @apply h-9 w-full rounded-md border border-line-strong bg-surface px-3 text-sm text-fg aria-invalid:border-bad-fg;
+  }
+  .panel {
+    @apply rounded-md border border-line bg-surface;
+  }
+  .link {
+    @apply font-medium text-accent underline-offset-2 hover:underline;
+  }
+}
+
+@layer components {
+  .skeleton {
+    @apply animate-pulse rounded bg-surface-sunken motion-reduce:animate-none;
+  }
+}
