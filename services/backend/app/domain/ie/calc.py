@@ -89,10 +89,22 @@ def line_balance(effective_cycles: Sequence[Decimal]) -> LineBalanceResult:
 def sam_capacity_units_per_hour(
     operators: int, sam_minutes_per_unit: Decimal, planned_efficiency: Decimal
 ) -> Decimal:
-    """`operators * 60 * planned_efficiency / sam_minutes_per_unit`."""
+    """`operators * 60 * planned_efficiency / sam_minutes_per_unit`.
+
+    Raises `ValueError` when `sam_minutes_per_unit` is not positive (a style
+    with no defined operations, or corrupt data) rather than propagating a
+    raw `DivisionByZero`/negative-result `Decimal` error.
+    """
+    if sam_minutes_per_unit <= 0:
+        raise ValueError("sam_minutes_per_unit must be greater than zero")
     return Decimal(operators) * Decimal(60) * planned_efficiency / sam_minutes_per_unit
 
 
 def observed_units_per_hour(units_output: int, hours: Decimal) -> Decimal:
-    """`units_output / hours`."""
+    """`units_output / hours`.
+
+    Raises `ValueError` when `hours` is not positive.
+    """
+    if hours <= 0:
+        raise ValueError("hours must be greater than zero")
     return Decimal(units_output) / hours

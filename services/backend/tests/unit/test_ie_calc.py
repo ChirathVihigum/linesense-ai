@@ -47,3 +47,15 @@ def test_sam_capacity_units_per_hour() -> None:
 
 def test_observed_units_per_hour() -> None:
     assert observed_units_per_hour(120, D("4")) == D("30")
+
+
+@pytest.mark.parametrize("sam_minutes_per_unit", [D("0"), D("-1")])
+def test_sam_capacity_units_per_hour_rejects_non_positive_sam(sam_minutes_per_unit: D) -> None:
+    with pytest.raises(ValueError, match="sam_minutes_per_unit"):
+        sam_capacity_units_per_hour(5, sam_minutes_per_unit, D("0.75"))
+
+
+@pytest.mark.parametrize("hours", [D("0"), D("-2")])
+def test_observed_units_per_hour_rejects_non_positive_hours(hours: D) -> None:
+    with pytest.raises(ValueError, match="hours"):
+        observed_units_per_hour(120, hours)
