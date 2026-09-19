@@ -16,18 +16,24 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_principal, require_idempotency_key
 from app.api.errors import AppError
-from app.api.orders import audit_denial_from_error, idempotent_finish, idempotent_start
+from app.api.orders import (
+    audit_denial_from_error,
+    idempotent_finish,
+    idempotent_start,
+    request_trace_id,
+)
 from app.audit.service import record_audit
 from app.auth.policy import Principal
 from app.auth.scope import load_scoped
 from app.db.models import Factory, ImportBatch, ImportRowError, Order
 from app.db.session import get_db_session
-from app.domain.clock import today_in, utcnow
-from app.domain.orders.import_csv import TEMPLATE_CSV, revalidate_rows, validate_csv
+from app.domain import clock
+from app.domain.orders.import_csv import MAX_FILE_BYTES, TEMPLATE_CSV, revalidate_rows, validate_csv
 from app.domain.vocab import (
     ActorType,
     AuditOutcome,
@@ -99,7 +105,7 @@ async def _already_committed(
 
 
 @router.get("/imports/templates/orders.csv", response_class=PlainTextResponse)
-async def orders_csv_template() -> PlainTextResponse:
+async def orders_csv_template(principal: Principal = Depends(get_principal)) -> PlainTextResponse:
     return PlainTextResponse(content=TEMPLATE_CSV, media_type="text/csv")
 
 
@@ -127,7 +133,12 @@ async def upload_orders_csv(
             target_id=str(factory_id),
         )
         raise
-    raw_bytes = await file.read()
+
+    # Read at most one byte past the limit rather than the whole upload, so
+    # an oversized file is never fully buffered into memory.
+    raw_bytes = await file.read(MAX_FILE_BYTES + 1)
+    if len(raw_bytes) > MAX_FILE_BYTES:
+        raise AppError(413, "PAYLOAD_TOO_LARGE", "File exceeds the 1 MB limit.")
     file_sha256 = hashlib.sha256(raw_bytes).hexdigest()
 
     early = await idempotent_start(
@@ -149,7 +160,7 @@ async def upload_orders_csv(
         session,
         raw_bytes,
         organization_id=principal.organization_id,
-        today=today_in(factory.timezone),
+        today=clock.today_in(factory.timezone),
     )
     status_value = (
         ImportBatchStatus.VALIDATED.value if result.ok else ImportBatchStatus.REJECTED.value
@@ -191,6 +202,7 @@ async def upload_orders_csv(
         target_type="import_batch",
         target_id=str(batch.id),
         outcome=AuditOutcome.SUCCESS.value,
+        trace_id=request_trace_id(request),
         after={
             "status": status_value,
             "row_count": result.row_count,
@@ -254,6 +266,18 @@ async def commit_import(
     if early is not None:
         return early
 
+    # Lock the batch row so two concurrent commits of the *same* batch
+    # serialize: the loser waits here, then sees status == COMMITTED below
+    # and gets a clean 409 instead of racing on the orders it would insert.
+    batch = (
+        await session.scalars(
+            select(ImportBatch)
+            .where(ImportBatch.id == batch.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).one()
+
     if batch.status != ImportBatchStatus.VALIDATED.value:
         raise AppError(409, "CONFLICT", f"Import batch is {batch.status}, not VALIDATED.")
     if await _already_committed(
@@ -271,7 +295,7 @@ async def commit_import(
         session,
         stored_rows,
         organization_id=principal.organization_id,
-        today=today_in(factory.timezone),
+        today=clock.today_in(factory.timezone),
     )
     if not result.ok:
         raise AppError(
@@ -284,7 +308,6 @@ async def commit_import(
             ],
         )
 
-    created = 0
     for row in result.valid_rows:
         session.add(
             Order(
@@ -304,12 +327,22 @@ async def commit_import(
                 created_by=principal.user_id,
             )
         )
-        created += 1
-    await session.flush()
-
+    created = len(result.valid_rows)
     batch.status = ImportBatchStatus.COMMITTED.value
-    batch.committed_at = utcnow()
-    await session.flush()
+    batch.committed_at = clock.utcnow()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # A concurrent commit (of a *different* batch of the same file, or a
+        # concurrent order create) slipped in between `revalidate_rows` and
+        # this flush; the unique constraints (external_ref, and the
+        # committed-file-hash partial index) are the actual race-free guard.
+        raise AppError(
+            409,
+            "CONFLICT",
+            "One or more orders could not be created; a conflicting order or import was "
+            "committed concurrently. No orders were created.",
+        ) from exc
 
     await record_audit(
         session,
@@ -321,6 +354,7 @@ async def commit_import(
         target_type="import_batch",
         target_id=str(batch.id),
         outcome=AuditOutcome.SUCCESS.value,
+        trace_id=request_trace_id(request),
         after={"status": batch.status, "orders_created": created},
     )
 

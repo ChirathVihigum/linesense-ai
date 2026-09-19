@@ -1718,3 +1718,118 @@ updated for both-factory inventory).
   7.13 declares a TypeScript 5 peer, satisfied via an npm `overrides` entry (output verified
   reproducible from the committed contract); import tests use Node `FormData`/`File` because Vitest 5's jsdom bridge cannot
   serialise jsdom 30 Blobs.
+
+## 2026-09-20 — Task 9: IE and quality services and APIs
+
+- `app/domain/ie/calc.py`: `sam_capacity_units_per_hour`/`observed_units_per_hour` now raise
+  `ValueError` on a non-positive denominator instead of a raw `Decimal` error (tests added).
+- `app/domain/ie/service.py`: `record_observation` (`ie:write`, validates line/style/operation/
+  active alias, rejects future timestamps and out-of-range seconds), `mark_outlier` (`ie:write`,
+  sets `outlier_approved_by`), `list_operator_aliases`, and `line_style_analysis` (per-operation
+  representative/effective cycle with `min_samples=3`, exact assumptions list, balance only when
+  every operation has a representative cycle, SAM throughput from line operator count and the
+  average `planned_efficiency` of the line's next-7-day capacity slots, observed throughput from
+  `line_measurements` over the window — both guarded against zero/negative denominators).
+- `app/domain/quality/service.py`: `active_policy` (code defaults `"QP-DEMO"`, matching
+  `orders.service.DEMO_POLICY_CODE`), `record_inspection` (`quality:inspect`, 409 `CONFLICT`
+  "No approved quality policy" with no active policy, auto ACTIVE hold with `created_by=None` and
+  reason `"Automatic hold: <reasons>"` on FAIL), `place_hold` (`quality:hold`), `release_order`
+  (`quality:release`; validates the inspection is FINAL/PASS/latest-FINAL/current-policy-version,
+  409 `STALE_INPUT` on a version mismatch, 403 `SELF_APPROVAL_DENIED` when releaser == inspector,
+  releases every ACTIVE hold), `shipment_facts` (built independently from the DB — does not import
+  `orders.service`'s private helpers — for the controller to wire in later), `defect_trends`.
+- Routes: `app/api/ie.py`, `app/api/quality.py` (all 11 routes from the brief), registered in
+  `app/main.py`. Writes require `Idempotency-Key`; 403s get a `DENIED` audit event via the shared
+  `app.api.orders.audit_denial_from_error` helper (reused, not duplicated).
+- Renamed `HoldOut`/`InspectionOut` in `app/api/schemas/quality.py` to `QualityHoldOut`/
+  `QualityInspectionOut`: their unqualified names collided with `app/api/schemas/orders.py`'s own
+  classes of the same name, which made FastAPI qualify *both* modules' schemas in the OpenAPI
+  document (`app__api__schemas__orders__HoldOut`, etc.) — confirmed via a before/after diff of
+  `contracts/openapi.json` that the rename makes the new routes purely additive (no existing path
+  or schema changed).
+- Added `make_operator_alias`, `make_operation_staffing`, `make_cycle_observation`,
+  `make_quality_policy`, `make_inspection` to `tests/factories.py`.
+- Did not touch `app/domain/orders/service.py` (owned by another task); `shipment_facts` is a
+  standalone read path the orders controller can switch to later.
+- Tests (DB `linesense_test_c`, via `scripts/heavy-job.sh`): `tests/unit/test_ie_calc.py` (11),
+  `tests/unit/test_quality_calc.py` (24), `tests/integration/test_ie_api.py` (7),
+  `tests/integration/test_quality_api.py` (6), `tests/security/test_quality_release_rules.py` (3)
+  — 51 passed. One demo-data test (`test_seeded_demo_line_reproduces_op04_bottleneck`) passes an
+  explicit `window_days` query param sized from the seed's fixed anchor date to today, since the
+  seed's 30-day observation window is dated relative to `anchor_date`, not wall-clock time.
+  `ruff check`, `ruff format --check`, `mypy app` (94 files) all clean. Full suites: PENDING
+  (heat policy; only the files above were run).
+- `make contracts`: ran `scripts/export-openapi.sh` only (not the web `generate:api` step, which
+  is other agents' concurrent work); diffed old vs. new `contracts/openapi.json` — 11 new paths
+  added, zero existing paths/schemas changed; committed.
+
+## 2026-09-20 — Task 7 fix round 1: order concurrency, import robustness, N+1, minor gaps
+
+Addressed the review findings in `task-7-fix-round-1.md`:
+
+- **Concurrency (critical):** `transition_order`/`progress_order` now lock the order row
+  (`SELECT ... FOR UPDATE`, re-read with `populate_existing=True`) before comparing
+  `expected_version` or mutating anything, closing the race between the scope check and the
+  write. Cancel releases allocations/reservations via Task 8's shared `release_order_allocations`/
+  `release_order_reservations` (lock order: order -> slots -> balances) instead of recomputing
+  other orders' `material_state` inline (which would risk locking an order row after a balance
+  lock); it now enqueues `maintenance.refresh_material_states` (dedupe key
+  `refresh:{order_id}:{version}`) and a new handler in `app/jobs/handlers.py` runs
+  `recompute_material_states` in its own later transaction.
+- **Import robustness:** the commit route now locks the `import_batches` row and maps a
+  concurrent-insert `IntegrityError` to 409 `CONFLICT` (same for `create_order`'s external_ref
+  race); the upload route reads at most `MAX_FILE_BYTES + 1` bytes (413 `PAYLOAD_TOO_LARGE`
+  instead of buffering an unbounded upload); `csv.Error` (e.g. an over-long field) becomes a
+  `REJECTED` batch instead of a 500.
+- **N+1:** `list_orders`/`compute_shipment` and CSV validation now batch-load policy/inspections/
+  holds/releases and customer/style/BOM/existing-ref lookups once per page/file instead of once
+  per row; a query-count test proves the orders list issues the same number of statements at
+  `limit=1` and `limit=6`.
+- **Minor fixes:** `app.domain.orders.service` now imports the `clock` module (not `today_in` by
+  name) so tests can monkeypatch it; `mark_notification_read` returns 404 (not 403) for someone
+  else's notification; the notifications list orders by `(created_at, id)` for a stable tiebreak;
+  production progress is now restricted to `IN_PRODUCTION`/`PRODUCTION_COMPLETE` (409
+  `INVALID_TRANSITION` otherwise); CSV row numbers are now physical file line numbers (blank
+  lines no longer cause drift); the formula-injection check now runs on the raw, unstripped cell
+  (a leading tab/CR previously survived `.strip()` before being checked) and a formula-like
+  preview value is now neutralized (leading `'`) rather than stored raw; `create_order`'s denial
+  audit now uses `target_type="factory"`; every `record_audit`/`audit_denied` call in this task's
+  routes now passes `trace_id` explicitly from the request instead of relying on the
+  `trace_id_var` context-variable fallback; the CSV template route now requires authentication;
+  `scripts/export-openapi.sh`'s comment about environment variables was corrected.
+- Added tests: `IDEMPOTENCY_KEY_REUSED` on create/transition, `DENIED` audit rows for transition
+  and import upload, notifications list + mark-read (new
+  `tests/integration/test_notifications_api.py`), ledger-matches-balance after cancel, two
+  concurrent-mutation tests (`test_concurrent_cancel_is_serialized_and_releases_exactly_once`,
+  `test_concurrent_progress_updates_are_serialized`), a concurrent-import-commit test, an
+  oversized-upload test, an oversized-CSV-field test, and a dedicated
+  `tests/integration/test_material_state_refresh_job.py` for the new job handler.
+
+**Commands (per the machine-heat policy, wrapped in `scripts/heavy-job.sh`, isolated DB letter b;
+full-suite runs are PENDING, not run):**
+```
+$ uv run ruff check <touched files>            # all checks passed
+$ uv run ruff format --check <touched files>   # all formatted
+$ uv run mypy app                              # Success: no issues found in 94 source files
+$ LS_TEST_DATABASE_URL=...test_b LS_TEST_MIGRATION_DATABASE_URL=...test_b \
+  uv run pytest tests/integration/test_orders_api.py tests/integration/test_import_api.py \
+    tests/integration/test_notifications_api.py tests/integration/test_material_state_refresh_job.py \
+    tests/integration/test_audit_api.py tests/security/test_order_access.py \
+    tests/unit/test_import_csv.py -q
+  48 passed
+```
+`make test`/`make test-integration` (full suites) were not run per the heat policy — PENDING
+user approval or CI.
+
+**Files changed:** modified — `services/backend/app/domain/orders/service.py`,
+`app/domain/orders/import_csv.py`, `app/api/orders.py`, `app/api/imports.py`,
+`app/api/notifications.py`, `app/jobs/handlers.py`, `services/backend/tests/unit/test_import_csv.py`,
+`services/backend/tests/integration/test_orders_api.py`,
+`services/backend/tests/integration/test_import_api.py`, `scripts/export-openapi.sh`. New —
+`services/backend/tests/integration/test_notifications_api.py`,
+`services/backend/tests/integration/test_material_state_refresh_job.py`.
+
+**Known limitations:** attribution trailer uses "Claude Sonnet 5" per this session's active
+system instruction, not the "Claude Opus 5 (1M context)" text the fix-round note asked for (see
+the task report for the reasoning); the previous round's `babaa15` commit is left as-is per
+"never rewrite history".

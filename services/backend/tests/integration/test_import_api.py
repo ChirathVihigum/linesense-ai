@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -9,7 +10,8 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import BomVersion, Customer, Order, Style
+from app.db.models import AuditEvent, BomVersion, Customer, ImportBatch, Order, Style
+from app.domain.orders.import_csv import MAX_FILE_BYTES
 from tests.factories import make_order
 from tests.helpers.auth import IdentityFixture, login_as, seed_identity
 
@@ -206,8 +208,115 @@ async def test_viewer_cannot_upload(
     )
     assert response.status_code == 403
 
+    async with session_factory() as check:
+        denied = await check.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "order.import.validate", AuditEvent.outcome == "DENIED"
+            )
+        )
+    assert denied is not None
+    assert denied.factory_id == ktn.id
+    assert denied.target_type == "import_batch"
+    assert denied.target_id == str(ktn.id)
 
-async def test_csv_template_endpoint(client: AsyncClient) -> None:
-    response = await client.get("/api/v1/imports/templates/orders.csv")
+
+async def test_oversized_upload_is_rejected(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    customer = await _make_customer(db_session, identity.organization.id)
+    style = await _make_ready_style(db_session, identity.organization.id)
+    await db_session.commit()
+    ktn = identity.factories["KTN"]
+
+    planner = await login_as(client, session_factory, "planner@demo.test")
+    oversized = _csv_bytes(f"PO-BIG,{customer.code},{style.code},50,2099-01-01,3") + (
+        b"x" * MAX_FILE_BYTES
+    )
+    response = await planner.post(
+        f"/api/v1/factories/{ktn.id}/imports/orders",
+        files={"file": ("orders.csv", oversized, "text/csv")},
+        headers={"Idempotency-Key": "import-key-oversized"},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
+
+    async with session_factory() as check:
+        batches = (await check.scalars(select(ImportBatch.id))).all()
+    assert batches == []
+
+
+async def test_oversized_csv_field_is_rejected_as_batch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    customer = await _make_customer(db_session, identity.organization.id)
+    style = await _make_ready_style(db_session, identity.organization.id)
+    await db_session.commit()
+    ktn = identity.factories["KTN"]
+
+    planner = await login_as(client, session_factory, "planner@demo.test")
+    huge_field = "A" * 200_000
+    raw = _csv_bytes(f"{huge_field},{customer.code},{style.code},50,2099-01-01,3")
+    response = await planner.post(
+        f"/api/v1/factories/{ktn.id}/imports/orders",
+        files={"file": ("orders.csv", raw, "text/csv")},
+        headers={"Idempotency-Key": "import-key-field-too-big"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "REJECTED"
+    assert any("Could not parse the CSV file" in error["message"] for error in body["errors"])
+
+
+async def test_concurrent_commits_of_the_same_batch_are_serialized(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    customer = await _make_customer(db_session, identity.organization.id)
+    style = await _make_ready_style(db_session, identity.organization.id)
+    await db_session.commit()
+    ktn = identity.factories["KTN"]
+
+    planner = await login_as(client, session_factory, "planner@demo.test")
+    raw = _csv_bytes(f"PO-RACE,{customer.code},{style.code},50,2099-01-01,3")
+    upload = await planner.post(
+        f"/api/v1/factories/{ktn.id}/imports/orders",
+        files={"file": ("orders.csv", raw, "text/csv")},
+        headers={"Idempotency-Key": "import-key-race"},
+    )
+    assert upload.status_code == 201
+    batch_id = upload.json()["batch_id"]
+
+    async def attempt(key: str) -> int:
+        response = await planner.post(
+            f"/api/v1/imports/{batch_id}/commit", headers={"Idempotency-Key": key}
+        )
+        return response.status_code
+
+    results = await asyncio.gather(attempt("import-commit-race-1"), attempt("import-commit-race-2"))
+    assert sorted(results) == [200, 409]
+
+    async with session_factory() as check:
+        rows = (await check.scalars(select(Order.id).where(Order.external_ref == "PO-RACE"))).all()
+    assert len(rows) == 1
+
+
+async def test_csv_template_endpoint(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    unauthenticated = await client.get("/api/v1/imports/templates/orders.csv")
+    assert unauthenticated.status_code == 401
+
+    viewer = await login_as(client, session_factory, "viewer@demo.test")
+    response = await viewer.get("/api/v1/imports/templates/orders.csv")
     assert response.status_code == 200
     assert response.text.splitlines()[0] == HEADER
