@@ -47,7 +47,7 @@ export function HoldsTable({ onSelectOrder }: { onSelectOrder: (orderId: string)
           }}
           title={row.order_id}
         >
-          {shortId(row.order_id)}
+          Order id {shortId(row.order_id)}
         </button>
       ),
     },

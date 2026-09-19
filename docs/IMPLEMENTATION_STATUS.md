@@ -2006,3 +2006,138 @@ the heat policy — PENDING user approval or CI.
   endpoint exists for historical ones); reservation and defect rows show raw/short ids where the
   API does not join in human-readable names; the CSV/order-detail integration point named in the
   brief does not exist yet.
+
+## 2026-09-20 — Task 13: RM and planning agents, orchestrator with targeted replan
+
+- **RM agent** (`app/agents/rm/`, prompt `rm-v1`). Round 0
+  (`assess_material_readiness`): per BOM line it converts the BOM quantity to the material's stock
+  unit, then applies `app.domain.inventory.calc` only — `gross_demand`, `available_now`,
+  `shortage`, `projected_balance` at the due date, `average_daily_consumption` (14 d),
+  `coverage_days`, `reorder_point`, `coverable_units`, `material_state`. Findings
+  `MATERIAL_SHORTAGE` (critical), `MATERIAL_AT_RISK` (warning), `BELOW_REORDER_POINT` (warning),
+  `CONSUMPTION_UNKNOWN` (info), `UNIT_CONVERSION_MISSING` (critical, material excluded and
+  `data_quality.complete=False`), `LEAD_TIME_EXCEEDED` (warning). Metrics `coverable_units`,
+  `shortage:<code>`, `available_now:<code>`, `gross_demand:<code>`, `coverage_days:<code>` (null
+  when consumption is unknown). One `REPLENISHMENT_SUGGESTION` per short material, quantity
+  `round_up_to_pack(shortage, pack_size)`, `needed_by = due_date - lead_time_days`. Round 1
+  (`validate_plan_materials`) reserves `min(plan demand, available_now)` per material and reports
+  the remainder (`PLAN_MATERIAL_COVERED` / `PLAN_MATERIAL_SHORT`); the `RESERVATION` action is
+  omitted when there is nothing to reserve. Tools: `get_material_position`,
+  `get_expected_receipts`, `get_consumption_history`, `get_bom_demand` — all snapshot-only, all
+  carrying record evidence, all with schema defaults bound to the run's first BOM material so the
+  fixture provider can call them.
+- **Planning agent** (`app/agents/planning/`, prompt `planning-v1`). Candidate options are all
+  produced by `plan_earliest_slots`: `FULL_EARLIEST`, `MATERIAL_LIMITED` (only when an RM result
+  exists, capped at `coverable_units`), `SINGLE_LINE` (the compatible line with the most remaining
+  minutes), plus `SIMULATED` options added by the `simulate_allocation` tool. Duplicates (same
+  allocations) are dropped; ranking is full-quantity first, then `finish_date`, then fewer distinct
+  lines, then IE risk, then option code — round 1 puts `MATERIAL_LIMITED` first. Findings
+  `NO_COMPATIBLE_LINE`, `UNSCHEDULED_QUANTITY`, `LINE_OVERCOMMITTED` (>0.95 utilization per slot),
+  `MATERIAL_CONSTRAINT_KNOWN` (RM evidence re-exported as `record`/`agent_result` references),
+  `IE_BOTTLENECK_RISK`, `REVISED_FOR_MATERIAL`, `DEPENDENCY_MISSING`. Tools
+  `get_dependency_findings`, `list_compatible_lines`, `get_remaining_capacity`,
+  `simulate_allocation` (mutates `ctx.assessment` so the model may select the new candidate).
+- **Orchestrator** (`app/orchestration/orchestrator.py`): `advance_run` (job
+  `orchestrator.advance`) and `needs_replan`. The run row is locked only while state is read and
+  written; dispatch happens after that transaction commits, over `AgentDispatchClient`
+  (`DispatchError(retryable)` → `RetryableJobError`). Graph: RM r0 → planning r0 → at most one
+  targeted replan → RM r1 → finalize. `replan_count` is committed before the revision dispatch, so
+  a retried dispatch still re-dispatches the revision rather than skipping it. Deadline, cancelled
+  and terminal runs are handled first. Finalization creates the recommendation, supersedes earlier
+  `PROPOSED`/`APPROVED` ones of the same order (`NEWER_ANALYSIS`), sets the run status, appends
+  `run.finalized`, notifies supervisors and audits `analysis.completed`.
+- **Recommendations** (`app/orchestration/recommendations.py`): `create_recommendation` and
+  `proposal_hash`. `input_versions` carries the order version plus the versions of exactly the
+  slots and balances the proposal names; `evidence_refs` is `{"items": [...]}`, each item an
+  `EvidenceRef` tagged with the agent that found it; `generated_by` follows the planning result's
+  `summary_source`; `expires_at = now + 24 h`.
+- **Plumbing:** `app/agents/registry.py` now registers `rm` and `planning` at import time;
+  `JobContext`/`Worker` carry an `AgentDispatchClient` (tests bind it to the in-process ASGI app);
+  `app/jobs/handlers.py` registers `orchestrator.advance`; `reconcile_once` gained
+  `advance_stalled_runs` (30 s quiet + no runnable job of its own, or past deadline → enqueue an
+  advance with dedupe key `run:<id>:reconcile:<minute>`) and `ReconcileReport.runs_advanced`.
+  New `app/agents/quantities.py` holds the shared decimal-to-string rendering (6 dp, plain
+  notation) used by both agents and the recommendation builder.
+- **Bug found and fixed in Task 12 code:** `app/orchestration/validation.py`
+  `_record_exists_in_scope` read `row.style_id` before its `BomLine` branch, so *any* `bom_line`
+  evidence reference raised `AttributeError` and killed the agent job. The attribute is now read
+  only for genuinely style-scoped rows. Covered by the RM evidence assertions in
+  `tests/integration/test_orchestrator.py`.
+- **Tests:** `tests/agents/test_rm_agent.py` (18), `tests/agents/test_planning_agent.py` (13),
+  `tests/integration/test_orchestrator.py` (11), `tests/integration/test_two_agent_flow.py` (1),
+  helper `tests/helpers/worker.py` (`drain`/`make_worker`). Updated
+  `tests/integration/test_worker_runtime.py`'s registry list for the new job type.
+- Commands (each via `scripts/heavy-job.sh`, DB `linesense_test_a`):
+  ```
+  $ ... pytest tests/agents/test_rm_agent.py tests/agents/test_planning_agent.py -q   # 31 passed
+  $ ... pytest tests/integration/test_orchestrator.py -q                              # 11 passed
+  $ ... pytest tests/integration/test_two_agent_flow.py -q                             # 1 passed
+  $ ... pytest tests/integration/test_executor.py tests/integration/test_worker_runtime.py \
+        tests/integration/test_analysis_api.py tests/integration/test_internal_dispatch.py \
+        tests/agents -q                                                                # 98 passed
+  $ ... uv run mypy app          # Success: no issues found in 115 source files
+  $ uv run ruff check app tests && uv run ruff format --check app tests   # clean
+  ```
+  `make test`, `make test-integration` and `make test-all` are **PENDING (needs user approval or
+  CI)** per the heat policy — only the files above were run.
+- **Limitations / notes:** Phase 2 is partially complete — approvals (applying a recommendation)
+  and the `GET /factories/{code}/recommendations` route are Task 14, so `test_two_agent_flow`
+  asserts the `PROPOSED` row through the database. The IE agent does not exist yet, so planning's
+  IE awareness is exercised with a synthetic IE result in the unit tests; risky lines are matched
+  from IE `line` record evidence or the line code in the finding message. No live-LLM path was
+  exercised (fixture provider only).
+
+## 2026-09-20 — Task 23 fix round 1: reservation release error visibility, outlier reason, minor a11y/UI
+
+Addressed the review findings from `task-23-report.md`'s round 1:
+
+- **ReservationTable release error hidden behind the dialog (important):** `release`'s mutation
+  had no `onError`, so a failed release (409/422) left `ConfirmDialog`'s overlay open, covering the
+  `ErrorState` rendered in the page underneath. Added `onError: () => setConfirming(null)`
+  (matching `ReleaseReview`'s existing pattern) so the dialog closes and the error is visible.
+  New `ReservationTable.test.tsx` asserts the error text renders and the dialog is gone.
+- **Outlier marking allowed a blank reason (important):** `ObservationForm`'s outlier action now
+  computes `trimmedReason`/`reasonMissing` from the input, disables Confirm and shows an inline
+  message ("Enter a reason for marking this observation an outlier.") whenever the reason is blank
+  or whitespace-only, wires `aria-required`/`aria-invalid`/`aria-describedby` on the input, and
+  sends the trimmed (never null) reason. While fixing this, found and fixed a related bug the new
+  test caught: the mutation's `onSuccess` never fed the server's updated `is_outlier` back to the
+  parent's session-local `recorded` list, so after a successful mark the row silently reverted to
+  showing "Mark as outlier" again instead of "Marked as outlier". Added an `onMarked` callback so
+  the parent replaces that item with the server's response (still not optimistic: only after the
+  201/200 response). New test in `ObservationForm.test.tsx` covers blank, whitespace-only, and a
+  valid (trimmed) reason end to end.
+- **Minor: PlanningBoardPage start-date field's shown error wasn't wired to its `aria-describedby`**
+  (`fieldAria` was always called with `undefined` for the error, while `FormField` displayed the
+  real one) — both now read from the same `startError` value.
+- **Minor: reservation status badge moved into `stateStyles.ts`** as a new `reservation`
+  vocabulary (`ACTIVE`/`RELEASED`/`CONSUMED`), per DESIGN.md ("new vocabularies go into
+  `STATE_STYLES`, don't build ad-hoc badges"); `ReservationTable` now renders it via the shared
+  `StateBadge`. `StateBadge.test.tsx`'s vocabulary table updated so its generic per-vocabulary
+  coverage test also covers `reservation`.
+- **Minor: quality hold rows showed a bare truncated order id, readable as a PO reference** — a
+  cheap route did exist (`GET /api/v1/orders/{order_id}`, `order:read`, all roles): `QualityPage`'s
+  `OrderQualityPanel` now fetches it and shows "Order `<external_ref>`" once loaded, falling back
+  to "Order id `<short id>`" (never presented as if it were the reference) while loading or if a
+  hold's order has no id yet resolved. `HoldsTable`'s row button itself now reads
+  "Order id `<short>`" rather than the bare id. `InspectionForm.test.tsx`/`ReleaseReview.test.tsx`
+  updated with a mock for the new `GET /api/v1/orders/{order_id}` call.
+- **Controller ruling (no action):** the `RecommendationCompare` panel stays unwired until the
+  recommendations list route exists (Task 14 — confirmed still not present as of this round: the
+  Task 13 entry above only builds `create_recommendation`, not the `GET
+  /factories/{code}/recommendations` listing route).
+- Commands (each once, via `scripts/heavy-job.sh`; backend untouched, no backend tests run):
+  ```
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npx vitest run src/features/ie/ObservationForm.test.tsx \
+      src/features/materials/ReservationTable.test.tsx"                        # 4 passed
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run lint"                  # clean
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run typecheck"             # clean
+  $ scripts/heavy-job.sh make web-test                                         # 20 files, 82 passed
+  $ scripts/heavy-job.sh make build                                            # succeeded
+  ```
+- **Files changed:** modified — `apps/web/src/components/{StateBadge.test.tsx,stateStyles.ts}`,
+  `apps/web/src/features/ie/{ObservationForm.tsx,ObservationForm.test.tsx}`,
+  `apps/web/src/features/materials/ReservationTable.tsx`,
+  `apps/web/src/features/planning/PlanningBoardPage.tsx`,
+  `apps/web/src/features/quality/{HoldsTable.tsx,QualityPage.tsx,InspectionForm.test.tsx,ReleaseReview.test.tsx}`.
+  New — `apps/web/src/features/materials/ReservationTable.test.tsx`.

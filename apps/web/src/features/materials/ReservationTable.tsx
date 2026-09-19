@@ -8,7 +8,7 @@ import { ErrorState } from '../../components/ErrorState'
 import { Icon } from '../../components/Icon'
 import { LoadingState } from '../../components/LoadingState'
 import { Pagination } from '../../components/Pagination'
-import { TONE_CLASSES } from '../../components/stateStyles'
+import { StateBadge } from '../../components/StateBadge'
 import { ApiError, api, unwrap, type Schemas } from '../../lib/api'
 import { useCan, useFactory } from '../../lib/factory'
 import { formatDateTime, formatDecimal } from '../../lib/format'
@@ -20,23 +20,6 @@ const PAGE_SIZE = 20
 
 function shortId(id: string): string {
   return id.slice(0, 8)
-}
-
-/** Reservation status is not one of `stateStyles`'s vocabularies; each still gets icon + text + tone. */
-const RESERVATION_STATUS: Record<string, { label: string; icon: 'clock' | 'unlock' | 'check-double'; tone: keyof typeof TONE_CLASSES }> = {
-  ACTIVE: { label: 'Active', icon: 'clock', tone: 'info' },
-  RELEASED: { label: 'Released', icon: 'unlock', tone: 'success' },
-  CONSUMED: { label: 'Consumed', icon: 'check-double', tone: 'muted' },
-}
-
-function ReservationStatus({ status }: { status: string }) {
-  const style = RESERVATION_STATUS[status] ?? { label: status, icon: 'clock' as const, tone: 'neutral' as const }
-  return (
-    <span className={`inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium whitespace-nowrap ${TONE_CLASSES[style.tone]}`}>
-      <Icon name={style.icon} className="h-3.5 w-3.5" />
-      {style.label}
-    </span>
-  )
 }
 
 /**
@@ -76,6 +59,11 @@ export function ReservationTable() {
       await queryClient.invalidateQueries({ queryKey: ['reservations', factory.id] })
       await queryClient.invalidateQueries({ queryKey: ['materials', factory.id] })
     },
+    onError: () => {
+      // Close the dialog so the ErrorState below (rendered in the page, not the
+      // dialog) is visible instead of being covered by the modal overlay.
+      setConfirming(null)
+    },
   })
 
   const columns: Column<Reservation>[] = [
@@ -83,7 +71,7 @@ export function ReservationTable() {
     { key: 'material', header: 'Material', render: (row) => <code className="font-mono text-xs" title={row.material_id}>{shortId(row.material_id)}</code> },
     { key: 'order', header: 'Order', render: (row) => <code className="font-mono text-xs" title={row.order_id}>{shortId(row.order_id)}</code> },
     { key: 'quantity', header: 'Quantity', align: 'right', render: (row) => formatDecimal(row.quantity) },
-    { key: 'status', header: 'Status', render: (row) => <ReservationStatus status={row.status} /> },
+    { key: 'status', header: 'Status', render: (row) => <StateBadge vocabulary="reservation" state={row.status} /> },
     { key: 'created_at', header: 'Created', render: (row) => formatDateTime(row.created_at, factory.timezone) },
     {
       key: 'actions',

@@ -1,7 +1,7 @@
 import { humanizeCode } from '../lib/format'
 import type { IconName } from './Icon'
 
-export type StateVocabulary = 'production' | 'material' | 'quality' | 'analysis' | 'recommendation'
+export type StateVocabulary = 'production' | 'material' | 'quality' | 'analysis' | 'recommendation' | 'reservation'
 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
 
@@ -52,6 +52,11 @@ export const STATE_STYLES: Record<StateVocabulary, Record<string, StateStyle>> =
     APPLIED: { label: 'Applied', icon: 'check-double', tone: 'success' },
     SUPERSEDED: { label: 'Superseded', icon: 'layers', tone: 'muted' },
   },
+  reservation: {
+    ACTIVE: { label: 'Active', icon: 'clock', tone: 'info' },
+    RELEASED: { label: 'Released', icon: 'unlock', tone: 'success' },
+    CONSUMED: { label: 'Consumed', icon: 'check-double', tone: 'muted' },
+  },
 }
 
 export const VOCABULARY_LABELS: Record<StateVocabulary, string> = {
@@ -60,6 +65,7 @@ export const VOCABULARY_LABELS: Record<StateVocabulary, string> = {
   quality: 'Quality',
   analysis: 'Analysis',
   recommendation: 'Recommendation',
+  reservation: 'Reservation',
 }
 
 /** Status tones map to semantic tokens (DESIGN.md); `muted` is for terminal/inactive states. */

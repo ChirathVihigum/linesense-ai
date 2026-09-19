@@ -18,6 +18,9 @@ function PlanningBoard() {
   const [start, setStart] = useState(() => isoDateInTimeZone(factory.timezone))
   const [end, setEnd] = useState(() => addDaysIso(isoDateInTimeZone(factory.timezone), 13))
   const error = rangeError(start, end)
+  // The combined range error is attributed to one field to avoid showing it twice; it is
+  // shown (and wired via `fieldAria`) under "Start date" only when "End date" is also blank.
+  const startError = error && !end ? error : undefined
 
   const query = useQuery({
     queryKey: ['capacity-board', factory.id, start, end],
@@ -64,12 +67,12 @@ function PlanningBoard() {
           event.preventDefault()
         }}
       >
-        <FormField id="planning-start" label="Start date" required error={error && !end ? error : undefined}>
+        <FormField id="planning-start" label="Start date" required error={startError}>
           <input
             type="date"
             className="input"
             value={start}
-            {...fieldAria('planning-start', undefined, undefined, true)}
+            {...fieldAria('planning-start', startError, undefined, true)}
             onChange={(event) => {
               setStart(event.target.value)
             }}

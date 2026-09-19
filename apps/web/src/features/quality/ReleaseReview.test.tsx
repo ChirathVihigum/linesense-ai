@@ -87,6 +87,7 @@ function mockQualityRoutes(inspectedBy: string | null) {
       }),
     ),
     http.get('/api/v1/orders/:orderId/quality', () => HttpResponse.json(orderQuality(inspectedBy))),
+    http.get('/api/v1/orders/:orderId', () => HttpResponse.json({ id: ORDER_ID, external_ref: 'PO-3001' })),
   )
 }
 

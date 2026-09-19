@@ -17,7 +17,11 @@ import { ReleaseReview } from './ReleaseReview'
 
 const SEARCH_DEBOUNCE_MS = 300
 
-function OrderSearch({ onSelectOrder }: { onSelectOrder: (orderId: string, externalRef: string) => void }) {
+function shortId(id: string): string {
+  return id.slice(0, 8)
+}
+
+function OrderSearch({ onSelectOrder }: { onSelectOrder: (orderId: string) => void }) {
   const factory = useFactory()
   const [searchText, setSearchText] = useState('')
   const debounced = useDebouncedValue(searchText.trim(), SEARCH_DEBOUNCE_MS)
@@ -59,7 +63,7 @@ function OrderSearch({ onSelectOrder }: { onSelectOrder: (orderId: string, exter
                 type="button"
                 className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-sunken"
                 onClick={() => {
-                  onSelectOrder(order.id, order.external_ref)
+                  onSelectOrder(order.id)
                   setSearchText('')
                 }}
               >
@@ -77,11 +81,18 @@ function OrderSearch({ onSelectOrder }: { onSelectOrder: (orderId: string, exter
   )
 }
 
-function OrderQualityPanel({ orderId, externalRef }: { orderId: string; externalRef: string }) {
+function OrderQualityPanel({ orderId }: { orderId: string }) {
   const can = useCan()
   const query = useQuery({
     queryKey: ['order-quality', orderId],
     queryFn: () => unwrap(api.GET('/api/v1/orders/{order_id}/quality', { params: { path: { order_id: orderId } } })),
+  })
+  // A single-item lookup only for the heading: `OrderQualityOut` carries no external_ref, and a
+  // hold row only has the order's id, so this is the cheapest available way to show the real
+  // order reference instead of a bare id that could be mistaken for a PO reference.
+  const orderSummary = useQuery({
+    queryKey: ['order-summary', orderId],
+    queryFn: () => unwrap(api.GET('/api/v1/orders/{order_id}', { params: { path: { order_id: orderId } } })),
   })
 
   if (query.isPending) return <LoadingState label="Loading order quality…" />
@@ -96,7 +107,15 @@ function OrderQualityPanel({ orderId, externalRef }: { orderId: string; external
   return (
     <div className="flex flex-col gap-6">
       <h2 className="text-base font-semibold">
-        Order <span className="font-mono">{externalRef}</span>
+        {orderSummary.data ? (
+          <>
+            Order <span className="font-mono">{orderSummary.data.external_ref}</span>
+          </>
+        ) : (
+          <>
+            Order id <span className="font-mono">{shortId(orderId)}</span>
+          </>
+        )}
       </h2>
       {can('quality:inspect') && (
         <section aria-labelledby="quality-inspect" className="panel p-6">
@@ -120,7 +139,7 @@ function OrderQualityPanel({ orderId, externalRef }: { orderId: string; external
 
 function QualityWorkspace() {
   const can = useCan()
-  const [selected, setSelected] = useState<{ id: string; externalRef: string } | null>(null)
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
 
   return (
     <div className="flex flex-col gap-8">
@@ -128,25 +147,17 @@ function QualityWorkspace() {
         <h2 id="quality-holds" className="mb-3 text-base font-semibold">
           Active holds
         </h2>
-        <HoldsTable
-          onSelectOrder={(orderId) => {
-            setSelected({ id: orderId, externalRef: orderId.slice(0, 8) })
-          }}
-        />
+        <HoldsTable onSelectOrder={setSelectedOrderId} />
       </section>
 
       <section aria-labelledby="quality-inspection-section">
         <h2 id="quality-inspection-section" className="mb-3 text-base font-semibold">
           Inspect and release
         </h2>
-        <OrderSearch
-          onSelectOrder={(id, externalRef) => {
-            setSelected({ id, externalRef })
-          }}
-        />
+        <OrderSearch onSelectOrder={setSelectedOrderId} />
         <div className="mt-4">
-          {selected ? (
-            <OrderQualityPanel orderId={selected.id} externalRef={selected.externalRef} />
+          {selectedOrderId ? (
+            <OrderQualityPanel orderId={selectedOrderId} />
           ) : (
             <EmptyState icon="search" title="No order selected" description="Search for an order or pick one from active holds." />
           )}
