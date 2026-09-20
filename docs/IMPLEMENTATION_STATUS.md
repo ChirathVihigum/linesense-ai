@@ -2201,3 +2201,18 @@ Addressed the review findings from `task-23-report.md`'s round 1:
   `tests/integration/{test_approvals.py,test_apply_concurrency.py}`,
   `tests/security/test_approval_rules.py`. Modified — `app/main.py`,
   `app/idempotency/service.py`, `app/domain/planning/calc.py`.
+- **Phase 2 exit gate — the tests that prove each criterion:**
+  - *shortage -> revised proposal*:
+    `tests/integration/test_two_agent_flow.py::test_planner_requests_an_analysis_and_gets_a_recommendation`
+    (the `orchestrator.replan` event carries `MATERIAL_SHORTAGE_CONFLICT` and the round-1
+    planning result carries `REVISED_FOR_MATERIAL`).
+  - *restart recovery*:
+    `tests/integration/test_orchestrator.py::test_a_crashed_worker_leaves_exactly_one_result_per_task`
+    and `tests/integration/test_executor.py::test_lease_lost_before_commit_writes_nothing`.
+  - *self approval denied*:
+    `tests/security/test_approval_rules.py::test_the_proposer_can_neither_decide_nor_apply_their_own_proposal`
+    (403 `SELF_APPROVAL_DENIED` on both decide and apply, each audited `DENIED`).
+  - *stale approval denied*:
+    `tests/integration/test_approvals.py::test_apply_rejects_stale_inputs_and_supersedes_the_recommendation`
+    (reference fixture 6) and
+    `tests/integration/test_apply_concurrency.py::test_two_applications_contend_for_the_last_slot_minutes`.
