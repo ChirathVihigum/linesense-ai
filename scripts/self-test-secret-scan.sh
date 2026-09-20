@@ -117,6 +117,31 @@ printf '# Just a README\n' >"$dir/README.md"
 _assert_passes "$dir" "clean repo"
 rm -rf "$dir"
 
+# --- a file grep genuinely cannot read must abort, not read as "no match" -
+# task-25 review round 2: the password-assignment branch used to pipe two
+# greps under `pipefail`, so a real read error in the *first* grep could be
+# masked by the *second* grep's own "no lines matched" exit status (1) --
+# fixed by removing the pipe entirely. secret-scan.sh now runs the
+# password-assignment loop *first* specifically so this case exercises that
+# branch's error handling end to end (whichever loop reaches an unreadable
+# file first aborts the whole script; ordering is otherwise arbitrary).
+# `chmod 000` is enough to make a regular file unreadable to its own owner
+# on both Linux and macOS, without needing root.
+dir="$(_make_repo)"
+printf 'irrelevant content\n' >"$dir/unreadable.txt"
+(cd "$dir" && git add unreadable.txt) # must add while still readable
+chmod 000 "$dir/unreadable.txt"
+if [ -r "$dir/unreadable.txt" ]; then
+  # Running as root (some CI containers do): chmod 000 does not block root's
+  # own reads, so this case cannot be exercised meaningfully here. Skip
+  # rather than assert something that would not actually test anything.
+  log "SKIP: unreadable-file case (running as a user chmod 000 cannot block, e.g. root)"
+else
+  _assert_fails "$dir" "a file grep cannot read (real error, not a match/no-match)"
+fi
+chmod 700 "$dir/unreadable.txt" # so `rm -rf` can actually remove it
+rm -rf "$dir"
+
 if [ "$FAILED" -ne 0 ]; then
   log "SELF-TEST FAILED: scripts/secret-scan.sh did not behave as expected"
   exit 1
