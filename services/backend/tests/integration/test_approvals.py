@@ -19,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db.models import (
     Allocation,
+    Approval,
     AuditEvent,
+    IdempotencyKey,
     Job,
     LineCapacitySlot,
     Material,
@@ -41,8 +43,9 @@ from app.domain.vocab import (
 from app.seed import scenario as demo
 from app.seed.generator import DEMO_ORDER_REF
 from app.settings import Settings
-from tests.helpers.approvals import key, propose
-from tests.helpers.auth import login_as
+from tests.factories import make_line, make_order, make_slot
+from tests.helpers.approvals import build_approved, key, propose
+from tests.helpers.auth import IdentityFixture, login_as, seed_identity
 
 pytestmark = pytest.mark.integration
 
@@ -95,7 +98,12 @@ async def test_supervisor_approves_then_applies_the_demo_recommendation(
     )
     assert listed.status_code == 200, listed.text
     assert [row["id"] for row in listed.json()["items"]] == [str(proposal.recommendation_id)]
-    assert listed.json()["items"][0]["status_source"] == "AI recommendation"
+    # Which label depends on whether the planning summary came from the model;
+    # that is Task 13's call, so assert only that the two agree.
+    listed_row = listed.json()["items"][0]
+    assert listed_row["status_source"] == (
+        "AI recommendation" if listed_row["generated_by"] == "model" else "Calculated from records"
+    )
 
     detail = await supervisor.get(f"/api/v1/recommendations/{proposal.recommendation_id}")
     assert detail.status_code == 200, detail.text
@@ -553,3 +561,307 @@ async def test_a_second_apply_by_a_different_user_after_success_conflicts(
         assert recommendation.applied_by == user.id
     await supervisor_client.aclose()
     await other_client.aclose()
+
+
+# --------------------------------------------------------------------------
+# Directly built proposals: the gate checks that do not need the agent flow
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def identity(db_session: AsyncSession) -> IdentityFixture:
+    fixture = await seed_identity(db_session)
+    await db_session.commit()
+    return fixture
+
+
+async def _direct(
+    db_session: AsyncSession,
+    identity: IdentityFixture,
+    *,
+    input_versions: dict[str, Any] | None = None,
+    status: str = RecommendationStatus.APPROVED.value,
+) -> tuple[Order, Recommendation, LineCapacitySlot]:
+    factory = identity.factories["KTN"]
+    line = await make_line(db_session, organization=identity.organization, factory=factory)
+    slot = await make_slot(db_session, line=line)
+    order, recommendation = await build_approved(
+        db_session,
+        identity,
+        factory,
+        slot,
+        standard_minutes=Decimal(60),
+        units=Decimal(10),
+        input_versions=input_versions,
+        status=status,
+    )
+    await db_session.commit()
+    return order, recommendation, slot
+
+
+async def _supervisor(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> tuple[AsyncClient, Any]:
+    own = AsyncClient(transport=client._transport, base_url="http://testserver")  # noqa: SLF001
+    return own, await login_as(own, session_factory, "supervisor@demo.test")
+
+
+async def test_apply_fails_closed_when_input_versions_omit_a_proposal_slot(
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    identity: IdentityFixture,
+) -> None:
+    """Nothing proves an unpinned slot has not moved, so it counts as stale."""
+    order, recommendation, slot = await _direct(
+        db_session,
+        identity,
+        input_versions={"order": {}, "capacity_slots": {}, "material_balances": {}},
+    )
+    own, supervisor = await _supervisor(client, session_factory)
+
+    applied = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply",
+        json={"proposal_hash": recommendation.proposal_hash},
+        headers=key("apply"),
+    )
+    assert applied.status_code == 409, applied.text
+    error = applied.json()["error"]
+    assert error["code"] == "STALE_INPUT"
+    assert sorted(item["field"] for item in error["field_errors"]) == ["capacity_slot", "order"]
+    assert all("recorded no version for it" in item["message"] for item in error["field_errors"])
+
+    async with session_factory() as session:
+        stored = await session.get(Recommendation, recommendation.id)
+        assert stored is not None
+        assert stored.status == RecommendationStatus.SUPERSEDED.value
+        assert (
+            await session.scalars(sa.select(Allocation).where(Allocation.order_id == order.id))
+        ).all() == []
+        fresh_slot = await session.get(LineCapacitySlot, slot.id)
+        assert fresh_slot is not None
+        assert fresh_slot.allocated_standard_minutes == Decimal(0)
+    await own.aclose()
+
+
+async def test_apply_fails_closed_on_a_malformed_input_version_entry(
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    identity: IdentityFixture,
+) -> None:
+    """A version that is not an integer pins nothing."""
+    factory = identity.factories["KTN"]
+    line = await make_line(db_session, organization=identity.organization, factory=factory)
+    slot = await make_slot(db_session, line=line)
+    order = await make_order(
+        db_session,
+        organization=identity.organization,
+        factory=factory,
+        production_state=ProductionState.VALIDATED.value,
+    )
+    await db_session.flush()
+    _, recommendation = await build_approved(
+        db_session,
+        identity,
+        factory,
+        slot,
+        standard_minutes=Decimal(60),
+        units=Decimal(10),
+    )
+    recommendation.input_versions = {
+        "order": {str(recommendation.order_id): recommendation.version},
+        "capacity_slots": {str(slot.id): "1"},  # a string, not an int
+        "material_balances": {"not-a-uuid": 1},
+    }
+    sa.orm.attributes.flag_modified(recommendation, "input_versions")
+    await db_session.commit()
+    own, supervisor = await _supervisor(client, session_factory)
+
+    applied = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply",
+        json={"proposal_hash": recommendation.proposal_hash},
+        headers=key("apply"),
+    )
+    assert applied.status_code == 409, applied.text
+    error = applied.json()["error"]
+    assert error["code"] == "STALE_INPUT"
+    assert "capacity_slot" in [item["field"] for item in error["field_errors"]]
+
+    async with session_factory() as session:
+        stored = await session.get(Recommendation, recommendation.id)
+        assert stored is not None
+        assert stored.status == RecommendationStatus.SUPERSEDED.value
+        assert (
+            await session.scalars(sa.select(Allocation).where(Allocation.order_id == order.id))
+        ).all() == []
+    await own.aclose()
+
+
+async def test_apply_refuses_a_changed_hash_and_an_expired_proposal(
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    identity: IdentityFixture,
+) -> None:
+    _, recommendation, _ = await _direct(db_session, identity)
+    own, supervisor = await _supervisor(client, session_factory)
+
+    mismatched = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply",
+        json={"proposal_hash": "0" * 64},
+        headers=key("apply"),
+    )
+    assert mismatched.status_code == 409, mismatched.text
+    assert mismatched.json()["error"]["code"] == "CONFLICT"
+    assert mismatched.json()["error"]["message"] == "Proposal changed"
+
+    async with session_factory() as session:
+        await session.execute(
+            sa.update(Recommendation)
+            .where(Recommendation.id == recommendation.id)
+            .values(expires_at=datetime.now(tz=UTC) - timedelta(minutes=1))
+        )
+        await session.commit()
+
+    expired = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply",
+        json={"proposal_hash": recommendation.proposal_hash},
+        headers=key("apply"),
+    )
+    assert expired.status_code == 409, expired.text
+    assert expired.json()["error"]["code"] == "EXPIRED"
+
+    async with session_factory() as session:
+        stored = await session.get(Recommendation, recommendation.id)
+        assert stored is not None
+        assert stored.status == RecommendationStatus.EXPIRED.value
+    await own.aclose()
+
+
+async def test_an_applied_proposal_cannot_be_decided_again(
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    identity: IdentityFixture,
+) -> None:
+    _, recommendation, _ = await _direct(db_session, identity)
+    own, supervisor = await _supervisor(client, session_factory)
+
+    applied = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply",
+        json={"proposal_hash": recommendation.proposal_hash},
+        headers=key("apply"),
+    )
+    assert applied.status_code == 200, applied.text
+
+    decided = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/decision",
+        json={
+            "decision": "REJECTED",
+            "reason": "Too late.",
+            "proposal_hash": (recommendation.proposal_hash),
+        },
+    )
+    assert decided.status_code == 409, decided.text
+    assert decided.json()["error"]["code"] == "CONFLICT"
+    assert "APPLIED" in decided.json()["error"]["message"]
+
+    async with session_factory() as session:
+        stored = await session.get(Recommendation, recommendation.id)
+        assert stored is not None
+        assert stored.status == RecommendationStatus.APPLIED.value
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(
+                    sa.select(Approval)
+                    .where(Approval.recommendation_id == recommendation.id)
+                    .subquery()
+                )
+            )
+            == 0
+        )
+    await own.aclose()
+
+
+async def test_the_key_of_a_stale_apply_can_be_retried(
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    identity: IdentityFixture,
+) -> None:
+    """`idempotency.release` frees the claim a committed rejection would burn."""
+    _, recommendation, _ = await _direct(
+        db_session,
+        identity,
+        input_versions={"order": {}, "capacity_slots": {}, "material_balances": {}},
+    )
+    own, supervisor = await _supervisor(client, session_factory)
+    headers = key("apply-stale")
+    body = {"proposal_hash": recommendation.proposal_hash}
+
+    first = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply", json=body, headers=headers
+    )
+    assert first.status_code == 409, first.text
+    assert first.json()["error"]["code"] == "STALE_INPUT"
+
+    async with session_factory() as session:
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(sa.select(IdempotencyKey).subquery())
+            )
+            == 0
+        ), "the claim must not survive a committed rejection"
+
+    # The same key is usable again: the answer is now about the recommendation
+    # (SUPERSEDED), never "a request with this Idempotency-Key is in progress".
+    second = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/apply", json=body, headers=headers
+    )
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "CONFLICT"
+    assert "SUPERSEDED" in second.json()["error"]["message"]
+    await own.aclose()
+
+
+@pytest.mark.parametrize(
+    ("generated_by", "label"),
+    [("model", "AI recommendation"), ("deterministic", "Calculated from records")],
+)
+async def test_status_source_labels_track_generated_by(
+    generated_by: str,
+    label: str,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    identity: IdentityFixture,
+) -> None:
+    factory = identity.factories["KTN"]
+    line = await make_line(db_session, organization=identity.organization, factory=factory)
+    slot = await make_slot(db_session, line=line)
+    _, recommendation = await build_approved(
+        db_session,
+        identity,
+        factory,
+        slot,
+        standard_minutes=Decimal(60),
+        units=Decimal(10),
+        status=RecommendationStatus.PROPOSED.value,
+    )
+    recommendation.generated_by = generated_by
+    await db_session.commit()
+    own, supervisor = await _supervisor(client, session_factory)
+
+    detail = await supervisor.get(f"/api/v1/recommendations/{recommendation.id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["status_source"] == label
+
+    decided = await supervisor.post(
+        f"/api/v1/recommendations/{recommendation.id}/decision",
+        json={"decision": "APPROVED", "proposal_hash": recommendation.proposal_hash},
+    )
+    assert decided.status_code == 200, decided.text
+    after = await supervisor.get(f"/api/v1/recommendations/{recommendation.id}")
+    assert after.json()["status_source"].startswith("Approved by Supervisor (KTN) at ")
+    await own.aclose()

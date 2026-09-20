@@ -335,6 +335,9 @@ async def apply_recommendation(
                 response = await _apply_once(
                     session, request, principal, rec_id, body, idempotency_key
                 )
+                # Inside the `try`: COMMIT itself can raise the serialization
+                # failure or deadlock this loop exists to retry.
+                await session.commit()
             except approvals.PersistedRejection:
                 await session.commit()
                 raise
@@ -349,6 +352,5 @@ async def apply_recommendation(
             except Exception:
                 await session.rollback()
                 raise
-            await session.commit()
             return response
     raise RuntimeError("the bounded apply retry loop ended without a result")

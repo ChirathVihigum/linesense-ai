@@ -46,6 +46,8 @@ required_standard_minutes = remaining_units * SAM_minutes_per_unit
 available_standard_minutes =
     sum(available_operator_minutes_per_shift * planned_efficiency_fraction)
 utilization = allocated_standard_minutes / available_standard_minutes
+remaining_standard_minutes =
+    floor_2dp(max(0, capacity_standard_minutes - allocated_standard_minutes))
 ```
 
 - Units: `SAM_minutes_per_unit` is minutes/unit (`style_operations.sam_minutes`
@@ -53,6 +55,16 @@ utilization = allocated_standard_minutes / available_standard_minutes
   `available_operator_minutes_per_shift` is minutes (`line_capacity_slots
   .available_operator_minutes`); `planned_efficiency_fraction` is a
   dimensionless fraction in `(0, 1]` (`line_capacity_slots.planned_efficiency`).
+- `remaining_standard_minutes` is **floored to two decimal places**, the
+  storable precision of `line_capacity_slots.allocated_standard_minutes`
+  (`numeric(12,2)`). Capacity is not 2dp — operator minutes (2dp) times
+  planned efficiency (4dp) yields up to six decimals — so an unfloored
+  remainder can be smaller than anything a slot can record: booking it would
+  round *up* and push the slot past its own capacity, and the allocation
+  command would refuse it. The floor never overstates free capacity, so a
+  plan only ever proposes minutes that can actually be booked. Exposed as
+  `remaining_standard_minutes` on the capacity board
+  (`GET /api/v1/factories/{factory_id}/capacity`).
 - Assumptions: efficiency is applied exactly once (never compounded with a
   second efficiency factor elsewhere); breaks, absence, and
   setup/changeover are already reflected in `available_operator_minutes`
