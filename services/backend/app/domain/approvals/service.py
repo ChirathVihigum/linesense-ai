@@ -534,18 +534,59 @@ async def list_recommendations(
             )
         ).all()
     )
+    if not recommendations:
+        return [], int(total or 0)
+
+    # Batched in three statements total (orders, approvals, users) rather
+    # than per-row lookups, so this stays flat as the page fills up.
+    order_ids = {recommendation.order_id for recommendation in recommendations}
+    orders_by_id = {
+        order.id: order
+        for order in (await session.scalars(select(Order).where(Order.id.in_(order_ids)))).all()
+    }
+    rec_ids = [recommendation.id for recommendation in recommendations]
+    approvals_by_rec_id = {
+        approval.recommendation_id: approval
+        for approval in (
+            await session.scalars(select(Approval).where(Approval.recommendation_id.in_(rec_ids)))
+        ).all()
+    }
+    user_ids = {recommendation.proposer_user_id for recommendation in recommendations}
+    user_ids.update(approval.decided_by for approval in approvals_by_rec_id.values())
+    users_by_id = {
+        user.id: UserRef(id=user.id, display_name=user.display_name)
+        for user in (await session.scalars(select(User).where(User.id.in_(user_ids)))).all()
+    }
+
+    def _decision_for(recommendation: Recommendation) -> DecisionRef | None:
+        approval = approvals_by_rec_id.get(recommendation.id)
+        if approval is None:
+            return None
+        decided_by = users_by_id.get(approval.decided_by)
+        if decided_by is None:
+            raise RuntimeError(f"approval {approval.id} references a missing user")
+        return DecisionRef(
+            decision=approval.decision,
+            decided_by=decided_by,
+            decided_at=approval.decided_at,
+            reason=approval.reason,
+        )
+
     now = utcnow()
     rows: list[RecommendationRow] = []
     for recommendation in recommendations:
-        order = await session.get(Order, recommendation.order_id)
+        order = orders_by_id.get(recommendation.order_id)
         if order is None:
             raise RuntimeError(f"recommendation {recommendation.id} references a missing order")
-        decision = await decision_ref(session, recommendation)
+        proposer = users_by_id.get(recommendation.proposer_user_id)
+        if proposer is None:
+            raise RuntimeError(f"recommendation {recommendation.id} references a missing proposer")
+        decision = _decision_for(recommendation)
         rows.append(
             RecommendationRow(
                 recommendation=recommendation,
                 order=order,
-                proposer=await _user_ref(session, recommendation.proposer_user_id),
+                proposer=proposer,
                 expired=_is_expired(recommendation, now=now),
                 status_source=_status_source(recommendation, decision),
             )
