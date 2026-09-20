@@ -3192,7 +3192,7 @@ $ uv run mypy app/evaluation   # clean (the one error mypy reports for the wider
   (see methodology.md); it is not an independently-verified signal.
 - The fairness section's limitation statement is this harness's own
   (conservative) wording — the original product spec's numbered fairness
-  clause referenced by the plan (`docs/superpowers/plans/
+  clause referenced by the internal implementation plan (
   2026-09-17-linesense-build.md` line 969, "spec §11") was not available
   to read in this environment.
 - `Makefile`'s `eval` target addition could not be committed in this
