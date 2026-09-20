@@ -5,7 +5,7 @@
 # one it creates under .local/pgdata. It does not start/stop/modify the
 # Homebrew default cluster or use `brew services`.
 #
-# Subcommands: init | start | stop | status | psql | reset-test
+# Subcommands: init | start | stop | status | psql | reset-test | reset-eval
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +36,7 @@ APP_PASSWORD="${LS_DB_APP_PASSWORD:-dev-app-only}"
 
 DEV_DB="linesense_dev"
 TEST_DB="linesense_test"
+EVAL_DB="linesense_eval"
 
 log() {
   echo "[dev-db] $*" >&2
@@ -156,9 +157,11 @@ cmd_init() {
 
   ensure_database "$DEV_DB"
   ensure_database "$TEST_DB"
+  ensure_database "$EVAL_DB"
 
   configure_database "$DEV_DB"
   configure_database "$TEST_DB"
+  configure_database "$EVAL_DB"
 
   log "init complete"
 }
@@ -179,6 +182,22 @@ cmd_reset_test() {
   log "reset-test complete"
 }
 
+cmd_reset_eval() {
+  local target="${1:-$EVAL_DB}"
+  if [ "$target" != "$EVAL_DB" ]; then
+    log "refusing to reset database '$target': only '$EVAL_DB' may be reset by reset-eval"
+    exit 1
+  fi
+  if ! is_running; then
+    log "cluster is not running; start it first with: $0 start"
+    exit 1
+  fi
+  psql_super postgres -c "DROP DATABASE IF EXISTS $EVAL_DB;"
+  ensure_database "$EVAL_DB"
+  configure_database "$EVAL_DB"
+  log "reset-eval complete"
+}
+
 cmd_psql() {
   local db="${1:-postgres}"
   shift || true
@@ -187,7 +206,7 @@ cmd_psql() {
 
 usage() {
   cat >&2 <<EOF
-Usage: $0 <init|start|stop|status|psql [db] [psql-args...]|reset-test [db]>
+Usage: $0 <init|start|stop|status|psql [db] [psql-args...]|reset-test [db]|reset-eval [db]>
 EOF
 }
 
@@ -213,6 +232,10 @@ main() {
     reset-test)
       shift
       cmd_reset_test "$@"
+      ;;
+    reset-eval)
+      shift
+      cmd_reset_eval "$@"
       ;;
     *)
       usage
