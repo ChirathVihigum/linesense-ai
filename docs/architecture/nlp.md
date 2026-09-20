@@ -34,12 +34,17 @@ be surfaced without ever being resolved.
 - **Cross-factory isolation**: a BYG line code/name is never registered as a
   pattern when the extractor is built from KTN's `MasterData`, so it is not
   recognised as an entity at all for a KTN note (not merely "unresolved").
-- **Ambiguity**: a material *name* is not unique in the schema (only
-  `(organization_id, code)` is). `load_master_data` detects two different
-  material ids normalizing to the same key and stores the sentinel
-  `AMBIGUOUS_ID` (the nil UUID, which no `uuid4()` id can ever equal) instead
-  of either real id; `EntityExtractor` turns that into
-  `ambiguous=True, resolved_id=None`.
+- **Ambiguity**: a material's *name* is only constrained unique together with
+  its code (`(organization_id, code)`), and a line's *name* is not
+  constrained unique at all (only `(factory_id, code)` is) — so either kind
+  of name, not just materials, can in principle collide. `load_master_data`'s
+  `_put_id`/`_put_material` detect two different ids normalizing to the same
+  key (for any of `orders`/`lines`/`styles`/`materials`) and store the
+  sentinel `AMBIGUOUS_ID` (the nil UUID, which no `uuid4()` id can ever
+  equal) instead of either real id; `EntityExtractor` turns that into
+  `ambiguous=True, resolved_id=None`. Order refs and style codes are already
+  unique per organization/factory by database constraint, so this is
+  reachable in practice only for line and material names.
 - **Tokenizer**: spaCy's default English infixes split a hyphen only between
   two *alphabetic* runs, so `ST-01`/`KTN-0020` already survive as one token but
   `DEF-OS` and the `PO`/`KTN` halves of an order ref do not.
@@ -142,24 +147,42 @@ recorded here rather than silently.
 
 ### `GET /api/v1/orders/{order_id}/status-summary` (`app/api/summaries.py`)
 
-A new module (not `app/api/orders.py`, developed concurrently by Task 15) —
-registered directly in `app/main.py`. `order:read` (all roles) for the
-default `?mode=deterministic`; `?mode=model` additionally requires
-`analysis:run` (planner/supervisor).
+A new module (not `app/api/orders.py`, which Task 15 owns) — registered
+directly in `app/main.py`. `order:read` (all roles) for the default
+`?mode=deterministic`; `?mode=model` additionally requires `analysis:run`
+(planner/supervisor).
 
-The route finds the order's most recently `COMPLETED`/`DEGRADED`
-`analysis_runs` row and its latest `run.report` `run_events` payload itself
-(the same pattern `app/api/runs.py`'s `REPORT_EVENT_TYPE` lookup uses) rather
-than depending on a Task 15 `OrderDetail.latest_report` field that does not
-exist yet. **Degrade-gracefully choice** (documented per the brief, which
-left this open): when there is no such run/report, the route returns 409
-`CONFLICT` rather than a fabricated 200 "empty summary" — an empty
+**Fix round 1** (post-review): this route now shares
+`app.domain.orders.service.latest_order_report` with `order_detail`'s
+`latest_report` field, instead of an independent copy that used to filter
+runs to `status IN (COMPLETED, DEGRADED)` and inner-join `run_snapshots`
+(the same status filter `order_detail`'s helper never had). Reconciled in
+favour of the domain helper's original, more permissive behaviour, because
+`app.orchestration.orchestrator._finalize`/`_finalize_deadline` write a
+`run.report` event whatever status the run finalizes into — `COMPLETED`,
+`DEGRADED`, `AWAITING_REVIEW` (once a recommendation is proposed), or even
+`FAILED` (both RM and planning round 0 failed) — so a status filter would
+have silently hidden real, evidence-backed reports on `AWAITING_REVIEW`/
+`FAILED` runs. The shared helper also switched its `run_snapshots` join
+from inner to `LEFT JOIN`, so a report is never hidden just because its
+snapshot happens to be missing; a missing snapshot is instead treated
+conservatively as `stale=True` (there is nothing to compare freshness
+against). `GET /orders/{id}.latest_report` and
+`GET /orders/{id}/status-summary` now always agree on the same
+report/`stale` for the same order — see
+`test_status_summary_agrees_with_order_detail_latest_report` in
+`tests/integration/test_status_summary.py`.
+
+**Degrade-gracefully choice** (documented per the brief, which left this
+open): when there is no `run.report` event at all yet, the route returns
+409 `CONFLICT` rather than a fabricated 200 "empty summary" — an empty
 `sentences` list under a 200 risks being read as "this order has no issues"
 rather than "no analysis has run yet".
 
 `stale` mirrors task-15-brief.md requirement 5: `true` when the order's
 current `version` differs from what the run's `run_snapshots.input_versions
-["order"]` recorded it as when the report was computed.
+["order"]` recorded it as when the report was computed (or when there is no
+snapshot to compare against at all — see above).
 
 `?mode=model` cap: at most 10 `summary.model_generated` audit events per
 order per rolling 24h (counted directly from `audit_events`, scoped to the
@@ -195,4 +218,7 @@ lock), a known, documented, low-stakes race for a demo-scale feature.
   `LS_LLM_PROVIDER=fixture` client (which returns no scripted JSON sentences
   for this prompt, so every one falls back to `REJECTED_LABEL`) then an
   eleventh → 429 `RATE_LIMITED`, proving the cap end-to-end against the real
-  audit log rather than a mock.
+  audit log rather than a mock; and (fix round 1)
+  `test_status_summary_agrees_with_order_detail_latest_report`, which checks
+  `GET /orders/{id}` and `GET /orders/{id}/status-summary` against each
+  other for the same order across the present/absent/stale cases.

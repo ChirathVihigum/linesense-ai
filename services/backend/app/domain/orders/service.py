@@ -705,17 +705,46 @@ def _allowed_transitions(principal: Principal, order: Order) -> list[str]:
     return sorted(allowed)
 
 
-async def _latest_report(session: AsyncSession, order: Order) -> dict[str, Any] | None:
-    """The newest finalized run's order report, with a ``stale`` flag.
+@dataclass(frozen=True)
+class LatestOrderReport:
+    """The newest ``run.report`` event for an order, with staleness.
 
-    ``stale`` is true when the order has changed since the snapshot the report
-    was reasoned about, so the UI can say "this was true at version N".
+    Exported (not just the module-private ``_latest_report`` below) because
+    ``app.api.summaries`` (Task 18's grounded status-summary route) needs the
+    originating run's id alongside the same payload/``stale`` flag that
+    ``order_detail``'s ``latest_report`` field uses, so both endpoints agree
+    on exactly the same report for the same order.
+    """
+
+    run_id: uuid.UUID
+    payload: dict[str, Any]
+    stale: bool
+
+
+async def latest_order_report(session: AsyncSession, order: Order) -> LatestOrderReport | None:
+    """The newest ``run.report`` event for ``order``, with a ``stale`` flag.
+
+    No ``AnalysisRun.status`` filter: ``app.orchestration.orchestrator``'s
+    ``_append_report`` writes a ``run.report`` event whenever a run
+    finalizes, whatever status it finalizes into (``COMPLETED``,
+    ``DEGRADED``, ``AWAITING_REVIEW`` once a recommendation is proposed, or
+    ``FAILED`` when both RM and planning round 0 failed) — every one of
+    those already carries a real, evidence-backed report worth showing, so
+    filtering by status here would silently hide some of them.
+
+    ``LEFT JOIN`` to ``run_snapshots`` (not an inner join): ``_append_report``
+    only ever writes a report when its run already has a snapshot, so in
+    practice every report's run has one, but tolerating a hypothetically
+    missing snapshot here means the report still surfaces — conservatively
+    marked ``stale`` (there is then nothing to compare freshness against) —
+    instead of silently vanishing the way an inner join would.
     """
     row = (
         await session.execute(
-            select(RunEvent.payload, RunSnapshot.input_versions)
+            select(RunEvent.run_id, RunEvent.payload, RunSnapshot.input_versions)
+            .select_from(RunEvent)
             .join(AnalysisRun, AnalysisRun.id == RunEvent.run_id)
-            .join(RunSnapshot, RunSnapshot.id == AnalysisRun.snapshot_id)
+            .outerjoin(RunSnapshot, RunSnapshot.id == AnalysisRun.snapshot_id)
             .where(
                 AnalysisRun.order_id == order.id,
                 RunEvent.event_type == REPORT_EVENT_TYPE,
@@ -726,10 +755,23 @@ async def _latest_report(session: AsyncSession, order: Order) -> dict[str, Any] 
     ).first()
     if row is None:
         return None
-    payload, input_versions = row
+    run_id, payload, input_versions = row
     versions = input_versions.get("order") if isinstance(input_versions, dict) else None
     snapshot_version = versions.get(str(order.id)) if isinstance(versions, dict) else None
-    return {**payload, "stale": snapshot_version != order.version}
+    stale = snapshot_version != order.version
+    return LatestOrderReport(run_id=run_id, payload=payload, stale=stale)
+
+
+async def _latest_report(session: AsyncSession, order: Order) -> dict[str, Any] | None:
+    """``order_detail``'s ``latest_report`` field: the report payload plus ``stale``.
+
+    ``stale`` is true when the order has changed since the snapshot the report
+    was reasoned about, so the UI can say "this was true at version N".
+    """
+    result = await latest_order_report(session, order)
+    if result is None:
+        return None
+    return {**result.payload, "stale": result.stale}
 
 
 async def order_detail(
