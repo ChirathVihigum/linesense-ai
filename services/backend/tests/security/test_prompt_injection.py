@@ -46,13 +46,13 @@ from app.llm.client import LLMResponse, LLMToolCall
 from app.llm.fixture_client import FixtureLLMClient, FixtureRequest, FixtureScript
 from app.orchestration.protocol import AgentErrorCode
 from app.orchestration.snapshot import SnapshotBom, SnapshotBomLine, SnapshotIssue, SnapshotMaterial
+from app.retrieval.embedder import HashingEmbedder
 from app.retrieval.pipeline import create_document_upload, process_document_version
 from app.retrieval.search import RetrievalScope, ScopedRetrieval
 from app.retrieval.storage import DocumentStorage
-from app.retrieval.embedder import HashingEmbedder
 from app.seed import scenario as demo
 from app.settings import Settings
-from tests.helpers.agents import AS_OF, DUE_DATE, agent_context, snapshot_data
+from tests.helpers.agents import AS_OF, agent_context, snapshot_data
 from tests.helpers.auth import IdentityFixture, seed_identity
 
 pytestmark = [pytest.mark.integration, pytest.mark.security]
@@ -227,19 +227,19 @@ def _all_tool_result_texts(seen: list[FixtureRequest]) -> list[str]:
 
 async def _row_counts(db_session: AsyncSession, organization_id: uuid.UUID) -> tuple[int, int, int]:
     allocations = await db_session.scalar(
-        sa.select(sa.func.count()).select_from(Allocation).where(
-            Allocation.organization_id == organization_id
-        )
+        sa.select(sa.func.count())
+        .select_from(Allocation)
+        .where(Allocation.organization_id == organization_id)
     )
     reservations = await db_session.scalar(
-        sa.select(sa.func.count()).select_from(Reservation).where(
-            Reservation.organization_id == organization_id
-        )
+        sa.select(sa.func.count())
+        .select_from(Reservation)
+        .where(Reservation.organization_id == organization_id)
     )
     recommendations = await db_session.scalar(
-        sa.select(sa.func.count()).select_from(Recommendation).where(
-            Recommendation.organization_id == organization_id
-        )
+        sa.select(sa.func.count())
+        .select_from(Recommendation)
+        .where(Recommendation.organization_id == organization_id)
     )
     return int(allocations or 0), int(reservations or 0), int(recommendations or 0)
 

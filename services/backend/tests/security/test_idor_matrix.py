@@ -41,8 +41,8 @@ from collections.abc import Iterable
 import pytest
 from fastapi.routing import APIRoute
 from httpx import AsyncClient
-from starlette.routing import BaseRoute
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.routing import BaseRoute
 
 from app.main import create_app
 from app.settings import Settings
@@ -152,7 +152,9 @@ async def ktn_order(db_session: AsyncSession, identity: IdentityFixture) -> uuid
     return order.id
 
 
-@pytest.mark.parametrize(("path", "template"), SCOPED_GET_ROUTES, ids=[p for p, _ in SCOPED_GET_ROUTES])
+@pytest.mark.parametrize(
+    ("path", "template"), SCOPED_GET_ROUTES, ids=[p for p, _ in SCOPED_GET_ROUTES]
+)
 async def test_unauthenticated_caller_gets_401(
     client: AsyncClient, identity: IdentityFixture, path: str, template: str
 ) -> None:
@@ -163,7 +165,9 @@ async def test_unauthenticated_caller_gets_401(
     assert response.json()["error"]["code"] == "UNAUTHENTICATED"
 
 
-@pytest.mark.parametrize(("path", "template"), SCOPED_GET_ROUTES, ids=[p for p, _ in SCOPED_GET_ROUTES])
+@pytest.mark.parametrize(
+    ("path", "template"), SCOPED_GET_ROUTES, ids=[p for p, _ in SCOPED_GET_ROUTES]
+)
 async def test_byg_planner_cannot_reach_ktn_scoped_resources(
     client: AsyncClient,
     session_factory: async_sessionmaker[AsyncSession],

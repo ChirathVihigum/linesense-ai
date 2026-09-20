@@ -7,13 +7,23 @@ request, so the same conversation always yields the same tool call.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from app.llm.client import LLMResponse, LLMToolCall, LLMToolSpec
+
+# task-25-brief.md req. 6: an artificial per-call delay for the worker-kill
+# resilience test, so a task can be observably mid-flight (holding its job
+# lease) long enough to SIGKILL the worker running it. Not a Settings field:
+# it is read fresh on every call (never cached), which lets a test flip it
+# per subprocess via plain environment inheritance without threading a
+# Settings object through client construction.
+_FIXTURE_DELAY_ENV_VAR = "LS_FIXTURE_DELAY_SECONDS"
 
 SUBMIT_TOOL_NAME = "submit_assessment"
 _CONTEXT_RE = re.compile(r"<context>(.*?)</context>", re.DOTALL)
@@ -193,5 +203,8 @@ class FixtureLLMClient:
         max_tokens: int,
         timeout_seconds: float,
     ) -> LLMResponse:
+        delay = os.environ.get(_FIXTURE_DELAY_ENV_VAR)
+        if delay:
+            await asyncio.sleep(float(delay))
         request = FixtureRequest(system=system, messages=list(messages), tools=list(tools))
         return self._script(request)

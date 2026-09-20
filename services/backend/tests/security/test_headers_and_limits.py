@@ -50,7 +50,9 @@ async def _get(settings: Settings, path: str) -> object:
 
 async def test_api_json_responses_get_a_locked_down_csp_and_permissions_policy() -> None:
     response = await _get(Settings(_env_file=None, environment="test"), "/api/health/live")
-    assert response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    assert (
+        response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    )
     assert response.headers["permissions-policy"]
     assert "strict-transport-security" not in response.headers
 
@@ -70,14 +72,10 @@ def test_rate_limiting_is_off_by_default_in_tests_and_on_elsewhere() -> None:
     assert rate_limiting_enabled(Settings(_env_file=None, environment="development")) is True
     assert rate_limiting_enabled(_prod_settings()) is True
     assert (
-        rate_limiting_enabled(
-            Settings(_env_file=None, environment="test", rate_limit_enabled=True)
-        )
+        rate_limiting_enabled(Settings(_env_file=None, environment="test", rate_limit_enabled=True))
         is True
     )
-    assert (
-        rate_limiting_enabled(_prod_settings(rate_limit_enabled=False)) is False
-    )
+    assert rate_limiting_enabled(_prod_settings(rate_limit_enabled=False)) is False
 
 
 def test_token_bucket_limiter_allows_up_to_the_limit_then_blocks_then_refills() -> None:
@@ -162,7 +160,5 @@ async def test_search_is_rate_limited_per_user(
 
         # A different user gets an independent budget.
         other = await login_as(client, session_factory, "supervisor@demo.test")
-        other_response = await other.get(
-            f"/api/v1/factories/{ktn.id}/search", params={"q": "sop"}
-        )
+        other_response = await other.get(f"/api/v1/factories/{ktn.id}/search", params={"q": "sop"})
         assert other_response.status_code != 429
