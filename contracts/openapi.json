@@ -185,6 +185,168 @@
         "title": "AnalysisRequest",
         "type": "object"
       },
+      "AppliedAllocationOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "slot_id": {
+            "format": "uuid",
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "standard_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Minutes",
+            "type": "string"
+          },
+          "units": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Units",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slot_id",
+          "standard_minutes",
+          "units"
+        ],
+        "title": "AppliedAllocationOut",
+        "type": "object"
+      },
+      "AppliedOrderOut": {
+        "properties": {
+          "external_ref": {
+            "title": "External Ref",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "material_state": {
+            "title": "Material State",
+            "type": "string"
+          },
+          "production_state": {
+            "title": "Production State",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "external_ref",
+          "production_state",
+          "material_state",
+          "version"
+        ],
+        "title": "AppliedOrderOut",
+        "type": "object"
+      },
+      "AppliedReservationOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "material_id",
+          "quantity"
+        ],
+        "title": "AppliedReservationOut",
+        "type": "object"
+      },
+      "ApplyRequest": {
+        "properties": {
+          "proposal_hash": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Proposal Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_hash"
+        ],
+        "title": "ApplyRequest",
+        "type": "object"
+      },
+      "ApplyResultOut": {
+        "properties": {
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/AppliedAllocationOut"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "applied_at": {
+            "format": "date-time",
+            "title": "Applied At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "order": {
+            "$ref": "#/components/schemas/AppliedOrderOut"
+          },
+          "released_allocations": {
+            "title": "Released Allocations",
+            "type": "integer"
+          },
+          "released_reservations": {
+            "title": "Released Reservations",
+            "type": "integer"
+          },
+          "reservations": {
+            "items": {
+              "$ref": "#/components/schemas/AppliedReservationOut"
+            },
+            "title": "Reservations",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "applied_at",
+          "order",
+          "allocations",
+          "reservations",
+          "released_allocations",
+          "released_reservations"
+        ],
+        "title": "ApplyResultOut",
+        "type": "object"
+      },
       "AuditEventOut": {
         "properties": {
           "action": {
@@ -613,6 +775,114 @@
         "title": "DataQuality",
         "type": "object"
       },
+      "DecisionOut": {
+        "properties": {
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "decided_by": {
+            "$ref": "#/components/schemas/UserRef"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "decided_by",
+          "decided_at",
+          "reason"
+        ],
+        "title": "DecisionOut",
+        "type": "object"
+      },
+      "DecisionRequest": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "APPROVED",
+              "REJECTED"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "proposal_hash": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "decision",
+          "proposal_hash"
+        ],
+        "title": "DecisionRequest",
+        "type": "object"
+      },
+      "DecisionResult": {
+        "properties": {
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "decided_by": {
+            "$ref": "#/components/schemas/UserRef"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "decision",
+          "decided_by",
+          "decided_at",
+          "reason",
+          "version"
+        ],
+        "title": "DecisionResult",
+        "type": "object"
+      },
       "DefectCodeTrendOut": {
         "properties": {
           "count": {
@@ -776,6 +1046,157 @@
           "by_defect_code"
         ],
         "title": "DefectTrendOut",
+        "type": "object"
+      },
+      "EvidenceOut": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "citation_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation Url"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "document_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Title"
+          },
+          "document_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Version No"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id"
+          },
+          "record_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Type"
+          },
+          "record_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Version"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          }
+        },
+        "required": [
+          "agent",
+          "evidence_id",
+          "kind",
+          "description",
+          "record_type",
+          "record_id",
+          "record_version",
+          "document_id",
+          "document_title",
+          "document_version_no",
+          "page_number",
+          "section",
+          "chunk_id",
+          "citation_url"
+        ],
+        "title": "EvidenceOut",
         "type": "object"
       },
       "EvidenceRef": {
@@ -3197,6 +3618,37 @@
         "title": "Page[QualityHoldOut]",
         "type": "object"
       },
+      "Page_RecommendationSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecommendationSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[RecommendationSummary]",
+        "type": "object"
+      },
       "Page_RunSummary_": {
         "properties": {
           "items": {
@@ -3323,6 +3775,30 @@
         ],
         "title": "ProductionState",
         "type": "string"
+      },
+      "ProposalDiff": {
+        "properties": {
+          "reservations": {
+            "items": {
+              "$ref": "#/components/schemas/ReservationDiffOut"
+            },
+            "title": "Reservations",
+            "type": "array"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/SlotDiffOut"
+            },
+            "title": "Slots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "slots",
+          "reservations"
+        ],
+        "title": "ProposalDiff",
+        "type": "object"
       },
       "QualityHoldOut": {
         "properties": {
@@ -3563,6 +4039,241 @@
         "title": "ReceiptCreate",
         "type": "object"
       },
+      "RecommendationDetailOut": {
+        "properties": {
+          "applied_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "apply_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Blocked Reason"
+          },
+          "can_apply": {
+            "title": "Can Apply",
+            "type": "boolean"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decide_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decide Blocked Reason"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ProposalDiff"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceOut"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "generated_by": {
+            "title": "Generated By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_versions": {
+            "additionalProperties": true,
+            "title": "Input Versions",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "order": {
+            "$ref": "#/components/schemas/RecommendationOrderRef"
+          },
+          "proposal": {
+            "additionalProperties": true,
+            "title": "Proposal",
+            "type": "object"
+          },
+          "proposal_hash": {
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "proposed_by_agent": {
+            "title": "Proposed By Agent",
+            "type": "string"
+          },
+          "proposer": {
+            "$ref": "#/components/schemas/UserRef"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunRefOut"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "stale_inputs": {
+            "items": {
+              "$ref": "#/components/schemas/StaleInputOut"
+            },
+            "title": "Stale Inputs",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "status_source": {
+            "title": "Status Source",
+            "type": "string"
+          },
+          "superseded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded Reason"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "order",
+          "run",
+          "kind",
+          "status",
+          "generated_by",
+          "proposed_by_agent",
+          "proposer",
+          "rationale",
+          "proposal",
+          "proposal_hash",
+          "input_versions",
+          "status_source",
+          "decision",
+          "evidence",
+          "diff",
+          "stale",
+          "stale_inputs",
+          "expired",
+          "can_decide",
+          "decide_blocked_reason",
+          "can_apply",
+          "apply_blocked_reason",
+          "expires_at",
+          "superseded_reason",
+          "applied_at",
+          "created_at",
+          "version"
+        ],
+        "title": "RecommendationDetailOut",
+        "type": "object"
+      },
+      "RecommendationOrderRef": {
+        "properties": {
+          "due_date": {
+            "format": "date",
+            "title": "Due Date",
+            "type": "string"
+          },
+          "external_ref": {
+            "title": "External Ref",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "material_state": {
+            "title": "Material State",
+            "type": "string"
+          },
+          "production_state": {
+            "title": "Production State",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "external_ref",
+          "production_state",
+          "material_state",
+          "quantity",
+          "due_date",
+          "version"
+        ],
+        "title": "RecommendationOrderRef",
+        "type": "object"
+      },
       "RecommendationOut": {
         "properties": {
           "created_at": {
@@ -3629,6 +4340,124 @@
           "created_at"
         ],
         "title": "RecommendationOut",
+        "type": "object"
+      },
+      "RecommendationStatus": {
+        "enum": [
+          "DRAFT",
+          "PROPOSED",
+          "APPROVED",
+          "REJECTED",
+          "EXPIRED",
+          "APPLIED",
+          "SUPERSEDED"
+        ],
+        "title": "RecommendationStatus",
+        "type": "string"
+      },
+      "RecommendationSummary": {
+        "properties": {
+          "applied_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "generated_by": {
+            "title": "Generated By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderRef"
+          },
+          "proposal_hash": {
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "proposed_by_agent": {
+            "title": "Proposed By Agent",
+            "type": "string"
+          },
+          "proposer": {
+            "$ref": "#/components/schemas/UserRef"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "status_source": {
+            "title": "Status Source",
+            "type": "string"
+          },
+          "superseded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded Reason"
+          }
+        },
+        "required": [
+          "id",
+          "order",
+          "run_id",
+          "kind",
+          "status",
+          "generated_by",
+          "proposed_by_agent",
+          "proposer",
+          "rationale",
+          "proposal_hash",
+          "status_source",
+          "expires_at",
+          "expired",
+          "superseded_reason",
+          "applied_at",
+          "created_at"
+        ],
+        "title": "RecommendationSummary",
         "type": "object"
       },
       "RecommendedAction": {
@@ -3828,6 +4657,60 @@
           "quantity"
         ],
         "title": "ReservationCreate",
+        "type": "object"
+      },
+      "ReservationDiffOut": {
+        "properties": {
+          "available_after": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available After",
+            "type": "string"
+          },
+          "material_code": {
+            "title": "Material Code",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "on_hand": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "reserved_after": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reserved After",
+            "type": "string"
+          },
+          "reserved_before": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reserved Before",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "material_id",
+          "material_code",
+          "quantity",
+          "unit",
+          "on_hand",
+          "reserved_before",
+          "reserved_after",
+          "available_after"
+        ],
+        "title": "ReservationDiffOut",
         "type": "object"
       },
       "ReservationOut": {
@@ -4065,6 +4948,29 @@
         "title": "RunEventOut",
         "type": "object"
       },
+      "RunRefOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/LlmLabel"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "llm"
+        ],
+        "title": "RunRefOut",
+        "type": "object"
+      },
       "RunSummary": {
         "properties": {
           "completed_at": {
@@ -4218,6 +5124,85 @@
         "title": "SlotAllocationOut",
         "type": "object"
       },
+      "SlotDiffOut": {
+        "properties": {
+          "allocated_after": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Allocated After",
+            "type": "string"
+          },
+          "allocated_before": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Allocated Before",
+            "type": "string"
+          },
+          "capacity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Capacity",
+            "type": "string"
+          },
+          "line_code": {
+            "title": "Line Code",
+            "type": "string"
+          },
+          "remaining_after": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining After",
+            "type": "string"
+          },
+          "shift_code": {
+            "title": "Shift Code",
+            "type": "string"
+          },
+          "slot_date": {
+            "format": "date",
+            "title": "Slot Date",
+            "type": "string"
+          },
+          "slot_id": {
+            "format": "uuid",
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "standard_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Minutes",
+            "type": "string"
+          },
+          "units": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Units",
+            "type": "string"
+          },
+          "utilization_after": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilization After"
+          }
+        },
+        "required": [
+          "slot_id",
+          "line_code",
+          "slot_date",
+          "shift_code",
+          "capacity",
+          "allocated_before",
+          "allocated_after",
+          "remaining_after",
+          "utilization_after",
+          "standard_minutes",
+          "units"
+        ],
+        "title": "SlotDiffOut",
+        "type": "object"
+      },
       "SlotOut": {
         "properties": {
           "allocated_standard_minutes": {
@@ -4297,6 +5282,42 @@
           "allocations"
         ],
         "title": "SlotOut",
+        "type": "object"
+      },
+      "StaleInputOut": {
+        "properties": {
+          "current_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "expected_version",
+          "current_version"
+        ],
+        "title": "StaleInputOut",
         "type": "object"
       },
       "StockCommandResult": {
@@ -5732,6 +6753,88 @@
         ]
       }
     },
+    "/api/v1/factories/{factory_id}/recommendations": {
+      "get": {
+        "operationId": "list_recommendations_api_v1_factories__factory_id__recommendations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RecommendationStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RecommendationSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Recommendations",
+        "tags": [
+          "recommendations"
+        ]
+      }
+    },
     "/api/v1/factories/{factory_id}/reservations": {
       "get": {
         "operationId": "list_reservations_api_v1_factories__factory_id__reservations_get",
@@ -6978,6 +8081,166 @@
         "summary": "Transition Order",
         "tags": [
           "orders"
+        ]
+      }
+    },
+    "/api/v1/recommendations/{rec_id}": {
+      "get": {
+        "operationId": "get_recommendation_api_v1_recommendations__rec_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rec_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Rec Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Recommendation",
+        "tags": [
+          "recommendations"
+        ]
+      }
+    },
+    "/api/v1/recommendations/{rec_id}/apply": {
+      "post": {
+        "operationId": "apply_recommendation_api_v1_recommendations__rec_id__apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rec_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Rec Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResultOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Recommendation",
+        "tags": [
+          "recommendations"
+        ]
+      }
+    },
+    "/api/v1/recommendations/{rec_id}/decision": {
+      "post": {
+        "operationId": "decide_recommendation_api_v1_recommendations__rec_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rec_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Rec Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Recommendation",
+        "tags": [
+          "recommendations"
         ]
       }
     },

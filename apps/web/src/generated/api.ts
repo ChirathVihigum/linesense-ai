@@ -294,6 +294,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/factories/{factory_id}/recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Recommendations */
+        get: operations["list_recommendations_api_v1_factories__factory_id__recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/factories/{factory_id}/reservations": {
         parameters: {
             query?: never;
@@ -652,6 +669,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recommendations/{rec_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recommendation */
+        get: operations["get_recommendation_api_v1_recommendations__rec_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recommendations/{rec_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Recommendation */
+        post: operations["apply_recommendation_api_v1_recommendations__rec_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recommendations/{rec_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Recommendation */
+        post: operations["decide_recommendation_api_v1_recommendations__rec_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reservations/{reservation_id}/release": {
         parameters: {
             query?: never;
@@ -868,6 +936,83 @@ export interface components {
             /** Expected Order Version */
             expected_order_version: number;
         };
+        /** AppliedAllocationOut */
+        AppliedAllocationOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Slot Id
+             * Format: uuid
+             */
+            slot_id: string;
+            /** Standard Minutes */
+            standard_minutes: string;
+            /** Units */
+            units: string;
+        };
+        /** AppliedOrderOut */
+        AppliedOrderOut: {
+            /** External Ref */
+            external_ref: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Material State */
+            material_state: string;
+            /** Production State */
+            production_state: string;
+            /** Version */
+            version: number;
+        };
+        /** AppliedReservationOut */
+        AppliedReservationOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Material Id
+             * Format: uuid
+             */
+            material_id: string;
+            /** Quantity */
+            quantity: string;
+        };
+        /** ApplyRequest */
+        ApplyRequest: {
+            /** Proposal Hash */
+            proposal_hash: string;
+        };
+        /** ApplyResultOut */
+        ApplyResultOut: {
+            /** Allocations */
+            allocations: components["schemas"]["AppliedAllocationOut"][];
+            /**
+             * Applied At
+             * Format: date-time
+             */
+            applied_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            order: components["schemas"]["AppliedOrderOut"];
+            /** Released Allocations */
+            released_allocations: number;
+            /** Released Reservations */
+            released_reservations: number;
+            /** Reservations */
+            reservations: components["schemas"]["AppliedReservationOut"][];
+            /** Status */
+            status: string;
+        };
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -1035,6 +1180,53 @@ export interface components {
             /** Notes */
             notes: string[];
         };
+        /** DecisionOut */
+        DecisionOut: {
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            decided_by: components["schemas"]["UserRef"];
+            /** Decision */
+            decision: string;
+            /** Reason */
+            reason: string;
+        };
+        /** DecisionRequest */
+        DecisionRequest: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "APPROVED" | "REJECTED";
+            /** Proposal Hash */
+            proposal_hash: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** DecisionResult */
+        DecisionResult: {
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            decided_by: components["schemas"]["UserRef"];
+            /** Decision */
+            decision: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Reason */
+            reason: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
         /** DefectCodeTrendOut */
         DefectCodeTrendOut: {
             /** Count */
@@ -1088,6 +1280,37 @@ export interface components {
             inspected_units: number;
             /** Window Days */
             window_days: number;
+        };
+        /** EvidenceOut */
+        EvidenceOut: {
+            /** Agent */
+            agent: string;
+            /** Chunk Id */
+            chunk_id: string | null;
+            /** Citation Url */
+            citation_url: string | null;
+            /** Description */
+            description: string;
+            /** Document Id */
+            document_id: string | null;
+            /** Document Title */
+            document_title: string | null;
+            /** Document Version No */
+            document_version_no: number | null;
+            /** Evidence Id */
+            evidence_id: string;
+            /** Kind */
+            kind: string;
+            /** Page Number */
+            page_number: number | null;
+            /** Record Id */
+            record_id: string | null;
+            /** Record Type */
+            record_type: string | null;
+            /** Record Version */
+            record_version: number | null;
+            /** Section */
+            section: string | null;
         };
         /** EvidenceRef */
         EvidenceRef: {
@@ -2014,6 +2237,17 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Page[RecommendationSummary] */
+        Page_RecommendationSummary_: {
+            /** Items */
+            items: components["schemas"]["RecommendationSummary"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** Page[RunSummary] */
         Page_RunSummary_: {
             /** Items */
@@ -2063,6 +2297,13 @@ export interface components {
          * @enum {string}
          */
         ProductionState: "DRAFT" | "VALIDATED" | "PLANNED" | "IN_PRODUCTION" | "PRODUCTION_COMPLETE" | "DISPATCHED" | "CANCELLED";
+        /** ProposalDiff */
+        ProposalDiff: {
+            /** Reservations */
+            reservations: components["schemas"]["ReservationDiffOut"][];
+            /** Slots */
+            slots: components["schemas"]["SlotDiffOut"][];
+        };
         /** QualityHoldOut */
         QualityHoldOut: {
             /**
@@ -2151,6 +2392,96 @@ export interface components {
             /** Quantity */
             quantity: number | string;
         };
+        /** RecommendationDetailOut */
+        RecommendationDetailOut: {
+            /** Applied At */
+            applied_at: string | null;
+            /** Apply Blocked Reason */
+            apply_blocked_reason: string | null;
+            /** Can Apply */
+            can_apply: boolean;
+            /** Can Decide */
+            can_decide: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decide Blocked Reason */
+            decide_blocked_reason: string | null;
+            decision: components["schemas"]["DecisionOut"] | null;
+            diff: components["schemas"]["ProposalDiff"];
+            /** Evidence */
+            evidence: components["schemas"]["EvidenceOut"][];
+            /** Expired */
+            expired: boolean;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Generated By */
+            generated_by: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Versions */
+            input_versions: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            order: components["schemas"]["RecommendationOrderRef"];
+            /** Proposal */
+            proposal: {
+                [key: string]: unknown;
+            };
+            /** Proposal Hash */
+            proposal_hash: string;
+            /** Proposed By Agent */
+            proposed_by_agent: string;
+            proposer: components["schemas"]["UserRef"];
+            /** Rationale */
+            rationale: string;
+            run: components["schemas"]["RunRefOut"];
+            /** Stale */
+            stale: boolean;
+            /** Stale Inputs */
+            stale_inputs: components["schemas"]["StaleInputOut"][];
+            /** Status */
+            status: string;
+            /** Status Source */
+            status_source: string;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Version */
+            version: number;
+        };
+        /** RecommendationOrderRef */
+        RecommendationOrderRef: {
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** External Ref */
+            external_ref: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Material State */
+            material_state: string;
+            /** Production State */
+            production_state: string;
+            /** Quantity */
+            quantity: number;
+            /** Version */
+            version: number;
+        };
         /** RecommendationOut */
         RecommendationOut: {
             /**
@@ -2180,6 +2511,56 @@ export interface components {
             rationale: string;
             /** Status */
             status: string;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+        };
+        /**
+         * RecommendationStatus
+         * @enum {string}
+         */
+        RecommendationStatus: "DRAFT" | "PROPOSED" | "APPROVED" | "REJECTED" | "EXPIRED" | "APPLIED" | "SUPERSEDED";
+        /** RecommendationSummary */
+        RecommendationSummary: {
+            /** Applied At */
+            applied_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expired */
+            expired: boolean;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Generated By */
+            generated_by: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            order: components["schemas"]["OrderRef"];
+            /** Proposal Hash */
+            proposal_hash: string;
+            /** Proposed By Agent */
+            proposed_by_agent: string;
+            proposer: components["schemas"]["UserRef"];
+            /** Rationale */
+            rationale: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Status */
+            status: string;
+            /** Status Source */
+            status_source: string;
             /** Superseded Reason */
             superseded_reason: string | null;
         };
@@ -2275,6 +2656,28 @@ export interface components {
             /** Quantity */
             quantity: number | string;
         };
+        /** ReservationDiffOut */
+        ReservationDiffOut: {
+            /** Available After */
+            available_after: string;
+            /** Material Code */
+            material_code: string;
+            /**
+             * Material Id
+             * Format: uuid
+             */
+            material_id: string;
+            /** On Hand */
+            on_hand: string;
+            /** Quantity */
+            quantity: string;
+            /** Reserved After */
+            reserved_after: string;
+            /** Reserved Before */
+            reserved_before: string;
+            /** Unit */
+            unit: string;
+        };
         /** ReservationOut */
         ReservationOut: {
             /**
@@ -2369,6 +2772,17 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** RunRefOut */
+        RunRefOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            llm: components["schemas"]["LlmLabel"];
+            /** Status */
+            status: string;
+        };
         /** RunSummary */
         RunSummary: {
             /** Completed At */
@@ -2426,6 +2840,37 @@ export interface components {
             /** Units */
             units: string;
         };
+        /** SlotDiffOut */
+        SlotDiffOut: {
+            /** Allocated After */
+            allocated_after: string;
+            /** Allocated Before */
+            allocated_before: string;
+            /** Capacity */
+            capacity: string;
+            /** Line Code */
+            line_code: string;
+            /** Remaining After */
+            remaining_after: string;
+            /** Shift Code */
+            shift_code: string;
+            /**
+             * Slot Date
+             * Format: date
+             */
+            slot_date: string;
+            /**
+             * Slot Id
+             * Format: uuid
+             */
+            slot_id: string;
+            /** Standard Minutes */
+            standard_minutes: string;
+            /** Units */
+            units: string;
+            /** Utilization After */
+            utilization_after: string | null;
+        };
         /** SlotOut */
         SlotOut: {
             /** Allocated Standard Minutes */
@@ -2456,6 +2901,20 @@ export interface components {
             utilization: string | null;
             /** Version */
             version: number;
+        };
+        /** StaleInputOut */
+        StaleInputOut: {
+            /** Current Version */
+            current_version: number | null;
+            /** Expected Version */
+            expected_version: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
         };
         /** StockCommandResult */
         StockCommandResult: {
@@ -3140,6 +3599,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DefectTrendOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_recommendations_api_v1_factories__factory_id__recommendations_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["RecommendationStatus"] | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                factory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RecommendationSummary_"];
                 };
             };
             /** @description Validation Error */
@@ -3881,6 +4375,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_recommendation_api_v1_recommendations__rec_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rec_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_recommendation_api_v1_recommendations__rec_id__apply_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                rec_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyResultOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_recommendation_api_v1_recommendations__rec_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rec_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionResult"];
                 };
             };
             /** @description Validation Error */

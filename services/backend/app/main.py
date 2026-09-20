@@ -19,6 +19,7 @@ from app.api.middleware import SecurityHeadersMiddleware, TraceIdMiddleware
 from app.api.notifications import router as notifications_router
 from app.api.orders import router as orders_router
 from app.api.quality import router as quality_router
+from app.api.recommendations import router as recommendations_router
 from app.api.reference import router as reference_router
 from app.api.runs import router as runs_router
 from app.auth.csrf import CsrfMiddleware
@@ -74,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(quality_router)
     app.include_router(analyses_router)
     app.include_router(runs_router)
+    app.include_router(recommendations_router)
     app.include_router(internal_router)
 
     return app
