@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import bisect
 import re
+import unicodedata
 from typing import Any
 
 REDACTED = "[REDACTED]"
@@ -46,9 +47,20 @@ REDACTED = "[REDACTED]"
 # expansions below never cross another "@" and total work is O(n).
 #
 # Character classes (Unicode-aware, so non-ASCII addresses are covered whole):
-# - local part: any Unicode letter/digit (``str.isalnum()``) or one of
-#   ``._%+-``;
-# - domain: any Unicode letter/digit or one of ``.-``.
+# - local part: any Unicode letter/digit (``str.isalnum()``), any Unicode
+#   combining mark (category ``Mn``/``Mc``/``Me``: see ``_is_combining_mark``),
+#   or one of ``._%+-``;
+# - domain: the same, plus one of ``.-``.
+#
+# A NFD-decomposed address (e.g. "josé@x.com" normalized to
+# "josé@x.com", the accent as a standalone combining codepoint) has a
+# combining mark as its last local-part character or inside a domain label.
+# ``"́".isalnum()`` is ``False``, so without this, the local/domain scan
+# stopped one character short of "@"/the label boundary and the span-building
+# check in ``_email_spans`` (``start < at`` / a non-empty label) then dropped
+# the match's decomposed tail entirely -- silently leaking part of the
+# address. Treating combining marks as word characters keeps the whole
+# decomposed grapheme cluster inside the local/domain run.
 _EMAIL_LOCAL_PUNCT = frozenset("._%+-")
 _EMAIL_DOMAIN_PUNCT = frozenset(".-")
 _API_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
@@ -105,12 +117,28 @@ def _is_phone_like(candidate: str) -> bool:
     return _PHONE_MIN_DIGITS <= digits <= _PHONE_MAX_DIGITS
 
 
+def _is_combining_mark(char: str) -> bool:
+    """Whether ``char`` is a Unicode combining mark (category ``Mn``/``Mc``/``Me``).
+
+    NFD-normalised text spells an accented letter as a base letter followed
+    by one of these; ``str.isalnum()`` is ``False`` for them on their own, so
+    a scan that only checked ``isalnum()``/``isalpha()`` would stop inside a
+    decomposed grapheme cluster (see the module docstring and the comment
+    above ``_EMAIL_LOCAL_PUNCT``).
+    """
+    return unicodedata.category(char)[0] == "M"
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or _is_combining_mark(char)
+
+
 def _is_local_char(char: str) -> bool:
-    return char.isalnum() or char in _EMAIL_LOCAL_PUNCT
+    return _is_word_char(char) or char in _EMAIL_LOCAL_PUNCT
 
 
 def _is_domain_char(char: str) -> bool:
-    return char.isalnum() or char in _EMAIL_DOMAIN_PUNCT
+    return _is_word_char(char) or char in _EMAIL_DOMAIN_PUNCT
 
 
 def _expand_left(text: str, index: int, floor: int) -> int:
@@ -161,7 +189,7 @@ def _valid_domain_end(text: str, index: int) -> int:
             seen_dot = True
             label_start = position + 1
             alpha_run = True
-        elif char.isalpha():
+        elif char.isalpha() or _is_combining_mark(char):
             pass
         elif _is_domain_char(char):
             alpha_run = False
@@ -172,7 +200,10 @@ def _valid_domain_end(text: str, index: int) -> int:
             seen_dot
             and alpha_run
             and position - label_start >= 2
-            and (position == length or not text[position].isalpha())
+            and (
+                position == length
+                or not (text[position].isalpha() or _is_combining_mark(text[position]))
+            )
         ):
             best = position
     return best

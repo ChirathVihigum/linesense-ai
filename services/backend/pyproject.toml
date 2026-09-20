@@ -61,6 +61,7 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 markers = [
   "integration: requires the real PostgreSQL test database",
+  "security: security/resilience hardening suite (task-25-brief.md), run by `make security`",
 ]
 addopts = "-ra"
 

@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      task-25-brief.md req. 1: a static-host fallback for the CSP set as a
+      real response header in vite.config.ts (`SECURITY_HEADERS`) for the dev
+      and preview servers. `'unsafe-inline'` is scoped to `style-src` only,
+      for Recharts' inline `style="..."` attributes (see vite.config.ts for
+      the full rationale). `frame-ancestors` is omitted here: the <meta>
+      form of CSP never enforces it per the CSP spec, so only the HTTP
+      header actually blocks framing.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'"
+    />
     <title>LineSense AI</title>
   </head>
   <body>

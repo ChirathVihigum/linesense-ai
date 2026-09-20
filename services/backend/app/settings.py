@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     run_deadline_seconds: int = 120
     max_upload_bytes: int = 10_485_760
 
+    # task-25-brief.md req. 2: single-process token-bucket rate limiting.
+    # `None` (the default) means "on, except when `environment == 'test'`" so
+    # ordinary test runs never trip it; `True`/`False` are explicit overrides
+    # for a test (or a deployment) that wants a fixed answer either way.
+    rate_limit_enabled: bool | None = None
+
     @model_validator(mode="after")
     def _validate_production_hardening(self) -> Settings:
         if self.environment != "production":
