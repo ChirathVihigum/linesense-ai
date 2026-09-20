@@ -44,6 +44,8 @@ from app.orchestration.protocol import (
 )
 from app.orchestration.snapshot import SnapshotData
 from app.orchestration.validation import validate_result
+from app.retrieval.embedder import build_embedder
+from app.retrieval.search import RetrievalScope, ScopedRetrieval
 
 logger = structlog.get_logger("app.orchestration")
 
@@ -359,6 +361,9 @@ async def _prepare(
             AgentErrorCode.MISSING_DATA, f"no agent is registered for {task.recipient!r}"
         )
     envelope = TaskEnvelope.model_validate(task.envelope)
+    retrieval_scope = RetrievalScope(
+        organization_id=run.organization_id, factory_id=run.factory_id, roles=roles
+    )
     agent_ctx = AgentContext(
         run_id=run.id,
         task_id=task.id,
@@ -376,6 +381,9 @@ async def _prepare(
         settings=ctx.settings,
         deadline_at=task.deadline_at,
         requester_roles=roles,
+        retrieval=ScopedRetrieval(
+            ctx.session_factory, retrieval_scope, build_embedder(ctx.settings)
+        ),
         # The dispatching orchestrator's allowance for this task; the loop
         # still caps it at its own MAX_TOOL_CALLS.
         max_tool_calls=envelope.constraints.max_tool_calls,

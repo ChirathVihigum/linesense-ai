@@ -35,7 +35,7 @@ _DEFAULT_TEST_MIGRATION_DATABASE_URL = (
 
 
 @pytest.fixture(scope="session")
-def settings() -> Settings:
+def settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
     """Settings configured for the test environment against linesense_test."""
     test_database_url = os.environ.get("LS_TEST_DATABASE_URL", _DEFAULT_TEST_DATABASE_URL)
     test_migration_database_url = os.environ.get(
@@ -48,6 +48,13 @@ def settings() -> Settings:
         migration_database_url=test_migration_database_url,
         test_database_url=test_database_url,
         test_migration_database_url=test_migration_database_url,
+        # The real fastembed model is a one-off, deliberate network download
+        # (see docs/architecture/retrieval.md); tests always use the
+        # deterministic HashingEmbedder instead (task-17-brief.md).
+        embedder="hashing",
+        # An HTTP-driven document upload test writes real files; keep them
+        # under pytest's own tmp dir, never the repo's `.local/documents`.
+        document_storage_dir=str(tmp_path_factory.mktemp("document-storage")),
     )
 
 

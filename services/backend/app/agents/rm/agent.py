@@ -52,8 +52,10 @@ from app.orchestration.protocol import (
     RecommendedAction,
 )
 from app.orchestration.snapshot import SnapshotBomLine, SnapshotData, SnapshotMaterial
+from app.retrieval.agent_tool import make_search_documents_tool
 
 ASSESS_TASK_TYPE = "assess_material_readiness"
+DOCUMENT_SEARCH_DEFAULT_QUERY = "material shortage replenishment reservation policy"
 VALIDATE_TASK_TYPE = "validate_plan_materials"
 SUGGESTION_NOTE = "Suggestion only — no purchase order is created"
 _UNITS = "units"
@@ -474,6 +476,7 @@ class RMAgent(BaseAgent):
                 input_model=BomDemandInput,
                 handler=_tool_bom_demand,
             ),
+            make_search_documents_tool(default_query=DOCUMENT_SEARCH_DEFAULT_QUERY),
         ]
 
 

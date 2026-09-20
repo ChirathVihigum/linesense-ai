@@ -19,7 +19,15 @@ from app.orchestration.executor import (
     on_agent_task_exhausted,
 )
 from app.orchestration.orchestrator import advance_run
-from app.settings import Settings
+from app.retrieval.embedder import build_embedder
+from app.retrieval.pipeline import (
+    DOCUMENT_PROCESS_JOB,
+    PROCESSING_FAILED_MESSAGE,
+    process_document_version,
+    reject_document_version,
+)
+from app.retrieval.storage import DocumentStorage
+from app.settings import Settings, resolve_backend_path
 
 logger = structlog.get_logger("app.jobs")
 
@@ -71,6 +79,45 @@ async def handle_refresh_material_states(ctx: JobContext) -> None:
     )
 
 
+def _document_storage(settings: Settings) -> DocumentStorage:
+    return DocumentStorage(resolve_backend_path(settings.document_storage_dir))
+
+
+async def handle_document_process(ctx: JobContext) -> None:
+    """Extract, chunk, embed and activate/reject one quarantined document version.
+
+    Unexpected errors are left to propagate: the worker retries the job with
+    backoff (backend-contracts.md section 7); only once attempts are
+    exhausted does ``on_document_process_exhausted`` reject the version.
+    Rejections the pipeline itself detects (unsupported document, extraction
+    timeout) are handled inside ``process_document_version`` and never raise.
+    """
+    version_id = uuid.UUID(str(ctx.job.payload["document_version_id"]))
+    embedder = build_embedder(ctx.settings)
+    storage = _document_storage(ctx.settings)
+    await process_document_version(
+        ctx.session_factory, version_id, embedder=embedder, storage=storage
+    )
+    async with ctx.session_factory() as session, session.begin():
+        await finish_in_transaction(ctx, session)
+    logger.info("document.processed", job_id=str(ctx.job.id), document_version_id=str(version_id))
+
+
+async def on_document_process_exhausted(ctx: JobContext, error: str) -> None:
+    """Last-chance outcome once every ``document.process`` attempt has failed."""
+    version_id = uuid.UUID(str(ctx.job.payload["document_version_id"]))
+    storage = _document_storage(ctx.settings)
+    await reject_document_version(
+        ctx.session_factory, version_id, reason=PROCESSING_FAILED_MESSAGE, storage=storage
+    )
+    logger.warning(
+        "document.processing_exhausted",
+        job_id=str(ctx.job.id),
+        document_version_id=str(version_id),
+        error=error,
+    )
+
+
 def build_registry(settings: Settings) -> HandlerRegistry:
     """Every job type the worker can run (``settings`` is for handlers added later)."""
     registry = HandlerRegistry()
@@ -79,4 +126,7 @@ def build_registry(settings: Settings) -> HandlerRegistry:
     registry.register(MAINTENANCE_REFRESH_MATERIAL_STATES, handle_refresh_material_states)
     registry.register(AGENT_EXECUTE_JOB, execute_agent_task, on_exhausted=on_agent_task_exhausted)
     registry.register(ORCHESTRATOR_ADVANCE_JOB, advance_run)
+    registry.register(
+        DOCUMENT_PROCESS_JOB, handle_document_process, on_exhausted=on_document_process_exhausted
+    )
     return registry

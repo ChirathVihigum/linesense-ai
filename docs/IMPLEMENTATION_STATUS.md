@@ -2584,3 +2584,113 @@ there concurrently.
   already carry `latest_report` (another agent regenerated them) together with several unreleased
   routes of theirs (documents, search, notes, admin, dashboard, order history, status summary), so
   they are theirs to commit. Full suites remain PENDING (user approval/CI).
+
+### 2026-09-20 — Task 17: document pipeline, hybrid retrieval, citations, agent document tool
+
+- **Built** `services/backend/app/retrieval/`: `storage.py` (`DocumentStorage`, quarantine/store,
+  keys are always `uuid4().hex`, never derived from a filename), `extract.py` (`extract_text`,
+  `ExtractedSection`, `UnsupportedDocument` — PDF structural scan for encryption/active-content
+  markers/page count/no-text, Markdown/text front-matter stripping and heading splitting),
+  `chunking.py` (`chunk_sections`, `ChunkDraft` — 500/80/700 token target/overlap/max, never
+  crossing a section), `embedder.py` (`Embedder` protocol, `FastEmbedEmbedder`, `HashingEmbedder`,
+  `build_embedder`), `pipeline.py` (`create_document_upload`, `process_document_version`,
+  `reject_document_version` — QUARANTINE → PROCESSING → {ACTIVE, REJECTED}, one document version
+  ACTIVE at a time, lease-lost-retry-safe), `search.py` (`RetrievalScope`, `RetrievedChunk`,
+  `search` — lexical `ts_rank_cd`/`websearch_to_tsquery` + vector `<=>` cosine distance behind the
+  same org/factory/ACL/status filter, RRF hybrid fusion; `get_citation`, `ScopedRetrieval`),
+  `loader.py` (`load_corpus_directory` — front-matter-tagged Markdown corpus ingestion, used by
+  seeding), `agent_tool.py` (`make_search_documents_tool` — reusable `search_documents` tool
+  factory, new file not in the original plan, added per the dispatch's conflict-avoidance
+  instruction so IE/quality's in-flight agent files were never touched).
+- **API:** `app/api/documents.py` (upload — multipart, size/type sniffing, org-scope requires
+  `org_admin`/`supervisor`, idempotent, quarantines then enqueues `document.process`; list/detail
+  with document-level ACL filtering; version detail; download streaming
+  `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff`, only for `ACTIVE`/
+  `SUPERSEDED`), `app/api/search.py` (`GET /factories/{f}/search`, `GET /citations/{chunk_id}` —
+  `run_id`-gated superseded-chunk visibility), `app/api/schemas/documents.py`. Both routers wired
+  into `app/main.py`.
+- **Jobs:** `document.process` registered in `app/jobs/handlers.py`
+  (`handle_document_process`/`on_document_process_exhausted`) — unexpected errors propagate for the
+  worker's normal retry-with-backoff; only exhaustion (or a scan/timeout the pipeline itself
+  detects) rejects the version with "Processing failed" and notifies the uploader (an org-wide
+  document falls back to a factory the uploader holds a role in, then any factory in the org, since
+  `notifications.factory_id` is `NOT NULL`).
+- **Agent wiring:** `app/agents/base.py` — `RetrievedChunkLike` protocol properties widened
+  (`document_slug`, `title`, `version_no`) and declared as `@property` (not plain attributes) so
+  the concrete frozen-dataclass `RetrievedChunk` structurally satisfies it under mypy's read-only-
+  attribute check for Protocol members; `RetrievalPort.search` returns `Sequence[...]` (covariant),
+  not `list[...]` (invariant), for the same reason. `app/orchestration/executor.py::_prepare` now
+  builds a `ScopedRetrieval` (org/factory from the run, roles = the requester's *current* roles)
+  and attaches it to `AgentContext.retrieval`. `app/agents/rm/agent.py` wires
+  `search_documents(default_query="material shortage replenishment reservation policy")` into its
+  tool list. **Follow-up, not done here:** wiring the same factory into `app/agents/ie/` and
+  `app/agents/quality/` (Task 15 owns those files concurrently; the dispatch explicitly said not to
+  touch them).
+- **Seeding:** `python -m app.seed --with-documents` (`app/seed/__main__.py`) loads
+  `data/synthetic/sops/` via `load_corpus_directory` (front-matter `scope`/`acl` →
+  `factory_id`/`document_acl`; `versions/fabric-receiving-inspection-v1.md` ingested first so the
+  current file supersedes it as version 2), idempotent by `(slug, sha256)`. `make seed` now passes
+  the flag. Uses `LS_EMBEDDER` (fastembed by default — first run downloads
+  `BAAI/bge-small-en-v1.5` to `.local/models`, a deliberate one-off network fetch, not run in this
+  session per the heat policy).
+- **Shared-file changes (minimal, re-read immediately before editing):** `tests/conftest.py` — the
+  session `settings` fixture now sets `embedder="hashing"` (so no test path ever triggers a
+  fastembed download) and `document_storage_dir` to a session-scoped `tmp_path_factory` directory
+  (so an HTTP-driven upload test never writes into the repo's real `.local/documents`).
+  `Makefile`'s `seed` target now passes `--with-documents`. `app/main.py` gained the two new
+  routers. `tests/agents/test_rm_agent.py`'s tool-set assertion now includes `search_documents`
+  (necessary maintenance of an existing test, not a weakening).
+- **Tests (all via `scripts/heavy-job.sh`, DB letter `e`):**
+  `tests/unit/test_chunking.py`, `tests/unit/test_extract.py` (with `tests/helpers/pdf.py` — a
+  hand-written minimal one-page PDF plus `pypdf.PdfWriter.encrypt`-derived and no-text variants):
+  17 passed.
+  `tests/integration/test_document_pipeline.py` (upload→ACTIVE with embeddings; identical-content
+  re-upload → 409; v2 supersedes v1 and v1 stops being searchable; encrypted PDF rejected and
+  removed from quarantine; a second `process_document_version` call for an already-ACTIVE version
+  never doubles its chunks; oversize → 413; `.pdf`-named markdown → 415;
+  `../../etc/passwd.md` filename never affects the storage path), `tests/integration/test_search.py`
+  (lexical exact term; vector finds a word-overlap case lexical's AND-of-terms misses entirely;
+  hybrid fusion; KTN cannot see a BYG-scoped document; a planner cannot see an ACL-restricted
+  document a supervisor can; another organization's chunks never appear even with identical
+  content; the citations endpoint 404s a BYG-scoped chunk for a KTN-only caller and 200s it for a
+  BYG caller), `tests/security/test_document_access.py` (upload permission/org-scope checks with
+  DENIED audit rows, document list/detail ACL visibility, download refuses a still-quarantined
+  version): 8 + 7 + 5 = 20 passed.
+  `tests/agents/test_document_tool.py`: the tool returns only in-scope chunks; and the adversarial
+  fixture (`data/synthetic/adversarial/injection-sop.md`, which asks the model to approve without
+  review, call `delete_all_records`, reveal a secret and cite a fabricated chunk id) — confirmed the
+  injected text is captured only inside the tool_result the fixture model receives as data; the
+  "obedient" model's `delete_all_records` call gets an unknown-tool error and has no effect; citing
+  the fabricated chunk id fails validation, repairs once, fails again, and the run **DEGRADES**
+  (`error_code=INVALID_AGENT_OUTPUT`) with `evidence_refs` reduced back to the untouched
+  deterministic set (no fabricated or real tool-sourced evidence ever reaches a degraded result) and
+  `recommended_actions` byte-identical to the agent's own deterministic assessment: 2 passed.
+  Also re-ran (no regressions): `tests/agents/test_rm_agent.py` (15), `tests/agents/` non-integration
+  (55), `tests/integration/{test_executor,test_orchestrator,test_internal_dispatch}.py` (31),
+  `tests/integration/{test_notifications_api,test_import_api}.py` (unaffected by the `settings`
+  fixture change).
+  ```
+  $ LS_TEST_DATABASE_URL=postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test_e \
+    LS_TEST_MIGRATION_DATABASE_URL=postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test_e \
+    scripts/heavy-job.sh uv run pytest tests/unit/test_chunking.py tests/unit/test_extract.py \
+      tests/integration/test_document_pipeline.py tests/integration/test_search.py \
+      tests/security/test_document_access.py tests/agents/test_document_tool.py \
+      tests/integration/test_notifications_api.py tests/integration/test_import_api.py \
+      tests/agents/test_rm_agent.py tests/agents/test_agent_loop.py -q
+  # 73 passed, 2 failed (pre-fix tool-set assertion) -> fixed -> re-ran: all green
+  $ uv run ruff check <files> && uv run ruff format <files>          # clean
+  $ uv run mypy app/retrieval app/api/documents.py app/api/search.py app/api/schemas/documents.py \
+      app/agents/base.py app/agents/rm/agent.py app/orchestration/executor.py app/jobs/handlers.py \
+      app/seed/__main__.py app/main.py                                # clean (18 files)
+  $ make contracts                                                    # ran; committed (see below)
+  ```
+- **Limitations (see `docs/architecture/retrieval.md` for the full list):** no OCR; structural byte
+  scan only, no antivirus engine available locally; vector search is an exact scan, no ANN index;
+  `HashingEmbedder` is a bag-of-words hash with no real semantics (test-only). `make seed`'s
+  fastembed download was **not** run in this session (heat policy) — documented as a one-off manual
+  step; chunk counts from a real run are therefore not recorded here.
+  `contracts/openapi.json`/`apps/web/src/generated/api.ts` **are** committed with this task: they
+  now carry this task's document/search routes (confirmed via `git diff --stat`), on top of other
+  agents' already-present, unreleased routes noted in the fix-round-1 entry above (this task did not
+  touch those routes' source, only regenerated the shared schema/typings snapshot).
+  Full suites (`make test`, `make test-integration`) remain **PENDING (needs user approval or CI)**.
