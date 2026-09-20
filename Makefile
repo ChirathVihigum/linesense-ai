@@ -1,6 +1,7 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
         lint format typecheck test test-integration test-all docs-check idp worker datasets-check seed \
-        contracts contracts-check infra-check build web-install web-dev web-lint web-typecheck web-test web-build
+        contracts contracts-check infra-check build web-install web-dev web-lint web-typecheck web-test web-build \
+        eval security perf backup restore-check
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -72,6 +73,52 @@ worker:
 
 seed:
 	cd services/backend && uv run python -m app.seed --with-documents
+
+# Reproducible retrieval/NLP/calculation/agent/fairness/security evaluation
+# (task-19-brief.md). Runs against the dedicated linesense_eval database
+# (or LS_EVAL_DATABASE_URL/LS_EVAL_MIGRATION_DATABASE_URL if set), never
+# linesense_dev/linesense_test. Uses the real fastembed embedder; see
+# docs/evaluation/methodology.md for the lighter `--embedder hashing`
+# smoke-test invocation used in local/heat-constrained development.
+eval:
+	cd services/backend && uv run python -m app.evaluation --embedder fastembed
+
+# Security/resilience hardening (task-25-brief.md): secret scan, dependency
+# audit, then every test module marked `security` (headers/rate-limits,
+# the route-generated IDOR matrix, and the prompt-injection suite; some of
+# these need scripts/dev-db.sh start, like test-integration).
+security:
+	bash scripts/secret-scan.sh
+	bash scripts/dependency-audit.sh
+	scripts/dev-db.sh start
+	cd services/backend && uv run pytest -m security -q
+
+# Performance smoke (task-25-brief.md req. 9): concurrent load against the
+# seeded dev DB with a real uvicorn (2 workers, no reload). Heavier than any
+# other `make` target here (it is the one this project's machine-heat policy
+# says never to run unattended on a laptop) -- run only with the operator's
+# explicit go-ahead, and see docs/evaluation/performance.md for the exact
+# invocation and its recorded (or PENDING) results.
+perf:
+	cd services/backend && uv run python ../../scripts/perf_smoke.py
+
+# Encrypted backup of $(BACKUP_DB) (default linesense_dev) + its document
+# store (task-25-brief.md req. 8). Requires LS_BACKUP_PASSPHRASE in the
+# environment; see scripts/backup.sh.
+BACKUP_DB ?= linesense_dev
+backup:
+	bash scripts/backup.sh $(BACKUP_DB)
+
+# Backup + restore + verification exercise, timed, on $(BACKUP_DB) (default
+# linesense_dev). Restores into the dedicated `linesense_restore` database
+# (dropped/recreated by scripts/restore.sh) and a separate document
+# directory; never touches $(BACKUP_DB) itself beyond reading it. See
+# docs/operations/backup-restore.md for recorded timings.
+restore-check:
+	bash scripts/backup.sh $(BACKUP_DB)
+	@latest=$$(ls -t .local/backups/*.tar.enc | head -1); \
+	echo "restore-check: restoring $$latest"; \
+	bash scripts/restore.sh "$$latest"
 
 contracts:
 	bash scripts/export-openapi.sh
