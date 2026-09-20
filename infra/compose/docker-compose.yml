@@ -1,0 +1,158 @@
+# LineSense AI — single-host Compose deployment (docs/operations/deployment.md
+# section 12 sequence: build/scan images -> backup -> migrate once -> deploy
+# -> readiness -> authenticated smoke -> observe).
+#
+# Never run in the environment that authored this file (no Docker
+# available); validated statically only (`make infra-check` /
+# scripts/validate-infra.py).
+#
+# Usage:
+#   cp infra/compose/.env.compose.example infra/compose/.env.compose
+#   docker compose -f infra/compose/docker-compose.yml --env-file infra/compose/.env.compose \
+#     --profile dev up --build
+#
+# The `dev` profile additionally starts a local Keycloak (start-dev, realm
+# auto-imported from infra/identity/keycloak/linesense-realm.json) so the
+# demo login flow works end to end. Without it, `api`/`worker` still start,
+# but LS_OIDC_ISSUER points at nothing until a real identity provider is
+# configured — see infra/identity/README.md and docs/operations/deployment.md.
+#
+# Only `web` publishes a host port; `db`, `api`, `worker`, and `keycloak`
+# are reachable solely over the `internal` network.
+
+networks:
+  internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  db_data: {}
+  caddy_data: {}
+  caddy_config: {}
+  document_storage: {}
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LS_DB_SUPERUSER:-linesense_super}
+      POSTGRES_PASSWORD: ${LS_DB_SUPERUSER_PASSWORD:?set LS_DB_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+      LINESENSE_DB_NAME: ${LINESENSE_DB_NAME:-linesense}
+      LINESENSE_OWNER_PASSWORD: ${LS_DB_OWNER_PASSWORD:?set LS_DB_OWNER_PASSWORD}
+      LINESENSE_APP_PASSWORD: ${LS_DB_APP_PASSWORD:?set LS_DB_APP_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db-init/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: `alembic upgrade head`, then exits. Re-run this service alone
+  # for every deploy before restarting api/worker (deployment.md section 3).
+  migrate:
+    build:
+      context: ../..
+      dockerfile: services/backend/Dockerfile
+    image: linesense-backend:${LS_IMAGE_TAG:-local}
+    command: ["migrate"]
+    env_file:
+      - .env.compose
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: services/backend/Dockerfile
+    image: linesense-backend:${LS_IMAGE_TAG:-local}
+    command: ["api"]
+    env_file:
+      - .env.compose
+    volumes:
+      - document_storage:/data/documents
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/live', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: services/backend/Dockerfile
+    image: linesense-backend:${LS_IMAGE_TAG:-local}
+    command: ["worker"]
+    env_file:
+      - .env.compose
+    volumes:
+      - document_storage:/data/documents
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    image: linesense-web:${LS_IMAGE_TAG:-local}
+    ports:
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    networks:
+      internal:
+        # Lets the api/worker containers resolve the same hostname the
+        # browser uses for Keycloak, so the OIDC issuer identity is
+        # identical from both vantage points (see infra/identity/README.md).
+        aliases:
+          - idp.localhost
+    restart: unless-stopped
+
+  # Local HTTPS demo identity provider only. Production Keycloak (`start`,
+  # not `start-dev`) is documented in docs/operations/deployment.md and is
+  # not modeled here: a real deployment points LS_OIDC_ISSUER at a
+  # separately managed, hardened identity provider.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    profiles: ["dev"]
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: ${LS_KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${LS_KEYCLOAK_ADMIN_PASSWORD:?set LS_KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME: https://idp.localhost
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+    volumes:
+      - ../identity/keycloak/linesense-realm.json:/opt/keycloak/data/import/linesense-realm.json:ro
+    networks:
+      - internal

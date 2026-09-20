@@ -2315,3 +2315,137 @@ Addressed the review findings from `task-23-report.md`'s round 1:
   `min_seconds`/`max_seconds` as null with a note: the snapshot keeps the median and sample count
   only. `tests/agents/test_rm_agent.py` and `uv run mypy app` fail only on another agent's
   in-flight `search_documents`/retrieval work.
+
+## 2026-09-20 — Task 26: container images, Compose, Keycloak realm, CI pipeline, static infra validation
+
+**No Docker in this environment.** Every artefact below was validated statically only
+(`make infra-check`, plus each generated file's own linter/YAML/JSON parser); none of them were
+ever built or run. Nothing here touched `services/backend/app/**` — other agents were working
+there concurrently.
+
+- **Built:**
+  - `services/backend/Dockerfile` + `services/backend/docker-entrypoint.sh`: multi-stage
+    (`python:3.12.14-slim-bookworm` builder with `uv==0.12.17`, `uv sync --frozen --no-dev`, then a
+    non-root (`uid/gid 10001`) runtime stage carrying `app/` + `migrations/` + `alembic.ini` —
+    deliberately **not** `devtools/`, the dev-only OIDC provider). One image, three entrypoint
+    modes on the container's first argument: `api` (uvicorn, `--proxy-headers
+    --forwarded-allow-ips` restricted to `LS_FORWARDED_ALLOW_IPS`, default `127.0.0.1` i.e. trust
+    nothing unless explicitly configured), `worker` (`python -m app.jobs`), `migrate` (`alembic
+    upgrade head`).
+  - `apps/web/Dockerfile`: `node:26.9.0-alpine` (pinned from `apps/web/.nvmrc`) build stage ->
+    `caddy:2.11-alpine` runtime stage serving the built SPA and `infra/proxy/Caddyfile`.
+  - `infra/proxy/Caddyfile`: `tls internal` (local HTTPS demo), HSTS/CSP/X-Frame-Options/etc.
+    headers, `/internal/*` -> 404 at the edge, `/api` and `/auth` -> the API container, SPA
+    fallback routing otherwise, plus a second site (`idp.localhost`) fronting Keycloak.
+  - `infra/compose/docker-compose.yml` + `.env.compose.example` + `db-init/01-roles.sh`: services
+    `db` (pgvector, healthcheck, volume, roles/database/extensions bootstrapped by
+    `db-init/01-roles.sh` mirroring `scripts/dev-db.sh`), `migrate` (one-shot,
+    `depends_on: db: condition: service_healthy`), `api`, `worker`
+    (`depends_on: migrate: condition: service_completed_successfully`), `web` (Caddy, the only
+    service with `ports:`, network-aliased as `idp.localhost` on the private `internal` network so
+    the API container resolves Keycloak's issuer identically to the browser), and `keycloak`
+    (`profiles: [dev]`, `start-dev --import-realm` — production `start` mode is documented,
+    not run here).
+  - `infra/identity/keycloak/linesense-realm.json` + `infra/identity/README.md`: realm
+    `linesense`, confidential client `linesense-web` (`standardFlowEnabled`, `publicClient: false`,
+    `pkce.code.challenge.method: S256`, redirect URI exactly `https://localhost/auth/callback`),
+    and the ten demo identities from backend-contracts.md section 9, each with
+    `requiredActions: ["UPDATE_PASSWORD"]` and a temporary credential. The client secret and demo
+    password reuse the repo's own `.env.example` dev-placeholder convention
+    (`dev-oidc-client-secret`, `demo-password`) rather than inventing new secret-shaped literals.
+  - `.github/workflows/ci.yml`: jobs `backend` (pgvector service container, a script step creating
+    roles/dbs/extensions mirroring `dev-db.sh`'s SQL, `uv sync --frozen`, `make lint typecheck test`,
+    a **direct** `uv run pytest -m integration -q` — see deviation below — then
+    `migration-check datasets-check docs-check infra-check`), `contracts` (`make contracts-check`),
+    `web` (Node from `.nvmrc`, lint/typecheck/test/build), `security` (`make security`), and a
+    manual-only `eval` (`if: github.event_name == 'workflow_dispatch'`, `make eval`, uploads
+    `docs/evaluation/results/latest.*`). No `e2e` job — Task 24 (browser E2E) was dropped by the
+    user. Actions pinned to their current major after checking each repo's own tags (not memory,
+    since this environment's training predates 2026-09-20): `actions/checkout@v7.0.1`,
+    `actions/setup-node@v7.0.0`, `astral-sh/setup-uv@v10.1.0`, `actions/upload-artifact@v7.0.1`.
+  - `scripts/validate-infra.py` (`make infra-check`, added to the CI `backend` job): parses the
+    Compose file/CI workflow (PyYAML — already a main dependency, `pyyaml>=6.0.3` in
+    `services/backend/pyproject.toml`; **no new dependency was added**) and the realm JSON,
+    checking required services/jobs/keys, no `latest` image tags, no floating (`@main`/`@latest`)
+    action refs, `/internal` blocked in the Caddyfile, and no high-risk secret-shaped literals
+    (cloud keys, PEM headers, provider API-key prefixes — narrower than the whole-repo
+    `scripts/secret-scan.sh` from Task 25, and deliberately does not flag ordinary dev-placeholder
+    passwords like `dev-app-only`, matching the repo's own `.env.example` convention).
+  - `docs/operations/deployment.md`: verified-tag table (with the exact `curl`/API commands used),
+    the section-12 deployment sequence, an environment-variable table cross-referencing
+    `Settings._validate_production_hardening`, TLS, secrets handling, rollback limits (why a
+    destructive `alembic downgrade` is not the default plan), RPO <= 24h / RTO <= 4h as *targets*
+    (spec section 12, "planning objectives ... not guarantees"), the CI jobs that depend on
+    not-yet-existing Task 19/25 Makefile targets, and an explicit "never run, statically validated
+    only" statement.
+  - `Makefile`: added `infra-check` (minimal, one target + `.PHONY` entry; re-read immediately
+    before editing and again immediately before committing, since other agents touch this file
+    concurrently).
+
+- **Verified image/action tags (registry APIs, before pinning; full commands and results in
+  `docs/operations/deployment.md` section 1):** `python:3.12.14-slim-bookworm`,
+  `node:26.9.0-alpine`, `caddy:2.11-alpine`, `pgvector/pgvector:0.8.6-pg16`,
+  `quay.io/keycloak/keycloak:26.7.4`, `uv==0.12.17` (PyPI), and the four pinned GitHub Actions
+  above — every one checked against Docker Hub/Quay/PyPI/GitHub's own API, not assumed.
+
+- **Deliberate deviation from the brief's literal CI command list:** the `backend` job runs
+  integration tests via a direct `uv run pytest -m integration -q` rather than
+  `make test-integration`, because that target's first line is `scripts/dev-db.sh start` — which
+  manages the local, Homebrew-detecting project cluster (`PG_BIN` via `brew --prefix
+  postgresql@16`) used for day-to-day development, not the CI service container. `dev-db.sh` was
+  not modified (out of scope per the brief's conflict-avoidance list; the brief itself flagged this
+  exact Homebrew-assumption problem for the now-dropped e2e job, and the same reasoning applies
+  here). The CI job instead creates roles/databases/extensions itself, directly against the
+  `postgres` service container, mirroring `dev-db.sh`'s SQL — exactly as requirement 5 already
+  specifies for the `backend` job (independent of the `test-integration` question).
+
+- **Design decisions worth flagging:**
+  - The OIDC issuer/discovery constraint (`app/auth/oidc.py` builds its metadata-fetch URL
+    directly from `LS_OIDC_ISSUER`, with no separate internal-vs-external override) forces the
+    browser and the API container to reach Keycloak at the *same* hostname. Resolved with a second
+    Caddy site (`idp.localhost`) and a Compose network alias on `web`, rather than exposing
+    Keycloak's own port directly (which the brief's "only `web` publishes ports" rules out).
+    Documented as a known, demo-only limitation (`tls internal`'s local CA is untrusted by the
+    backend containers by default) in `infra/identity/README.md` and
+    `docs/operations/deployment.md` section 9 — production does not have this problem, since a
+    real hostname gets a publicly trusted certificate.
+  - Compose's `keycloak` service exists **only** under the `dev` profile (`start-dev
+    --import-realm`); production `start` mode (real external DB, `KC_HOSTNAME`, hardening) is
+    documented as prose in `docs/operations/deployment.md`/`infra/identity/README.md`, not modelled
+    as a runnable Compose service — a real deployment should point at a separately managed identity
+    provider, not one bundled into the application's own Compose file.
+  - The `security` (Task 25) and `eval` (Task 19) CI jobs call Makefile targets that do not exist
+    in the repository as of this commit. Both jobs are wired correctly now so they start passing
+    the moment those targets land, without a second CI change; until then they will show as
+    failing (`security`, on every push/PR) or are simply never triggered (`eval`, manual-dispatch
+    only) — see `docs/operations/deployment.md` section 10.
+
+- **Commands run (all local, static; no Docker):**
+  ```
+  cd services/backend && uv run ruff check ../../scripts/validate-infra.py            # clean
+  cd services/backend && uv run ruff format --check ../../scripts/validate-infra.py   # clean
+  cd services/backend && uv run mypy ../../scripts/validate-infra.py --ignore-missing-imports
+                                                                                       # Success: no issues
+  make infra-check                                                                    # all checks passed
+  bash scripts/check-doc-links.sh                                                     # 51 links, 0 broken
+  cd services/backend && uv run python -c "import yaml; yaml.safe_load(open('../../.github/workflows/ci.yml'))"
+                                                                                       # parses; 5 required jobs present, no 'e2e'
+  python3 -c "import json; json.load(open('infra/identity/keycloak/linesense-realm.json'))"
+                                                                                       # parses; realm=linesense, 10 users, client linesense-web
+  ```
+  Also exercised `check_secret_patterns`/`check_compose`/`check_caddyfile`/`check_realm`/
+  `check_workflow` against deliberately-broken synthetic fixtures (inline, not committed) to confirm
+  the validator actually catches `latest` tags, host-port leaks on non-`web` services, missing
+  services/jobs, a resurrected `e2e` job, an unpinned/floating action ref, a non-PKCE/public client,
+  and AWS-key/PEM-header-shaped literals — not just trivially passing against the files it was
+  written alongside.
+
+- **Not run (no Docker; PENDING, needs a real Docker host or CI):** any `docker build`/`docker
+  compose up`, the local HTTPS demo login flow end to end, `make security`, `make eval`.
+
+- **Files changed:** new — `services/backend/Dockerfile`, `services/backend/docker-entrypoint.sh`,
+  `apps/web/Dockerfile`, `infra/proxy/Caddyfile`, `infra/compose/docker-compose.yml`,
+  `infra/compose/.env.compose.example`, `infra/compose/db-init/01-roles.sh`,
+  `infra/identity/keycloak/linesense-realm.json`, `infra/identity/README.md`,
+  `.github/workflows/ci.yml`, `docs/operations/deployment.md`, `scripts/validate-infra.py`.
+  Modified — `Makefile` (`infra-check` target only).

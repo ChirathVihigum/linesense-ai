@@ -1,0 +1,141 @@
+{
+  "realm": "linesense",
+  "enabled": true,
+  "displayName": "LineSense AI (demo)",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "clients": [
+    {
+      "clientId": "linesense-web",
+      "name": "LineSense AI web app",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "secret": "dev-oidc-client-secret",
+      "redirectUris": ["https://localhost/auth/callback"],
+      "webOrigins": ["https://localhost"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://localhost/*",
+        "use.refresh.tokens": "true"
+      },
+      "defaultClientScopes": ["openid", "email", "profile"]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@demo.test",
+      "email": "admin@demo.test",
+      "firstName": "Org",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "supervisor@demo.test",
+      "email": "supervisor@demo.test",
+      "firstName": "Supervisor",
+      "lastName": "KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "supervisor.b@demo.test",
+      "email": "supervisor.b@demo.test",
+      "firstName": "Supervisor B",
+      "lastName": "KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "planner@demo.test",
+      "email": "planner@demo.test",
+      "firstName": "Planner",
+      "lastName": "KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "storekeeper@demo.test",
+      "email": "storekeeper@demo.test",
+      "firstName": "Storekeeper",
+      "lastName": "KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "ie@demo.test",
+      "email": "ie@demo.test",
+      "firstName": "IE",
+      "lastName": "Engineer KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "quality@demo.test",
+      "email": "quality@demo.test",
+      "firstName": "Quality",
+      "lastName": "Manager KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "quality.b@demo.test",
+      "email": "quality.b@demo.test",
+      "firstName": "Quality Manager B",
+      "lastName": "KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "viewer@demo.test",
+      "email": "viewer@demo.test",
+      "firstName": "Viewer",
+      "lastName": "KTN",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    },
+    {
+      "username": "byg.planner@demo.test",
+      "email": "byg.planner@demo.test",
+      "firstName": "Planner",
+      "lastName": "BYG",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD"],
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": true }]
+    }
+  ]
+}

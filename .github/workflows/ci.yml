@@ -1,0 +1,232 @@
+# LineSense AI CI.
+#
+# Full suites run here (not on the contributor's own machine — see the
+# repo's machine-heat policy: local work stays to focused/scoped commands,
+# CI is where `test`/`test-integration`/lint/typecheck/etc actually run in
+# full).
+#
+# Browser end-to-end tests (Task 24) were dropped; there is deliberately no
+# `e2e` job (scripts/validate-infra.py checks for its absence).
+#
+# `security` (make security, Task 25) and `eval` (make eval, Task 19) call
+# Makefile targets that may not exist yet in every commit on this branch;
+# see docs/operations/deployment.md and docs/IMPLEMENTATION_STATUS.md for
+# status. Both jobs are wired now so they start working the moment those
+# targets land, without a second CI change.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # A deterministic, offline embedder for CI (never fastembed's downloaded
+  # model weights) — see services/backend/app/settings.py (LS_EMBEDDER).
+  LS_EMBEDDER: hashing
+  LS_LLM_PROVIDER: fixture
+  LS_ENVIRONMENT: test
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      # Tag verified before pinning (2026-09-20):
+      #   curl -s https://hub.docker.com/v2/repositories/pgvector/pgvector/tags/0.8.6-pg16
+      # Recorded in docs/operations/deployment.md.
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16
+        env:
+          POSTGRES_USER: linesense_super
+          POSTGRES_PASSWORD: ci-super-only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U linesense_super"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LS_DATABASE_URL: postgresql+psycopg://linesense_app:ci-app-only@127.0.0.1:5432/linesense_dev
+      LS_MIGRATION_DATABASE_URL: postgresql+psycopg://linesense_owner:ci-owner-only@127.0.0.1:5432/linesense_dev
+      LS_TEST_DATABASE_URL: postgresql+psycopg://linesense_app:ci-app-only@127.0.0.1:5432/linesense_test
+      LS_TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://linesense_owner:ci-owner-only@127.0.0.1:5432/linesense_test
+      TEST_DB_URL: postgresql+psycopg://linesense_owner:ci-owner-only@127.0.0.1:5432/linesense_test
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.17"
+
+      - name: Install Node (for the web-touching parts of `make lint`/`typecheck`/`test`)
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: apps/web/.nvmrc
+
+      - name: Create LineSense roles, database, and extensions
+        env:
+          PGPASSWORD: ci-super-only
+        run: |
+          set -euo pipefail
+          psql_super() { psql -h 127.0.0.1 -p 5432 -U linesense_super -v ON_ERROR_STOP=1 "$@"; }
+          # Mirrors scripts/dev-db.sh's ensure_role/ensure_database/configure_database
+          # for the CI service container (see docs/architecture/backend-contracts.md
+          # section 1) instead of invoking dev-db.sh itself, which manages a
+          # local project cluster via Homebrew and is not appropriate in CI.
+          psql_super -d postgres -c "CREATE ROLE linesense_owner LOGIN PASSWORD 'ci-owner-only';"
+          psql_super -d postgres -c "CREATE ROLE linesense_app LOGIN PASSWORD 'ci-app-only';"
+          psql_super -d postgres -c "CREATE DATABASE linesense_dev OWNER linesense_owner;"
+          psql_super -d postgres -c "CREATE DATABASE linesense_test OWNER linesense_owner;"
+          for db in linesense_dev linesense_test; do
+            psql_super -d "$db" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+            psql_super -d "$db" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            psql_super -d "$db" -c "GRANT CONNECT ON DATABASE $db TO linesense_app;"
+            psql_super -d "$db" -c "GRANT USAGE ON SCHEMA public TO linesense_app;"
+            psql_super -d "$db" -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
+          done
+
+      - name: uv sync
+        working-directory: services/backend
+        run: uv sync --frozen
+
+      - name: npm ci
+        working-directory: apps/web
+        run: npm ci
+
+      - name: make lint
+        run: make lint
+
+      - name: make typecheck
+        run: make typecheck
+
+      - name: make test
+        run: make test
+
+      - name: Backend integration tests
+        # Not `make test-integration`: that target's `scripts/dev-db.sh start`
+        # manages the local, Homebrew-backed project cluster used for
+        # day-to-day development and is not meaningful in CI, which already
+        # has the `postgres` service container above (bootstrapped by the
+        # step "Create LineSense roles, database, and extensions").
+        working-directory: services/backend
+        run: uv run pytest -m integration -q
+
+      - name: make migration-check
+        run: make migration-check
+
+      - name: make datasets-check
+        run: make datasets-check
+
+      - name: make docs-check
+        run: make docs-check
+
+      - name: make infra-check
+        run: make infra-check
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.17"
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: apps/web/.nvmrc
+
+      - name: uv sync
+        working-directory: services/backend
+        run: uv sync --frozen
+
+      - name: npm ci
+        working-directory: apps/web
+        run: npm ci
+
+      - name: make contracts-check
+        run: make contracts-check
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: apps/web/.nvmrc
+
+      - name: npm ci
+        working-directory: apps/web
+        run: npm ci
+
+      - name: make web-lint
+        run: make web-lint
+
+      - name: make web-typecheck
+        run: make web-typecheck
+
+      - name: make web-test
+        run: make web-test
+
+      - name: make web-build
+        run: make web-build
+
+  security:
+    # Depends on Task 25 (scripts/secret-scan.sh, scripts/dependency-audit.sh,
+    # the Makefile `security` target) — see docs/operations/deployment.md.
+    runs-on: ubuntu-latest
+    needs: [backend, web]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.17"
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: apps/web/.nvmrc
+
+      - name: uv sync
+        working-directory: services/backend
+        run: uv sync --frozen
+
+      - name: npm ci
+        working-directory: apps/web
+        run: npm ci
+
+      - name: make security
+        run: make security
+
+  eval:
+    # Manual only: never runs on push/pull_request. Depends on Task 19
+    # (`make eval`, docs/evaluation/results/) — see
+    # docs/operations/deployment.md.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.17"
+
+      - name: uv sync
+        working-directory: services/backend
+        run: uv sync --frozen
+
+      - name: make eval
+        run: make eval
+
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: eval-results
+          path: |
+            docs/evaluation/results/latest.json
+            docs/evaluation/results/latest.md
+          if-no-files-found: error

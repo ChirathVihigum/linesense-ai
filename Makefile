@@ -1,6 +1,6 @@
 .PHONY: bootstrap db-init db-start db-stop db-reset-test migrate migration-check \
         lint format typecheck test test-integration test-all docs-check idp worker datasets-check seed \
-        contracts contracts-check build web-install web-dev web-lint web-typecheck web-test web-build
+        contracts contracts-check infra-check build web-install web-dev web-lint web-typecheck web-test web-build
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -71,7 +71,7 @@ worker:
 	cd services/backend && uv run python -m app.jobs
 
 seed:
-	cd services/backend && uv run python -m app.seed
+	cd services/backend && uv run python -m app.seed --with-documents
 
 contracts:
 	bash scripts/export-openapi.sh
@@ -80,6 +80,12 @@ contracts:
 
 contracts-check:
 	bash scripts/check-contracts.sh
+
+# Static validation of the deployment artefacts (Task 26): container
+# images, Compose, Keycloak realm, and the CI workflow itself. No Docker
+# commands are run; see scripts/validate-infra.py.
+infra-check:
+	cd services/backend && uv run python ../../scripts/validate-infra.py
 
 # Backend import check (the app factory builds without a database) + web production build.
 build:

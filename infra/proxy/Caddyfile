@@ -1,0 +1,60 @@
+# LineSense AI edge proxy (served by the `web` image, apps/web/Dockerfile).
+#
+# `tls internal` mints certificates from Caddy's own local CA — a
+# convenience for the local single-host HTTPS demo only (docker-compose.yml,
+# `dev` profile). A real deployment replaces `tls internal` with a real
+# hostname so Caddy's automatic HTTPS obtains a publicly trusted certificate
+# instead; see docs/operations/deployment.md ("TLS" and "Known limitation —
+# local HTTPS demo").
+{
+	local_certs
+}
+
+# The LineSense app: serves the built SPA and reverse-proxies the API and
+# the backend's own OIDC routes (/auth/login, /auth/callback, /auth/logout).
+# LS_PUBLIC_ORIGIN / LS_OIDC_REDIRECT_URI (infra/compose/.env.compose.example)
+# must match this hostname exactly.
+localhost {
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'"
+	}
+
+	# The agent protocol (/internal/v1/...) is a server-to-server surface,
+	# authenticated with a bearer service token — never reachable through
+	# the public edge, at any path depth.
+	@internal path /internal/* /internal
+	respond @internal 404
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /auth/* {
+		reverse_proxy api:8000
+	}
+
+	# Static SPA, with client-side routing fallback to index.html.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	encode gzip zstd
+}
+
+# Keycloak (dev profile only — docker-compose.yml `services.keycloak`),
+# fronted at its own hostname so the browser (via this same published port)
+# and the API container (over the private network, using the same hostname
+# as a network alias on `web`) resolve the realm's issuer identically.
+# LS_OIDC_ISSUER must equal https://idp.localhost/realms/linesense.
+idp.localhost {
+	tls internal
+	reverse_proxy keycloak:8080
+}
