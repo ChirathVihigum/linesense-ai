@@ -5,8 +5,9 @@ Guarantees enforced here (never by the model):
 * the deterministic assessment (findings, metrics, actions, evidence) is
   always preserved; the model can add notes and pick a ranked action,
 * action payloads are never rewritten by the model,
-* at most :data:`MAX_TOOL_CALLS` investigative tool calls and one repair turn,
-  with every model call reserved against the run's budget first,
+* at most :data:`MAX_TOOL_CALLS` investigative tool calls -- or the dispatching
+  envelope's ``constraints.max_tool_calls``, whichever is smaller -- and one
+  repair turn, with every model call reserved against the run's budget first,
 * tool output and document text are passed as untrusted data, redacted.
 """
 
@@ -193,6 +194,10 @@ class AgentContext:
     deadline_at: datetime
     requester_roles: frozenset[str]
     retrieval: RetrievalPort | None = None
+    # The dispatching envelope's ``constraints.max_tool_calls``. It is an upper
+    # bound *alongside* MAX_TOOL_CALLS, never a way to ask for more: the loop
+    # uses the smaller of the two.
+    max_tool_calls: int = MAX_TOOL_CALLS
     # The live assessment, so a tool handler can extend it (e.g. the planning
     # agent's simulation adds a candidate action the model may then select).
     assessment: Assessment | None = None
@@ -287,6 +292,7 @@ class BaseAgent(ABC):
     ) -> AgentResult:
         llm = ctx.llm
         assert llm is not None  # noqa: S101 - guarded by the caller
+        tool_limit = max(0, min(MAX_TOOL_CALLS, ctx.max_tool_calls))
         tools = [tool for tool in self.tools(ctx) if tool.name != SUBMIT_TOOL_NAME]
         tool_map = {tool.name: tool for tool in tools}
         specs = [tool.spec() for tool in tools] + [_submit_spec()]
@@ -309,7 +315,7 @@ class BaseAgent(ABC):
                 "degraded_reason": reason,
             }
 
-        for _ in range(MAX_TOOL_CALLS + 2 + MAX_REPAIR_CALLS):
+        for _ in range(tool_limit + 2 + MAX_REPAIR_CALLS):
             remaining = self._check_deadline(ctx)
             if not await reserve_model_call(ctx.session_factory, ctx.run_id):
                 return self._degraded(
@@ -394,7 +400,7 @@ class BaseAgent(ABC):
                         _tool_result(call.id, _format_validation_error(exc), is_error=True)
                     )
                     continue
-                if len(tool_calls_made) >= MAX_TOOL_CALLS:
+                if len(tool_calls_made) >= tool_limit:
                     tool_results.append(_tool_result(call.id, TOOL_LIMIT_MESSAGE, is_error=True))
                     continue
                 try:

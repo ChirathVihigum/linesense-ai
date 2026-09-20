@@ -168,6 +168,26 @@ def test_degraded_reasons_are_aggregated_once_per_reason() -> None:
     assert missing.provider == "fixture"
 
 
+def test_a_cancelled_task_reports_the_runs_own_reason() -> None:
+    """The report's reasons must agree with ``analysis_runs.error_code``."""
+    cancelled = task_row(recipient="ie", status="CANCELLED")
+    snapshot = snapshot_data()
+
+    report = build_order_report(
+        run_row(order_id=snapshot.order.id, status="FAILED", error_code="DEADLINE_EXCEEDED"),
+        snapshot,
+        {},
+        None,
+        tasks=[cancelled],
+    )
+
+    assert report.degraded_reasons == ["DEADLINE_EXCEEDED"]
+    summary = report.agent_summaries[0]
+    assert summary.status == "CANCELLED"
+    assert summary.degraded_reason == "DEADLINE_EXCEEDED"
+    assert summary.provider == "fixture"  # the run's provider; there is no result
+
+
 def test_the_material_state_is_the_worst_of_the_round_zero_materials() -> None:
     snapshot = snapshot_data()
 

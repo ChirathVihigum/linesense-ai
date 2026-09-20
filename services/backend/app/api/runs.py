@@ -43,6 +43,7 @@ from app.db.models import (
 )
 from app.db.session import get_db_session
 from app.domain.vocab import (
+    REPORT_EVENT_TYPE,
     ActorType,
     AuditOutcome,
     JobStatus,
@@ -53,7 +54,6 @@ from app.domain.vocab import (
 from app.orchestration.events import append_event
 from app.orchestration.executor import AGENT_EXECUTE_JOB
 from app.orchestration.protocol import AgentResult
-from app.orchestration.synthesis import REPORT_EVENT_TYPE
 
 router = APIRouter(prefix="/api/v1", tags=["runs"])
 

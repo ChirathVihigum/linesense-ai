@@ -7,10 +7,12 @@ candidate actions and evidence; the model may then only write a summary, add
 notes, pick one of the offered actions and cite the offered evidence. Nothing
 a model returns becomes a number, a state or a verdict.
 
-Shared limits: ≤4 investigative tool calls per invocation, ≤1 repair turn, ≤12
-model calls per **run** (reserved in the database before every call, so an
-exhausted budget degrades the agent instead of overspending), 120-second run
-deadline, ≤2 retries after the first attempt. Tools read the run snapshot
+Shared limits: ≤4 investigative tool calls per invocation (or the dispatching
+envelope's `constraints.max_tool_calls`, whichever is smaller), ≤1 repair turn,
+≤12 model calls per **run** — reserved in the database before every call, so an
+exhausted budget degrades the agent instead of overspending; six tasks share
+those 12, which is two calls each — 120-second run deadline, ≤2 retries after
+the first attempt. Tools read the run snapshot
 only — never live tables, never SQL, never the network.
 
 ---

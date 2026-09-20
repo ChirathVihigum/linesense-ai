@@ -61,11 +61,13 @@ _PERCENT = "percent"
 # --------------------------------------------------------------------------
 
 
-class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class _Lenient(BaseModel):
+    # A snapshot written by an older or newer build may carry a key this
+    # agent does not know about; the analysis it does know is still usable.
+    model_config = ConfigDict(extra="ignore")
 
 
-class OperationAnalysisView(_Strict):
+class OperationAnalysisView(_Lenient):
     operation_id: uuid.UUID
     code: str
     name: str
@@ -77,7 +79,7 @@ class OperationAnalysisView(_Strict):
     insufficient_samples: bool
 
 
-class LineBalanceView(_Strict):
+class LineBalanceView(_Lenient):
     effective_cycles: list[Decimal]
     bottleneck_index: int
     bottleneck_effective_seconds: Decimal
@@ -94,7 +96,7 @@ class LineBalanceView(_Strict):
         )
 
 
-class LineStyleAnalysisView(_Strict):
+class LineStyleAnalysisView(_Lenient):
     line_id: uuid.UUID
     style_id: uuid.UUID
     operations: list[OperationAnalysisView]
@@ -675,11 +677,9 @@ async def _tool_operation_statistics(ctx: AgentContext, arguments: Any) -> ToolR
         data={
             "line_code": view.code,
             **_operation_row(operation),
-            "min_seconds": None,
-            "max_seconds": None,
             "note": (
                 "The run snapshot records the observation count and the median only; the "
-                "range is not retained, and no per-operator data exists in this snapshot."
+                "observed range is not retained, and no per-operator data exists."
             ),
         },
         evidence=[_operation_evidence(view, operation)],

@@ -85,7 +85,12 @@ def _run(client: FixtureLLMClient, messages: list[dict[str, object]]) -> object:
     )
 
 
-def test_calls_investigative_tools_before_submitting() -> None:
+def test_calls_one_investigative_tool_before_submitting() -> None:
+    """One investigation, then submit: two model calls per agent task.
+
+    A run shares 12 model calls across its six agent tasks, so a fixture run
+    of the whole graph must fit in two calls per task.
+    """
     client = FixtureLLMClient()
     messages = [_system_message()]
 
@@ -98,12 +103,7 @@ def test_calls_investigative_tools_before_submitting() -> None:
 
     messages = [*messages, _tool_use(LOOKUP_TOOL.name), _tool_result("call-1")]
     second = _run(client, messages)
-    assert second.tool_calls[0].name == LOOKUP_TOOL_2.name
-    assert second.tool_calls[0].arguments == {"slot_id": "slot-1"}
-
-    messages = [*messages, _tool_use(LOOKUP_TOOL_2.name), _tool_result("call-2")]
-    third = _run(client, messages)
-    assert third.tool_calls[0].name == "submit_assessment"
+    assert second.tool_calls[0].name == "submit_assessment"
 
 
 def test_submits_lowest_rank_action_citing_all_evidence() -> None:

@@ -165,9 +165,15 @@ never checked.
 
 **Budget interaction.** A run has 12 model calls
 (`analysis_runs.model_calls_limit`) shared by all six tasks, reserved before
-each call — including the calls of attempts that then fail. When the budget
-runs out, the remaining tasks return their deterministic assessment with
-`degraded_reason = BUDGET_EXCEEDED`; the graph itself never changes.
+each call — including the calls of attempts that then fail. Two calls per task
+(one investigation, then `submit_assessment`) is therefore what a full graph
+affords, and that is what the fixture provider does. The orchestrator can lower
+an individual task's allowance through the envelope's
+`constraints.max_tool_calls`, which the agent loop honours as an upper bound
+alongside its own `MAX_TOOL_CALLS`. When the budget does run out — a provider
+outage burns three attempts per task, for instance — the remaining tasks return
+their deterministic assessment with `degraded_reason = BUDGET_EXCEEDED`; the
+graph itself never changes.
 
 ### The replan rule
 

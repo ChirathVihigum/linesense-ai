@@ -138,9 +138,14 @@ def _submit_call(context: dict[str, Any]) -> LLMToolCall:
     return LLMToolCall(id=f"fixture-{SUBMIT_TOOL_NAME}", name=SUBMIT_TOOL_NAME, arguments=arguments)
 
 
+# One investigative tool call, then submit: two model calls per agent task, so
+# a run's whole graph fits inside the 12-call run budget.
+FIXTURE_TOOL_CALLS = 1
+
+
 def default_fixture_script(request: FixtureRequest) -> LLMResponse:
     investigative_tools = [tool for tool in request.tools if tool.name != SUBMIT_TOOL_NAME]
-    needed = min(2, len(investigative_tools))
+    needed = min(FIXTURE_TOOL_CALLS, len(investigative_tools))
     tool_results_seen = _tool_result_count(request.messages)
 
     tool_call: LLMToolCall | None = None

@@ -376,6 +376,9 @@ async def _prepare(
         settings=ctx.settings,
         deadline_at=task.deadline_at,
         requester_roles=roles,
+        # The dispatching orchestrator's allowance for this task; the loop
+        # still caps it at its own MAX_TOOL_CALLS.
+        max_tool_calls=envelope.constraints.max_tool_calls,
     )
     return agent_class(), agent_ctx
 
