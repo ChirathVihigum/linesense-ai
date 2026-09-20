@@ -8,9 +8,11 @@ bound to the in-process ASGI app instead of a real HTTP server.
 from __future__ import annotations
 
 import uuid
+from typing import Any, cast
 
 import httpx
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import Job
@@ -94,6 +96,6 @@ async def drain_with_backoff(
                 .where(Job.status == JobStatus.READY.value, Job.available_at > sa.func.now())
                 .values(available_at=sa.func.now())
             )
-        if released.rowcount == 0:
+        if cast("CursorResult[Any]", released).rowcount == 0:
             return total
     raise AssertionError("jobs kept being rescheduled")
