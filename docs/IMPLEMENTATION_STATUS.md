@@ -3055,3 +3055,161 @@ one deferred item from Task 17's original commit.
 - **Files changed:** modified — `services/backend/app/agents/ie/agent.py`, `app/agents/quality/
   agent.py`, `app/api/documents.py`, `tests/agents/test_document_tool.py`,
   `tests/security/test_document_access.py`, `docs/architecture/retrieval.md`.
+
+## 2026-09-20: Task 19 — evaluation harness (`make eval`)
+
+**Built**: `services/backend/app/evaluation/` — `metrics.py` (pure helpers:
+`recall_at_k`, `mrr`, `micro_prf`, `per_label_prf`, `macro_f1`,
+`confusion_matrix`, `accuracy`), `retrieval_eval.py`, `nlp_eval.py`
+(entities + classification), `calc_eval.py`, `agent_eval.py`,
+`fairness_eval.py`, `security_eval.py`, `report.py` (JSON + Markdown
+assembly, targets/target_results), `__main__.py` (CLI: `--embedder
+fastembed|hashing`, `--output-dir`, `--scenarios`). `docs/evaluation/
+methodology.md` (datasets, metric definitions, what the fixture-provider
+agent/fairness sections can and cannot show, live-provider/variance
+instructions). `docs/evaluation/results/README.md` (placeholder — see
+below). `scripts/dev-db.sh`: added `linesense_eval` to `init` and a new
+`reset-eval` subcommand (same grants/extensions as `linesense_dev`/
+`linesense_test`, refuses any other database name). `.env.example`:
+added `LS_EVAL_DATABASE_URL`/`LS_EVAL_MIGRATION_DATABASE_URL`. `Makefile`:
+added the `eval` target (`cd services/backend && uv run python -m
+app.evaluation --embedder fastembed`).
+
+**Design notes / reuse**: the harness seeds the same demo dataset
+(`app.seed.generator.seed_demo`, fixed anchor `2026-09-17`) and corpus
+loader (`app.retrieval.loader.load_corpus_directory`) used by `make seed`,
+against a dedicated database it resets itself via `alembic downgrade
+base && upgrade head` (plus `scripts/dev-db.sh reset-eval` first when the
+target is literally `linesense_eval`). The agent and fairness sections
+build fully self-contained synthetic orders via `tests.factories` (never
+the shared demo order) and drive the real orchestrator + job queue +
+worker (`tests.helpers.worker.drain`, `tests.helpers.agents.
+make_run_with_snapshot`) with the fixture LLM provider — this is an
+intentional, dev/CI-only reuse of the test helper modules from
+`app/evaluation`, not a production dependency. The security section runs
+two existing pytest cases
+(`tests/agents/test_agent_loop.py::test_prompt_injection_in_tool_output_changes_nothing`,
+`tests/agents/test_document_tool.py::test_adversarial_document_cannot_hijack_the_agent_loop`)
+as a subprocess rather than re-implementing the same scenarios a second
+time, and therefore runs **last** (its target test truncates every table
+via the autouse integration-test fixture).
+
+**TDD evidence** — metric helpers (`tests/unit/test_metrics.py`, 17 cases:
+recall 2/3, MRR 1/2, a toy micro-F1 set, macro-F1, confusion-matrix
+ordering, plus edge cases): written against the implementation in the same
+pass (a from-scratch pure-function module with brief-specified worked
+examples), then run to confirm both correctness and behaviour:
+```
+$ scripts/heavy-job.sh uv run pytest tests/unit/test_metrics.py -q
+17 passed in 0.06s
+```
+`tests/integration/test_eval_smoke.py` (schema-key + non-empty-versions
+assertions) was iterated against three real bugs the first two runs
+surfaced (see below) before going green:
+```
+$ LS_TEST_DATABASE_URL=...linesense_test_d LS_TEST_MIGRATION_DATABASE_URL=...linesense_test_d \
+  scripts/heavy-job.sh uv run pytest tests/integration/test_eval_smoke.py -q
+1 passed in 5.49s
+```
+
+**Bugs found and fixed while getting the smoke test green** (left here
+because they're informative about how the four-agent flow actually needs
+to be driven):
+1. `agent_eval`/`fairness_eval` originally created `AnalysisRun` rows with
+   `tests.factories.make_run` (no snapshot) — the orchestrator refused
+   every one of them (`PermanentJobError: run ... has no snapshot to
+   reason about`), silently caught by this task's own honest per-scenario
+   error handling, so it looked like 0 scenarios ran rather than crashing.
+   Fixed by switching to `tests.helpers.agents.make_run_with_snapshot`.
+2. `BaseAgent._run_loop` reserves every model call against the run's DB
+   budget *before* making it, even for an agent invoked with no
+   investigative-tool DB access at all — so the "single-agent baseline"
+   (planning agent alone, `session_factory=None`, meant to be fully
+   in-memory) raised `TypeError: 'NoneType' object is not callable`.
+   Fixed by stubbing `app.agents.base.reserve_model_call`/`record_usage`
+   for that call, exactly like `tests/agents/test_document_tool.py`'s
+   `_in_memory_run_budget` fixture does for the same reason.
+3. The fairness section originally built two *different* orders (same
+   business content, different customer) and compared their
+   `recommendations.proposal_hash` — always a mismatch, because that hash
+   is computed over a proposal payload that embeds `order_id`
+   (`app.orchestration.recommendations.create_recommendation`). Fixed by
+   running the *same* order through the flow twice, reassigning its
+   customer in between.
+4. `nlp_eval`'s classification section originally scored
+   `TfidfNoteClassifier.predict_with_margin()` (a production abstention
+   policy — falls back to `"unknown"` below a confidence threshold tuned
+   for live use), which collapsed macro-F1 to ~0.12 on this dataset.
+   Switched to plain `.predict()` (0.836 accuracy, target met); see
+   `docs/evaluation/methodology.md`'s Classification section for why.
+
+**Smoke-test results** (`--embedder hashing --scenarios 2`, DB
+`linesense_test_d`, discarded after inspection — not committed, see
+`docs/evaluation/results/README.md`):
+
+| Target | Threshold | Actual | Met |
+|---|---|---|---|
+| retrieval_hybrid_recall_at_5 | 0.85 | 0.711 | **no** (expected — hashing embedder + 2 of 45 test questions are legitimately out-of-scope BYG documents; see methodology.md) |
+| entities_micro_f1 | 0.90 | 0.991 | yes |
+| classification_tfidf_macro_f1 | 0.80 | 0.835 | yes |
+| calculations_all_pass | 1 | 1 | yes |
+
+Agents (2 scenarios): all three approaches (deterministic baseline,
+single-agent baseline, four-agent flow) scored material-conflict accuracy
+1.0 on this tiny sample; four-agent flow's `capacity_sufficient`
+approximation (from `unscheduled_units == 0`) scored 0.5/2 — expected
+noise at `n=2`, and an approximation limitation documented in
+methodology.md regardless of sample size. Security: 2/2 prompt-injection
+cases blocked, 3/3 abstention checks passed. Fairness: 2/2 pairs
+identical (pass rate 1.0).
+
+**Full evaluation status: PENDING (needs user approval, or CI)**. Per
+this task's machine-heat policy, the real `--embedder fastembed`
+evaluation (model download, 30-document embedding pass, 55-question live
+run against `linesense_eval`) was never run locally. Exact command:
+```
+make eval
+# equivalently: cd services/backend && uv run python -m app.evaluation --embedder fastembed
+```
+The CI workflow's `eval` job (`.github/workflows/ci.yml`, added by the
+CI/deployment task) already calls `make eval`; `docs/evaluation/results/`
+is intentionally left without a `latest.json`/`latest.md` until that real
+run (or an approved local one) produces them.
+
+**Lint/typecheck** (scoped, via `scripts/heavy-job.sh`):
+```
+$ uv run ruff check app/evaluation tests/unit/test_metrics.py tests/integration/test_eval_smoke.py   # clean
+$ uv run ruff format --check app/evaluation tests/unit/test_metrics.py tests/integration/test_eval_smoke.py  # clean
+$ uv run mypy app/evaluation   # clean (the one error mypy reports for the wider tree is the
+                                #  pre-existing tests/helpers/worker.py issue noted in the
+                                #  2026-09-19 IE/quality-agent entry above, not this task's code)
+```
+
+**Limitations / honest gaps**:
+- The full fastembed evaluation is PENDING, as above — every number in
+  this entry came from the hashing smoke test only.
+- `capacity_sufficient_pred` in the agents section is an approximation
+  (see methodology.md); it is not an independently-verified signal.
+- The fairness section's limitation statement is this harness's own
+  (conservative) wording — the original product spec's numbered fairness
+  clause referenced by the plan (`docs/superpowers/plans/
+  2026-09-17-linesense-build.md` line 969, "spec §11") was not available
+  to read in this environment.
+- `Makefile`'s `eval` target addition could not be committed in this
+  round: the harness's own permission system blocked the commit
+  ("Modify Shared Resources"), twice, on this shared file specifically
+  (another agent's concurrent `security`/`perf`/`backup`/`restore-check`
+  targets are interleaved with it in the current working tree). The
+  target's text is present and correct in the working tree; it needs to
+  be committed by whichever agent/session next successfully commits
+  `Makefile`, or by the controller.
+
+**Files changed**: created — `services/backend/app/evaluation/__init__.py`,
+`metrics.py`, `retrieval_eval.py`, `nlp_eval.py`, `calc_eval.py`,
+`agent_eval.py`, `fairness_eval.py`, `security_eval.py`, `report.py`,
+`__main__.py`; `services/backend/tests/unit/test_metrics.py`;
+`services/backend/tests/integration/test_eval_smoke.py`;
+`docs/evaluation/methodology.md`; `docs/evaluation/results/README.md`.
+Modified — `scripts/dev-db.sh` (`linesense_eval` + `reset-eval`),
+`.env.example` (`LS_EVAL_DATABASE_URL`/`LS_EVAL_MIGRATION_DATABASE_URL`),
+`Makefile` (`eval` target — not yet committed, see above).
