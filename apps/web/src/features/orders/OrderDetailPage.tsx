@@ -5,10 +5,10 @@ import { useParams } from 'react-router'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { ErrorState } from '../../components/ErrorState'
 import { FormField } from '../../components/FormField'
-import { Icon } from '../../components/Icon'
 import { LoadingState } from '../../components/LoadingState'
 import { PageHeader } from '../../components/PageHeader'
 import { PermissionDenied } from '../../components/PermissionDenied'
+import { ShipmentEligibilityBadge } from '../../components/ShipmentEligibilityBadge'
 import { StaleBanner } from '../../components/StaleBanner'
 import { StateBadge } from '../../components/StateBadge'
 import { fieldAria } from '../../components/fieldAria'
@@ -39,16 +39,7 @@ function daysRemaining(dueDate: string, timeZone: string): number {
 function ShipmentBadge({ shipment }: { shipment: Schemas['OrderDetail']['shipment'] }) {
   return (
     <div className="flex flex-col gap-1">
-      <span
-        className={
-          shipment.eligible
-            ? 'inline-flex h-6 w-fit items-center gap-1 rounded-full border border-ok-line bg-ok-bg px-2 text-xs font-medium text-ok-fg'
-            : 'inline-flex h-6 w-fit items-center gap-1 rounded-full border border-neutral-line bg-neutral-bg px-2 text-xs font-medium text-neutral-fg'
-        }
-      >
-        <Icon name={shipment.eligible ? 'truck' : 'ban'} className="h-3.5 w-3.5" />
-        {shipment.eligible ? 'Eligible for shipment' : 'Not eligible for shipment'}
-      </span>
+      <ShipmentEligibilityBadge eligible={shipment.eligible} />
       {shipment.reasons.length > 0 && (
         <ul className="text-xs text-fg-muted">
           {shipment.reasons.map((reason) => (

@@ -1,6 +1,6 @@
 import { DataTable, type Column } from '../../components/DataTable'
 import { EmptyState } from '../../components/EmptyState'
-import { Icon } from '../../components/Icon'
+import { ShipmentEligibilityBadge } from '../../components/ShipmentEligibilityBadge'
 import { StateBadge } from '../../components/StateBadge'
 import type { Schemas } from '../../lib/api'
 import { useFactory } from '../../lib/factory'
@@ -40,16 +40,7 @@ export function OrderQualityTab({ order }: { order: Schemas['OrderDetail'] }) {
         <h2 className="mb-2 text-base font-semibold">Eligibility</h2>
         <div className="flex flex-wrap items-center gap-3">
           <StateBadge vocabulary="quality" state={order.quality_state} />
-          <span
-            className={
-              order.shipment.eligible
-                ? 'inline-flex h-6 items-center gap-1 rounded-full border border-ok-line bg-ok-bg px-2 text-xs font-medium text-ok-fg'
-                : 'inline-flex h-6 items-center gap-1 rounded-full border border-neutral-line bg-neutral-bg px-2 text-xs font-medium text-neutral-fg'
-            }
-          >
-            <Icon name={order.shipment.eligible ? 'truck' : 'ban'} className="h-3.5 w-3.5" />
-            {order.shipment.eligible ? 'Shipment eligible' : 'Not eligible for shipment'}
-          </span>
+          <ShipmentEligibilityBadge eligible={order.shipment.eligible} eligibleLabel="Shipment eligible" />
         </div>
         {order.shipment.reasons.length > 0 && (
           <ul className="mt-1.5 text-sm text-fg-muted">

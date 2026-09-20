@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { DegradedBanner } from '../../components/DegradedBanner'
 import { EmptyState } from '../../components/EmptyState'
 import { Icon } from '../../components/Icon'
+import { ShipmentEligibilityBadge } from '../../components/ShipmentEligibilityBadge'
 import { SourceLabel } from '../../components/SourceLabel'
 import { StaleBanner } from '../../components/StaleBanner'
 import { StateBadge } from '../../components/StateBadge'
@@ -51,16 +52,11 @@ export function OrderOverviewTab({ order }: { order: Schemas['OrderDetail'] }) {
         <h2 className="mb-2 text-base font-semibold">Shipment eligibility</h2>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
-            <span
-              className={
-                report.shipment.eligible
-                  ? 'inline-flex h-6 items-center gap-1 rounded-full border border-ok-line bg-ok-bg px-2 text-xs font-medium text-ok-fg'
-                  : 'inline-flex h-6 items-center gap-1 rounded-full border border-neutral-line bg-neutral-bg px-2 text-xs font-medium text-neutral-fg'
-              }
-            >
-              <Icon name={report.shipment.eligible ? 'truck' : 'ban'} className="h-3.5 w-3.5" />
-              {report.shipment.eligible ? 'Eligible' : 'Not eligible'}
-            </span>
+            <ShipmentEligibilityBadge
+              eligible={report.shipment.eligible}
+              eligibleLabel="Eligible"
+              ineligibleLabel="Not eligible"
+            />
             <SourceLabel source={{ kind: 'calculated' }} />
           </div>
           {report.shipment.reasons.length > 0 && (

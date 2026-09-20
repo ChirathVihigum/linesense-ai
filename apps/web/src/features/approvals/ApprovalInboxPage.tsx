@@ -13,7 +13,7 @@ import { SourceLabel } from '../../components/SourceLabel'
 import { StateBadge } from '../../components/StateBadge'
 import { ApiError, api, unwrap, type Schemas } from '../../lib/api'
 import { useCan, useFactory } from '../../lib/factory'
-import { formatDateTime, humanizeCode } from '../../lib/format'
+import { formatCountdown, formatDateTime, humanizeCode } from '../../lib/format'
 
 type RecommendationSummary = Schemas['RecommendationSummary']
 type InboxStatus = 'PROPOSED' | 'APPROVED'
@@ -32,7 +32,11 @@ function columns(factoryCode: string, timeZone: string): Column<RecommendationSu
     },
     { key: 'kind', header: 'Kind', render: (row) => humanizeCode(row.kind) },
     { key: 'created', header: 'Created', render: (row) => formatDateTime(row.created_at, timeZone) },
-    { key: 'expires', header: 'Expires', render: (row) => formatDateTime(row.expires_at, timeZone) },
+    {
+      key: 'expires',
+      header: 'Expires',
+      render: (row) => <span title={formatDateTime(row.expires_at, timeZone)}>{formatCountdown(row.expires_at)}</span>,
+    },
     {
       key: 'source',
       header: 'Source',
