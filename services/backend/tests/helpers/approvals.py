@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,11 +18,12 @@ import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Factory, Order, Recommendation
-from app.domain.vocab import RecommendationStatus
+from app.db.models import Factory, LineCapacitySlot, Order, Recommendation
+from app.domain.vocab import ProductionState, RecommendationStatus
 from app.seed.generator import DEMO_ORDER_REF, seed_demo
 from app.settings import Settings
-from tests.helpers.auth import AuthedClient, login_as
+from tests.factories import make_order, make_recommendation, make_run
+from tests.helpers.auth import AuthedClient, IdentityFixture, login_as
 from tests.helpers.worker import drain
 
 
@@ -90,3 +92,59 @@ async def propose(
 
 def key(prefix: str) -> dict[str, str]:
     return {"Idempotency-Key": f"{prefix}-{uuid.uuid4().hex}"}
+
+
+async def build_approved(
+    session: AsyncSession,
+    identity: IdentityFixture,
+    factory: Factory,
+    slot: LineCapacitySlot,
+    *,
+    standard_minutes: Decimal,
+    units: Decimal,
+    input_versions: dict[str, Any] | None = None,
+    status: str = RecommendationStatus.APPROVED.value,
+) -> tuple[Order, Recommendation]:
+    """A VALIDATED order and a recommendation proposing one allocation on
+    ``slot``, with *valid* input versions unless ``input_versions`` overrides
+    them (that is how the fail-closed staleness tests inject a gap)."""
+    order = await make_order(
+        session,
+        organization=identity.organization,
+        factory=factory,
+        production_state=ProductionState.VALIDATED.value,
+    )
+    run = await make_run(session, order=order, requested_by=identity.users["planner@demo.test"])
+    proposal = {
+        "order_id": str(order.id),
+        "allocations": [
+            {
+                "slot_id": str(slot.id),
+                "line_id": str(slot.line_id),
+                "line_code": "L1",
+                "slot_date": slot.slot_date.isoformat(),
+                "shift_code": slot.shift_code,
+                "standard_minutes": str(standard_minutes),
+                "units": str(units),
+            }
+        ],
+        "reservations": [],
+    }
+    recommendation = await make_recommendation(
+        session,
+        run=run,
+        proposer=identity.users["planner@demo.test"],
+        status=status,
+        proposal=proposal,
+        proposal_hash=f"hash-{uuid.uuid4().hex}",
+        input_versions=(
+            {
+                "order": {str(order.id): order.version},
+                "capacity_slots": {str(slot.id): slot.version},
+                "material_balances": {},
+            }
+            if input_versions is None
+            else input_versions
+        ),
+    )
+    return order, recommendation

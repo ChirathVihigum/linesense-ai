@@ -48,7 +48,7 @@ class DecisionOut(BaseModel):
 class StaleInputOut(BaseModel):
     kind: str
     id: uuid.UUID
-    expected_version: int
+    expected_version: int | None
     current_version: int | None
 
 

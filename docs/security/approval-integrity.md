@@ -66,7 +66,15 @@ transaction committed first is never applied twice.
 ## Freshness
 
 `check_staleness` compares `input_versions` with the current `version` of
-every referenced order, slot and balance. A missing row counts as stale.
+every referenced order, slot and balance, and **fails closed**:
+
+- a row that no longer exists is stale (`current_version = null`);
+- a row the proposal would actually write to — the order, every
+  `proposal.allocations[].slot_id`, every `proposal.reservations[].balance_id` —
+  that `input_versions` does not pin is stale too (`expected_version = null`).
+  "Does not pin" covers a missing section entry, a key that is not a UUID and a
+  version that is not an integer: none of them prove the row has not moved.
+- versions recorded for rows the proposal does not touch are still checked.
 
 - In the **detail view** it is advisory: `stale`, `stale_inputs` and
   `apply_blocked_reason: "STALE"` tell the reviewer before they act.

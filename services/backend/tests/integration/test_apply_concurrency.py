@@ -23,13 +23,9 @@ from app.api.errors import AppError
 from app.db.models import Allocation, Factory, LineCapacitySlot, Order, Recommendation
 from app.domain.approvals import service as approvals
 from app.domain.capacity.service import lock_slots
-from app.domain.vocab import (
-    AllocationStatus,
-    ProductionState,
-    RecommendationStatus,
-    Role,
-)
-from tests.factories import make_line, make_order, make_recommendation, make_run, make_slot
+from app.domain.vocab import AllocationStatus, ProductionState, RecommendationStatus, Role
+from tests.factories import make_line, make_slot
+from tests.helpers.approvals import build_approved
 from tests.helpers.auth import IdentityFixture, seed_identity
 from tests.helpers.inventory import principal_for
 
@@ -56,42 +52,14 @@ async def identity(db_session: AsyncSession) -> IdentityFixture:
 async def _build(
     session: AsyncSession, identity: IdentityFixture, factory: Factory, slot: LineCapacitySlot
 ) -> tuple[Order, Recommendation]:
-    order = await make_order(
+    return await build_approved(
         session,
-        organization=identity.organization,
-        factory=factory,
-        production_state=ProductionState.VALIDATED.value,
+        identity,
+        factory,
+        slot,
+        standard_minutes=CONTESTED_MINUTES,
+        units=D(10),
     )
-    run = await make_run(session, order=order, requested_by=identity.users["planner@demo.test"])
-    proposal = {
-        "order_id": str(order.id),
-        "allocations": [
-            {
-                "slot_id": str(slot.id),
-                "line_id": str(slot.line_id),
-                "line_code": "L1",
-                "slot_date": slot.slot_date.isoformat(),
-                "shift_code": slot.shift_code,
-                "standard_minutes": str(CONTESTED_MINUTES),
-                "units": "10",
-            }
-        ],
-        "reservations": [],
-    }
-    recommendation = await make_recommendation(
-        session,
-        run=run,
-        proposer=identity.users["planner@demo.test"],
-        status=RecommendationStatus.APPROVED.value,
-        proposal=proposal,
-        proposal_hash=f"hash-{uuid.uuid4().hex}",
-        input_versions={
-            "order": {str(order.id): order.version},
-            "capacity_slots": {str(slot.id): slot.version},
-            "material_balances": {},
-        },
-    )
-    return order, recommendation
 
 
 async def _apply(

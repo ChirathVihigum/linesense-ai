@@ -29,11 +29,14 @@ from app.db.models import (
     Order,
     StyleOperation,
 )
-from app.domain.planning.calc import SlotCapacity, utilization
+from app.domain.planning.calc import ALLOCATABLE_PLACES, SlotCapacity, utilization
 from app.domain.vocab import ActorType, AllocationStatus, AuditOutcome
 
 MAX_BOARD_DAYS = 31
-_MINUTES = Decimal("0.01")
+# One source for the storable precision of `allocated_standard_minutes`:
+# `plan_earliest_slots` must never propose a remainder this rounding would
+# then push over the slot's capacity (see `ALLOCATABLE_PLACES`).
+_MINUTES = ALLOCATABLE_PLACES
 _UNITS = Decimal("0.0001")
 
 

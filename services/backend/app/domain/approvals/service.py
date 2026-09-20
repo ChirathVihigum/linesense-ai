@@ -136,7 +136,8 @@ class PersistedRejection(AppError):
 class StaleInput:
     kind: str
     id: uuid.UUID
-    expected_version: int
+    expected_version: int | None
+    """``None`` when the proposal recorded no usable version for this row."""
     current_version: int | None
 
 
@@ -423,26 +424,58 @@ async def _current_versions(
     return {row[0]: row[1] for row in rows}
 
 
+def _required_ids(rec: Recommendation, key: str, field: str) -> set[uuid.UUID]:
+    """The ids of one kind of row the proposal would actually write to."""
+    found: set[uuid.UUID] = set()
+    for row in _rows(rec.proposal, key):
+        row_id = _uuid(row.get(field))
+        if row_id is not None:
+            found.add(row_id)
+    return found
+
+
 async def check_staleness(session: AsyncSession, rec: Recommendation) -> list[StaleInput]:
     """Every proposal input whose current version differs from the one the
-    proposal was computed against (a missing row counts as stale).
+    proposal was computed against.
+
+    **Fails closed.** A row the proposal would write to but that
+    ``input_versions`` does not pin — missing from the section, keyed by
+    something that is not a UUID, or carrying a version that is not an
+    integer — is reported as stale with ``expected_version=None``, because
+    nothing proves it has not moved since. A row that no longer exists is
+    stale too (``current_version=None``). Versions recorded for rows the
+    proposal does not touch are still checked.
 
     Call *after* taking the row locks when the result must be authoritative;
     the detail view calls it on plain reads, where it is advisory.
     """
     versions = rec.input_versions if isinstance(rec.input_versions, dict) else {}
-    sections: tuple[tuple[str, str, Any, Any], ...] = (
-        (ORDER_KIND, "order", Order.id, Order.version),
-        (SLOT_KIND, "capacity_slots", LineCapacitySlot.id, LineCapacitySlot.version),
-        (BALANCE_KIND, "material_balances", MaterialBalance.id, MaterialBalance.version),
+    sections: tuple[tuple[str, str, Any, Any, set[uuid.UUID]], ...] = (
+        (ORDER_KIND, "order", Order.id, Order.version, {rec.order_id}),
+        (
+            SLOT_KIND,
+            "capacity_slots",
+            LineCapacitySlot.id,
+            LineCapacitySlot.version,
+            _required_ids(rec, "allocations", "slot_id"),
+        ),
+        (
+            BALANCE_KIND,
+            "material_balances",
+            MaterialBalance.id,
+            MaterialBalance.version,
+            _required_ids(rec, "reservations", "balance_id"),
+        ),
     )
     stale: list[StaleInput] = []
-    for kind, section, id_column, version_column in sections:
+    for kind, section, id_column, version_column, required in sections:
         expected = _expected_versions(versions.get(section))
-        current = await _current_versions(session, id_column, version_column, expected.keys())
-        for row_id, want in sorted(expected.items(), key=lambda item: str(item[0])):
+        checked = set(expected) | required
+        current = await _current_versions(session, id_column, version_column, checked)
+        for row_id in sorted(checked, key=str):
+            want = expected.get(row_id)
             have = current.get(row_id)
-            if have != want:
+            if want is None or have != want:
                 stale.append(
                     StaleInput(kind=kind, id=row_id, expected_version=want, current_version=have)
                 )
@@ -456,7 +489,11 @@ def _stale_field_errors(stale_inputs: Sequence[StaleInput]) -> list[dict[str, st
             "message": (
                 f"{item.id} is at version "
                 f"{'(deleted)' if item.current_version is None else item.current_version}"
-                f"; the proposal was computed against version {item.expected_version}."
+                + (
+                    "; the proposal recorded no version for it."
+                    if item.expected_version is None
+                    else f"; the proposal was computed against version {item.expected_version}."
+                )
             ),
         }
         for item in stale_inputs

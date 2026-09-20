@@ -111,12 +111,15 @@ async def test_only_supervisors_of_the_own_factory_may_decide(
     body = {"decision": "APPROVED", "proposal_hash": proposal.proposal_hash}
     url = f"/api/v1/recommendations/{proposal.recommendation_id}/decision"
 
-    for email in ("viewer@demo.test", "planner@demo.test"):
+    # The viewer has a KTN role but not `recommendation:decide`; the planner is
+    # both unprivileged *and* the proposer, and the permission check comes
+    # first, so both see the same code.
+    for email, code in (("viewer@demo.test", "FORBIDDEN"), ("planner@demo.test", "FORBIDDEN")):
         other_client = _other(client)
         actor = await login_as(other_client, session_factory, email)
         response = await actor.post(url, json=body)
         assert response.status_code == 403, f"{email}: {response.text}"
-        assert response.json()["error"]["code"] in ("FORBIDDEN", "SELF_APPROVAL_DENIED")
+        assert response.json()["error"]["code"] == code, email
         await other_client.aclose()
 
     foreign_client = _other(client)

@@ -2216,3 +2216,41 @@ Addressed the review findings from `task-23-report.md`'s round 1:
     `tests/integration/test_approvals.py::test_apply_rejects_stale_inputs_and_supersedes_the_recommendation`
     (reference fixture 6) and
     `tests/integration/test_apply_concurrency.py::test_two_applications_contend_for_the_last_slot_minutes`.
+
+### 2026-09-20 — Task 14 fix round 1
+
+- `check_staleness` now **fails closed**: the order, every `proposal.allocations[].slot_id` and
+  every `proposal.reservations[].balance_id` must be pinned by a well-formed `input_versions`
+  entry; a missing section entry, a non-UUID key or a non-integer version is reported as stale
+  with `expected_version: null` (the schema field is now nullable). Covered by
+  `test_apply_fails_closed_when_input_versions_omit_a_proposal_slot` and
+  `test_apply_fails_closed_on_a_malformed_input_version_entry`.
+- The 2dp allocation quantum has one source: `app/domain/capacity/service.py` imports
+  `ALLOCATABLE_PLACES` from `app/domain/planning/calc.py`. The floor is documented in
+  `docs/architecture/formulas.md` (it also changes the public capacity-board field
+  `remaining_standard_minutes`, which is now floored and never overstates free capacity) and
+  covered by three unit tests in `tests/unit/test_planning_calc.py`.
+- `await session.commit()` moved inside the apply retry `try`, so a serialization failure or
+  deadlock raised by COMMIT itself is retried.
+- New tests: apply-path hash mismatch + expiry, decide on an `APPLIED` proposal, the
+  `status_source` labels for both `generated_by` values, and that the Idempotency-Key of a
+  `STALE_INPUT` apply can be retried (`idempotency.release`). `test_approval_rules` now asserts
+  the exact error code per identity. The demo-flow test no longer hard-codes "AI recommendation"
+  (whether the planning summary comes from the model is Task 13's call); it asserts the label
+  agrees with `generated_by`.
+- Commands (each via `scripts/heavy-job.sh`, DB letter **b**):
+  ```
+  $ ... uv run pytest tests/integration/test_approvals.py \
+        tests/integration/test_apply_concurrency.py tests/security/test_approval_rules.py \
+        tests/unit/test_planning_calc.py -q                                    # 35 passed
+  $ ... uv run pytest tests/unit/test_properties.py tests/unit/test_reference_fixtures.py \
+        tests/integration/test_capacity_api.py tests/integration/test_orders_api.py -q  # 39 passed
+  $ uv run ruff check <files> && uv run ruff format <files>                    # clean
+  $ uv run mypy app/domain/approvals app/api/recommendations.py \
+        app/api/schemas/recommendations.py app/domain/capacity/service.py \
+        app/domain/planning/calc.py                                            # clean
+  ```
+  `make contracts` was **not** re-run and `contracts/openapi.json` is **not** in this commit: the
+  working copy already carries the nullable `expected_version` (another agent regenerated it) plus
+  that agent's unreleased dashboard/admin routes, so it is theirs to commit. `uv run mypy app`
+  reports 5 errors, all in another agent's in-flight `app/nlp/` and `app/retrieval/`.

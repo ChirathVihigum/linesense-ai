@@ -165,3 +165,69 @@ def test_plan_allocation_never_exceeds_slot_remaining() -> None:
         compatible_line_ids=frozenset({LINE_A}),
     )
     assert plan.allocations[0].standard_minutes <= D("33")
+
+
+# --------------------------------------------------------------------------
+# Storable precision: a plan must never propose what a slot cannot hold
+# --------------------------------------------------------------------------
+
+
+def test_remaining_standard_minutes_is_floored_to_the_storable_precision() -> None:
+    """Capacity carries six decimals; `allocated_standard_minutes` is numeric(12,2).
+
+    10080.00 x 0.7692 = 7753.536000, of which 7753.53 is already booked. The
+    true remainder (0.006) cannot be stored: `capacity.allocate` quantizes to
+    2dp (ROUND_HALF_UP), so booking it would write 0.01 and push the slot past
+    its own capacity. The free remainder is therefore floored to 0.00.
+    """
+    slot = _slot(
+        line_id=LINE_A,
+        day=date(2026, 9, 20),
+        available_minutes=D("10080.00"),
+        efficiency=D("0.7692"),
+        allocated=D("7753.53"),
+    )
+    assert slot.capacity_standard_minutes == D("7753.536000")
+    assert slot.remaining_standard_minutes == D("0.00")
+
+
+def test_a_sub_precision_remainder_is_never_planned() -> None:
+    """Without the floor this slot would take a 0.006-minute row that the
+    allocation command must then refuse ("Insufficient remaining capacity")."""
+    nearly_full = _slot(
+        line_id=LINE_A,
+        day=date(2026, 9, 20),
+        available_minutes=D("10080.00"),
+        efficiency=D("0.7692"),
+        allocated=D("7753.53"),
+    )
+    roomy = _slot(
+        line_id=LINE_A,
+        day=date(2026, 9, 21),
+        available_minutes=D("480"),
+        efficiency=D("1"),
+        allocated=D("0"),
+    )
+    plan = plan_earliest_slots(
+        units=10,
+        sam_minutes_per_unit=D("6"),
+        slots=[nearly_full, roomy],
+        earliest_date=date(2026, 9, 20),
+        due_date=date(2026, 9, 30),
+        compatible_line_ids=frozenset({LINE_A}),
+    )
+    assert [allocation.slot_id for allocation in plan.allocations] == [roomy.slot_id]
+    assert plan.allocated_units == D(10)
+    assert all(allocation.standard_minutes >= D("0.01") for allocation in plan.allocations)
+
+
+def test_a_whole_remainder_is_still_planned_exactly() -> None:
+    """The floor only removes what cannot be stored: 2dp capacity is untouched."""
+    slot = _slot(
+        line_id=LINE_A,
+        day=date(2026, 9, 20),
+        available_minutes=D("480.00"),
+        efficiency=D("0.75"),
+        allocated=D("300.00"),
+    )
+    assert slot.remaining_standard_minutes == D("60.00")
