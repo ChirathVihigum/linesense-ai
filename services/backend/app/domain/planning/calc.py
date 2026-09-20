@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from uuid import UUID
 
 _NO_COMPATIBLE_LINE = "NO_COMPATIBLE_LINE"
@@ -19,6 +19,15 @@ _INSUFFICIENT_CAPACITY_BEFORE_DUE_DATE = "INSUFFICIENT_CAPACITY_BEFORE_DUE_DATE"
 _LIMITED_BY_MATERIAL = "LIMITED_BY_MATERIAL"
 
 _COMPARISON_PLACES = Decimal("0.000001")
+
+# `line_capacity_slots.allocated_standard_minutes` is `numeric(12,2)`, so a
+# remainder below 0.01 standard minutes cannot be booked against a slot:
+# `app.domain.capacity.service.allocate` stores the rounded value and would
+# then exceed the slot's capacity. Capacity itself is not 2dp (operator
+# minutes x planned efficiency easily yields six decimals), so the free
+# remainder is floored to the storable precision — otherwise a plan proposes
+# slivers that can never be applied.
+ALLOCATABLE_PLACES = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -37,7 +46,9 @@ class SlotCapacity:
 
     @property
     def remaining_standard_minutes(self) -> Decimal:
-        return max(Decimal(0), self.capacity_standard_minutes - self.allocated_standard_minutes)
+        """Free capacity, floored to what a slot can actually hold (2dp)."""
+        free = max(Decimal(0), self.capacity_standard_minutes - self.allocated_standard_minutes)
+        return free.quantize(ALLOCATABLE_PLACES, rounding=ROUND_DOWN)
 
 
 @dataclass(frozen=True)

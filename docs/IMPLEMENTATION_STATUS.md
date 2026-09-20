@@ -2141,3 +2141,63 @@ Addressed the review findings from `task-23-report.md`'s round 1:
   `apps/web/src/features/planning/PlanningBoardPage.tsx`,
   `apps/web/src/features/quality/{HoldsTable.tsx,QualityPage.tsx,InspectionForm.test.tsx,ReleaseReview.test.tsx}`.
   New — `apps/web/src/features/materials/ReservationTable.test.tsx`.
+
+## 2026-09-20 — Task 14: approvals and transactional application
+
+- **Built:** `app/domain/approvals/service.py` (list/detail/decide/apply/`check_staleness`),
+  `app/api/recommendations.py` + `app/api/schemas/recommendations.py` (the four routes,
+  including the `GET /api/v1/factories/{factory_id}/recommendations?status=` listing the web
+  app was waiting for), router registered in `app/main.py`.
+- **Rules enforced:** supervisor-only `recommendation:decide`/`recommendation:apply`
+  (404 outside the factory, 403 without the permission); the proposer may neither decide nor
+  apply (403 `SELF_APPROVAL_DENIED`, audited `DENIED`); approving never applies; `proposal_hash`
+  mismatch 409; expiry sets `EXPIRED` (committed) then 409 `EXPIRED`; stale inputs set
+  `SUPERSEDED` with `superseded_reason="STALE_INPUT: <kinds>"` (committed, proposer notified)
+  then 409 `STALE_INPUT` with a `field_errors` entry per changed input.
+- **Apply transaction:** lock order row -> recommendation row -> the union of every slot
+  (proposal + the order's past allocations) -> the union of every balance (proposal + BOM +
+  the order's past reservations), each by ascending id; ACTIVE rows re-read `FOR UPDATE`;
+  release, then `capacity.allocate` / `inventory.reserve_material` per proposed row (either
+  failing rolls the whole transaction back); order -> `PLANNED` with `material_state`
+  recomputed for that order only; recommendation -> `APPLIED`; audit + notifications; a
+  deduped `maintenance.refresh_material_states` job for the other orders sharing the
+  materials. The route owns its session so it can retry the whole transaction 3x with
+  jittered backoff on SQLSTATE 40001/40P01, and `Idempotency-Key` replays the original body.
+- **Cross-task fix (`app/domain/planning/calc.py`):** `SlotCapacity.remaining_standard_minutes`
+  is now floored to 0.01 (`ALLOCATABLE_PLACES`). `line_capacity_slots.allocated_standard_minutes`
+  is `numeric(12,2)` while capacity (operator minutes x planned efficiency) has up to six
+  decimals, so the planner was proposing sub-precision slivers (0.006 standard minutes /
+  0.0009 units) on nearly-full slots that `capacity.allocate` correctly refused
+  ("Insufficient remaining capacity ... 0.006000 standard minutes remaining") — the demo
+  proposal could not be applied at all. Flooring the free remainder to what a slot can store
+  removes those rows; `tests/unit/test_planning_calc.py`, `tests/unit/test_properties.py`,
+  `tests/agents/test_planning_agent.py`, `tests/integration/test_capacity_api.py` and
+  `tests/integration/test_two_agent_flow.py` all still pass.
+- **New test DB letter b** (parallel agents). Commands (each via `scripts/heavy-job.sh`,
+  prefixed with `LS_TEST_DATABASE_URL`/`LS_TEST_MIGRATION_DATABASE_URL` for `linesense_test_b`):
+  ```
+  $ ... uv run pytest tests/integration/test_apply_concurrency.py -q            # 6 passed
+  $ ... uv run pytest tests/integration/test_approvals.py \
+        tests/security/test_approval_rules.py -q                                # 9 passed
+  $ uv run pytest tests/unit/test_planning_calc.py tests/unit/test_properties.py \
+        tests/unit/test_reference_fixtures.py tests/agents/test_planning_agent.py -q  # 36 passed
+  $ ... uv run pytest tests/integration/test_capacity_api.py \
+        tests/integration/test_two_agent_flow.py -q                             # 17 passed
+  $ ... uv run pytest tests/integration/test_idempotency.py \
+        tests/integration/test_idempotency_purge_race.py tests/unit/test_idempotency_hash.py \
+        tests/integration/test_material_state_refresh_job.py -q                 # 27 passed
+  $ uv run ruff check <files> && uv run ruff format --check <files>             # clean
+  $ uv run mypy app                                                             # clean, 119 files
+  $ make contracts                                                              # regenerated
+  ```
+- **Limitations:** full suites (`make test`, `make test-integration`, `make test-e2e`) are
+  **PENDING (needs user approval or CI)** per the heat policy — not run. `citation_url` is
+  emitted as `/api/v1/citations/{chunk_id}`; that route belongs to the retrieval task and does
+  not exist yet. `app/idempotency/service.py` gained a `release()` helper (needed so a
+  committed rejection does not burn the caller's key).
+- **Files changed:** new — `app/domain/approvals/{__init__.py,service.py}`,
+  `app/api/recommendations.py`, `app/api/schemas/recommendations.py`,
+  `docs/security/approval-integrity.md`, `tests/helpers/approvals.py`,
+  `tests/integration/{test_approvals.py,test_apply_concurrency.py}`,
+  `tests/security/test_approval_rules.py`. Modified — `app/main.py`,
+  `app/idempotency/service.py`, `app/domain/planning/calc.py`.

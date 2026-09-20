@@ -24,7 +24,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -221,3 +221,23 @@ async def finish(
     )
     if result.rowcount != 1:  # type: ignore[attr-defined]
         raise RuntimeError("finish() called for an idempotency key that begin() did not claim")
+
+
+async def release(
+    session: AsyncSession, *, organization_id: uuid.UUID, actor_id: str, operation: str, key: str
+) -> None:
+    """Drop an unfinished claim on ``key`` so the caller may retry it.
+
+    Needed by the one command whose *rejection* is itself committed (an
+    apply that finds stale inputs supersedes the recommendation and commits
+    that): without this the pending claim would commit too, and every later
+    retry of the same key would answer "a request with this
+    Idempotency-Key is in progress". A claim that already carries a stored
+    response is left untouched.
+    """
+    await session.execute(
+        delete(IdempotencyKey).where(
+            *_scope(organization_id, actor_id, operation, key),
+            IdempotencyKey.response_status.is_(None),
+        )
+    )
