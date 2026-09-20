@@ -3213,3 +3213,13 @@ $ uv run mypy app/evaluation   # clean (the one error mypy reports for the wider
 Modified — `scripts/dev-db.sh` (`linesense_eval` + `reset-eval`),
 `.env.example` (`LS_EVAL_DATABASE_URL`/`LS_EVAL_MIGRATION_DATABASE_URL`),
 `Makefile` (`eval` target — not yet committed, see above).
+
+**Addendum (same day)**: the `Makefile`/`.env.example` commit-blocked
+limitation noted above resolved itself — another agent's subsequent
+pathspec commit of those same two shared files (`d208be9`,
+"chore(security): add security/perf/backup/restore-check Makefile
+targets") captured the then-current working tree, which already
+contained this task's `eval` target and `LS_EVAL_DATABASE_URL`/
+`LS_EVAL_MIGRATION_DATABASE_URL` lines merged in alongside theirs.
+Confirmed via `git show HEAD:Makefile` / `git show HEAD:.env.example`:
+both are present. No further action needed.
