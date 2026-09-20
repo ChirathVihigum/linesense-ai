@@ -2254,3 +2254,64 @@ Addressed the review findings from `task-23-report.md`'s round 1:
   working copy already carries the nullable `expected_version` (another agent regenerated it) plus
   that agent's unreleased dashboard/admin routes, so it is theirs to commit. `uv run mypy app`
   reports 5 errors, all in another agent's in-flight `app/nlp/` and `app/retrieval/`.
+
+### 2026-09-20 — Task 15 (Phase 4 backend): IE and quality agents, four-agent graph, order report
+
+- **IE agent** (`app/agents/ie/`, prompt `ie-v1`): `assess_line_capability` over `snapshot.ie` —
+  bottleneck operation, `units_per_hour:<line>`, `balance_index:<line>`, `bottleneck_seconds:<line>`,
+  `sam_units_per_hour:<line>`; findings `BOTTLENECK_OPERATION` / `LINE_CAPACITY_BELOW_PLAN`
+  (modelled < 0.9 × SAM) / `INSUFFICIENT_SAMPLES` / `NO_OBSERVATIONS`; one `IE_REVIEW` suggestion
+  per line ("Review method and staffing at OP-04 on L2 (effective cycle 60 s)"). Tools
+  `get_line_analysis`, `get_operation_statistics` (count/median only), `compare_observed_vs_standard`.
+  It never sees or writes an operator alias — asserted in `tests/agents/test_ie_agent.py`.
+- **Quality agent** (`app/agents/quality/`, prompt `quality-v1`): `assess_quality_status` —
+  `POLICY_MISSING`/`ACTIVE_HOLD`/`INSPECTION_FAILED` (critical), `DEMO_POLICY`/`SHIPMENT_INELIGIBLE`
+  (warning), `NOT_INSPECTED`/`SHIPMENT_ELIGIBLE` (info); metrics `defective_rate:<id>`, `dhu:<id>`
+  (null when nothing was inspected), `defect_count:<code>`, `shipment_eligible`. Eligibility is the
+  snapshot's calculated verdict, quoted verbatim: a scripted model summary of "All clear — ready to
+  ship" changes neither the findings, the metric, nor `report.shipment.eligible`
+  (`test_a_model_all_clear_never_makes_the_shipment_eligible`). `build_snapshot` now carries each
+  inspection's defect observations (code, severity, count, operation) so the rates and the
+  breakdown tool have data; nothing ties a defect to a person.
+- **Four-agent graph** (`app/orchestration/orchestrator.py`): `_decide` returns a list of
+  envelopes; RM r0 + IE r0 + quality r0 are dispatched in one advance step, planning r0 waits for
+  RM **and** IE (both results are input refs), replan and RM r1 as before, and quality must be
+  terminal before finalization. `_allocates_units` now accepts a `DEGRADED` plan, so a degraded but
+  proposed allocation still has its materials validated.
+- **Order report** (`app/orchestration/synthesis.py`): `build_order_report(...) -> OrderReport`
+  from deterministic state only (states, shipment "Calculated from records", critical-first
+  blockers, agent summaries with provider/model/degraded_reason/finding_codes, recommendation,
+  per-agent evidence, degraded reasons). Appended as a `run.report` event during finalization
+  (normal and deadline paths), returned by `GET /runs/{id}` (`report`) and `GET /orders/{id}`
+  (`latest_report`, with `stale` when the order version differs from the snapshot's).
+  `states.material` is the worst RM round-0 material state via the new public
+  `app.domain.inventory.readiness.worst_material_state`.
+- Docs: `docs/architecture/agent-protocol.md` (four-agent graph, `run.report` section) and the new
+  `docs/architecture/agents.md` (per agent: goal, inputs, tools, outputs, human boundary, prompt
+  version, limits; plus the degradation table).
+- Commands (each via `scripts/heavy-job.sh`, DB letter **c**):
+  ```
+  $ ... uv run pytest tests/agents/test_ie_agent.py tests/agents/test_quality_agent.py \
+        tests/agents/test_planning_agent.py tests/agents/test_agent_loop.py \
+        tests/agents/test_result_validation.py tests/unit/test_synthesis.py \
+        tests/integration/test_four_agent_flow.py tests/integration/test_orchestrator.py \
+        tests/integration/test_two_agent_flow.py tests/integration/test_orders_api.py \
+        tests/integration/test_analysis_api.py tests/integration/test_executor.py -q  # 108 passed
+  $ uv run ruff check <touched files> && uv run ruff format <touched files>           # clean
+  $ uv run mypy app/agents/ie app/agents/quality app/orchestration/synthesis.py \
+        app/orchestration/orchestrator.py app/orchestration/snapshot.py \
+        app/domain/orders/service.py app/domain/inventory/readiness.py \
+        app/api/schemas/orders.py app/api/runs.py   # clean for these files
+  ```
+- **Limitations.** Full suites and `make contracts` are PENDING (user approval/CI);
+  `contracts/openapi.json` is not in this commit (the working copy carries other agents'
+  unreleased routes) but `latest_report` changes it, so it must be regenerated. Six agent tasks
+  now share the documented 12 model calls per run, so with the fixture provider (3 calls per task)
+  planning r1 and RM r1 fall back to their deterministic assessments with `BUDGET_EXCEEDED`; the
+  demo recommendation is therefore `generated_by="deterministic"` and
+  `tests/integration/test_two_agent_flow.py` was updated to assert that. Raising the budget,
+  reducing fixture tool depth, or honouring the envelope's `max_tool_calls` per task are the
+  options — a product decision, not taken here. `get_operation_statistics` reports
+  `min_seconds`/`max_seconds` as null with a note: the snapshot keeps the median and sample count
+  only. `tests/agents/test_rm_agent.py` and `uv run mypy app` fail only on another agent's
+  in-flight `search_documents`/retrieval work.

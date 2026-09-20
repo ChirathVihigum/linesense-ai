@@ -140,6 +140,7 @@ def _to_detail(data: orders_service.OrderDetailData) -> OrderDetail:
             if data.latest_run is not None
             else None
         ),
+        latest_report=data.latest_report,
         allowed_transitions=data.allowed_transitions,
     )
 

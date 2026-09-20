@@ -53,6 +53,7 @@ from app.domain.vocab import (
 from app.orchestration.events import append_event
 from app.orchestration.executor import AGENT_EXECUTE_JOB
 from app.orchestration.protocol import AgentResult
+from app.orchestration.synthesis import REPORT_EVENT_TYPE
 
 router = APIRouter(prefix="/api/v1", tags=["runs"])
 
@@ -75,7 +76,6 @@ SUPERSEDABLE_STATUSES = (
     RecommendationStatus.APPROVED.value,
 )
 RUN_CANCELLED_REASON = "RUN_CANCELLED"
-REPORT_EVENT_TYPE = "run.report"
 
 
 async def _summary_parts(

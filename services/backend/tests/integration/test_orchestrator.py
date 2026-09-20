@@ -1,4 +1,4 @@
-"""The orchestrator: the RM/planning graph, the targeted replan and finalization."""
+"""The orchestrator: the four-agent graph, the targeted replan and finalization."""
 
 from __future__ import annotations
 
@@ -164,17 +164,19 @@ async def test_demo_run_replans_for_material_and_awaits_review(
         tasks = await _tasks(session, run.id)
         assert [(task.recipient, task.round, task.task_type) for task in tasks] == [
             ("rm", 0, "assess_material_readiness"),
+            ("ie", 0, "assess_line_capability"),
+            ("quality", 0, "assess_quality_status"),
             ("planning", 0, "propose_allocation"),
             ("planning", 1, "revise_allocation"),
             ("rm", 1, "validate_plan_materials"),
         ]
         assert all(task.status == TaskStatus.SUCCEEDED.value for task in tasks)
-        assert tasks[2].parent_task_id == tasks[1].id
-        assert tasks[3].parent_task_id == tasks[2].id
+        assert tasks[4].parent_task_id == tasks[3].id
+        assert tasks[5].parent_task_id == tasks[4].id
 
         events = await _events(session, run.id)
-        assert events.count("task.dispatched") == 4
-        assert events.count("task.completed") == 4
+        assert events.count("task.dispatched") == 6
+        assert events.count("task.completed") == 6
         assert "orchestrator.replan" in events
         assert events[0] == "run.started"
         assert events[-1] == "run.finalized"
@@ -191,7 +193,7 @@ async def test_demo_run_replans_for_material_and_awaits_review(
         assert coverable.value == demo.DEMO_EXPECTED_COVERABLE_UNITS
         assert "MATERIAL_SHORTAGE" in [f.code for f in rm0.findings]
 
-        planning1 = await _result(session, tasks[2])
+        planning1 = await _result(session, tasks[4])
         assert "REVISED_FOR_MATERIAL" in [f.code for f in planning1.findings]
 
         stored = await session.get(AnalysisRun, run.id)
@@ -266,14 +268,14 @@ async def test_duplicate_advance_deliveries_do_not_duplicate_tasks(
 
     async with session_factory() as session:
         tasks = await _tasks(session, run.id)
-        assert len(tasks) == 4
-        assert len({(task.recipient, task.round) for task in tasks}) == 4
+        assert len(tasks) == 6
+        assert len({(task.recipient, task.round) for task in tasks}) == 6
         results = await session.scalar(
             sa.select(sa.func.count())
             .select_from(AgentResultRecord)
             .where(AgentResultRecord.run_id == run.id)
         )
-        assert results == 4
+        assert results == 6
         recommendations = await session.scalar(
             sa.select(sa.func.count())
             .select_from(Recommendation)
@@ -315,6 +317,8 @@ async def test_no_replan_when_materials_cover_the_order(
         tasks = await _tasks(session, run.id)
         assert [(task.recipient, task.round) for task in tasks] == [
             ("rm", 0),
+            ("ie", 0),
+            ("quality", 0),
             ("planning", 0),
             ("rm", 1),
         ]

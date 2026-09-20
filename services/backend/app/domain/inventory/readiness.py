@@ -127,8 +127,13 @@ async def lock_orders_using_materials(
     return [order.id for order in await lock_orders(session, ids)]
 
 
-def _combine(states: Iterable[MaterialState]) -> MaterialState:
+def worst_material_state(states: Iterable[MaterialState]) -> MaterialState:
+    """The most severe of ``states`` (`UNKNOWN` when there are none)."""
     return max(states, key=lambda state: _SEVERITY[state], default=MaterialState.UNKNOWN)
+
+
+def _combine(states: Iterable[MaterialState]) -> MaterialState:
+    return worst_material_state(states)
 
 
 async def recompute_material_states(

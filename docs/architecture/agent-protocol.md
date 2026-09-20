@@ -129,7 +129,10 @@ the run lock is never held across a network call.
 ```mermaid
 flowchart TD
     Q[run QUEUED] -->|run.started| RM0["rm round 0<br/>assess_material_readiness"]
-    RM0 --> P0["planning round 0<br/>propose_allocation<br/>(input: snapshot + RM result)"]
+    Q -->|run.started| IE0["ie round 0<br/>assess_line_capability"]
+    Q -->|run.started| QA0["quality round 0<br/>assess_quality_status"]
+    RM0 --> P0["planning round 0<br/>propose_allocation<br/>(input: snapshot + RM result + IE result)"]
+    IE0 --> P0
     P0 --> DEC{"needs_replan?"}
     DEC -->|"yes, replan_count == 0"| P1["planning round 1<br/>revise_allocation<br/>(parent: planning r0)"]
     DEC -->|no| FIN0
@@ -137,6 +140,7 @@ flowchart TD
     FIN0 -->|yes| RM1["rm round 1<br/>validate_plan_materials<br/>(parent: final planning task)"]
     FIN0 -->|no| F[finalize]
     RM1 --> F
+    QA0 --> F
     F -->|recommendation created| AR[AWAITING_REVIEW]
     F -->|no recommendation, all SUCCEEDED| C[COMPLETED]
     F -->|no recommendation, any DEGRADED/FAILED| D[DEGRADED]
@@ -144,8 +148,26 @@ flowchart TD
     Q -.->|past deadline_at| DL["cancel open tasks<br/>DEGRADED if a planning result SUCCEEDED, else FAILED<br/>error_code DEADLINE_EXCEEDED"]
 ```
 
+RM, IE and quality round 0 are dispatched **in the same advance step** (three
+`task.dispatched` events with consecutive ids, before any `task.completed`):
+none of them depends on another, and planning must not wait for them in
+sequence. Planning round 0 waits for RM **and** IE to be terminal. Quality is
+independent of the planning chain, but must be terminal before the run is
+finalized, because the order report cannot be written without its facts.
+
 At most **one** replan happens per run (`analysis_runs.replan_count` goes
 0 → 1 and is never raised again).
+
+A `DEGRADED` result still carries the agent's deterministic content, so a
+degraded plan is validated by RM round 1 exactly like a `SUCCEEDED` one: the
+recommendation would otherwise propose an allocation whose materials were
+never checked.
+
+**Budget interaction.** A run has 12 model calls
+(`analysis_runs.model_calls_limit`) shared by all six tasks, reserved before
+each call — including the calls of attempts that then fail. When the budget
+runs out, the remaining tasks return their deterministic assessment with
+`degraded_reason = BUDGET_EXCEEDED`; the graph itself never changes.
 
 ### The replan rule
 
@@ -169,8 +191,36 @@ shortage and the first open receipt date.
 In one transaction the orchestrator creates the recommendation (if there is a
 plan to propose), supersedes every earlier `PROPOSED`/`APPROVED`
 recommendation of the same order with `NEWER_ANALYSIS`, sets the run status
-per the graph above, appends `run.finalized`, notifies the `supervisor` role
+per the graph above, appends the canonical order report as a `run.report`
+event, appends `run.finalized`, notifies the `supervisor` role
 (link `/runs/<id>`) and audits `analysis.completed`.
+
+### The order report (`run.report`)
+
+[`app/orchestration/synthesis.py`](../../services/backend/app/orchestration/synthesis.py)
+builds one `OrderReport` per run **from deterministic state only**:
+
+| field | source |
+| --- | --- |
+| `order` | the run snapshot's order (id, external_ref, due_date) |
+| `states.production` / `states.quality` | the snapshot's order and quality facts |
+| `states.material` | the worst material state the **RM round-0** findings describe |
+| `states.analysis` | the run status the run is closing with |
+| `shipment` | the snapshot's calculated eligibility, `source: "Calculated from records"` |
+| `blockers` | every `critical` finding, deterministic ones first |
+| `agent_summaries` | one row per agent task: status, summary, `summary_source`, provider, model, `degraded_reason`, `finding_codes` |
+| `recommendation` | the run's proposal (id, status, kind, `source_label`) or `null` |
+| `evidence` | every evidence ref, once per agent |
+| `degraded` / `degraded_reasons` | the distinct reasons behind non-`SUCCEEDED` results |
+
+Model text appears **only** inside `agent_summaries`, labelled with the
+provider that produced it. A model claiming an order is ready to ship can
+never change `shipment.eligible`, a state or a blocker.
+
+`GET /api/v1/runs/{id}` returns the report as `report`;
+`GET /api/v1/orders/{id}` returns the latest finalized run's report as
+`latest_report`, with `stale: true` when the order's version differs from the
+version in that run's snapshot.
 
 `recommendations.evidence_refs` is stored as `{"items": [...]}`, each item
 being an `EvidenceRef` the selected actions cited plus the `agent` that found

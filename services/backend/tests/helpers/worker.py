@@ -10,8 +10,11 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db.models import Job
+from app.domain.vocab import JobStatus
 from app.jobs.handlers import build_registry
 from app.jobs.queue import QUEUES
 from app.jobs.worker import Worker
@@ -68,3 +71,29 @@ async def drain(
     if processed >= max_jobs:  # pragma: no cover - a runaway loop is a bug, not a pass
         raise AssertionError(f"drain did not settle after {max_jobs} jobs")
     return processed
+
+
+async def drain_with_backoff(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    *,
+    transport: httpx.AsyncBaseTransport,
+    rounds: int = 8,
+) -> int:
+    """Drain, then pull every backed-off retry forward, until nothing is left.
+
+    A retryable agent failure schedules its next attempt seconds into the
+    future; a test must not sleep through the backoff.
+    """
+    total = 0
+    for _ in range(rounds):
+        total += await drain(session_factory, settings, transport=transport)
+        async with session_factory() as session, session.begin():
+            released = await session.execute(
+                sa.update(Job)
+                .where(Job.status == JobStatus.READY.value, Job.available_at > sa.func.now())
+                .values(available_at=sa.func.now())
+            )
+        if released.rowcount == 0:
+            return total
+    raise AssertionError("jobs kept being rescheduled")
