@@ -19,13 +19,21 @@ describe('Layout', () => {
     expect(within(nav).queryByRole('link', { name: 'Import orders' })).not.toBeInTheDocument()
   })
 
+  it('hides the Administration nav item from a non-admin', async () => {
+    server.use(http.get('/api/v1/me', () => HttpResponse.json(viewerMe)))
+    renderRoute('/f/F1/orders')
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    expect(within(nav).queryByRole('link', { name: 'Administration' })).not.toBeInTheDocument()
+  })
+
   it('hides a whole section when the user cannot read it', async () => {
     const me = makeMe(['org_admin'], ['audit:read', 'admin:manage'])
     server.use(http.get('/api/v1/me', () => HttpResponse.json(me)))
     renderRoute('/f/F1/orders')
     const nav = await screen.findByRole('navigation', { name: 'Main' })
     expect(within(nav).queryByText('Orders')).not.toBeInTheDocument()
-    expect(within(nav).queryAllByRole('link')).toHaveLength(0)
+    // Only the section this fixture's permissions actually grant (Administration) is shown.
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Administration'])
   })
 
   it('lists only permitted factories and switches factory keeping the section', async () => {
@@ -75,7 +83,7 @@ describe('Layout', () => {
     window.localStorage.setItem(LAST_FACTORY_STORAGE_KEY, 'F2')
     const { router } = renderRoute('/')
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/f/F2/orders')
+      expect(router.state.location.pathname).toBe('/f/F2/overview')
     })
   })
 
