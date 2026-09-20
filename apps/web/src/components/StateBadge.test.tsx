@@ -9,8 +9,12 @@ const VOCABULARIES: Record<StateVocabulary, string[]> = {
   material: ['UNKNOWN', 'READY', 'AT_RISK', 'SHORTAGE'],
   quality: ['NOT_INSPECTED', 'PENDING', 'HOLD', 'RELEASED'],
   analysis: ['QUEUED', 'RUNNING', 'AWAITING_REVIEW', 'COMPLETED', 'DEGRADED', 'FAILED', 'CANCELLED'],
+  agent_result: ['SUCCEEDED', 'DEGRADED', 'FAILED'],
   recommendation: ['DRAFT', 'PROPOSED', 'APPROVED', 'REJECTED', 'EXPIRED', 'APPLIED', 'SUPERSEDED'],
   reservation: ['ACTIVE', 'RELEASED', 'CONSUMED'],
+  policy: ['DRAFT', 'ACTIVE', 'RETIRED'],
+  document_version: ['QUARANTINE', 'PROCESSING', 'ACTIVE', 'REJECTED', 'SUPERSEDED'],
+  audit_outcome: ['SUCCESS', 'DENIED', 'FAILED'],
 }
 
 describe('StateBadge', () => {

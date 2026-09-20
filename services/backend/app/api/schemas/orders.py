@@ -158,3 +158,12 @@ class OrderProgressRequest(BaseModel):
     produced_units: int = Field(ge=0)
     packed_units: int = Field(ge=0)
     expected_version: int
+
+
+class OrderHistoryEventOut(BaseModel):
+    id: int
+    actor_display_name: str
+    action: str
+    outcome: str
+    reason: str | None
+    created_at: datetime

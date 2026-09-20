@@ -80,8 +80,40 @@ export function makeOrder(overrides: Partial<Schemas['OrderSummary']> = {}): Sch
   }
 }
 
+export function makeOrderDetail(overrides: Partial<Schemas['OrderDetail']> = {}): Schemas['OrderDetail'] {
+  return {
+    ...makeOrder(),
+    factory: { id: FACTORY_ID, code: 'F1', name: 'Factory One' },
+    bom: { version_no: 1, lines: [] },
+    operations: [],
+    allocations: [],
+    reservations: [],
+    inspections: [],
+    holds: [],
+    latest_run: null,
+    latest_report: null,
+    allowed_transitions: [],
+    ...overrides,
+  }
+}
+
 export function page<T>(items: T[], total = items.length, limit = 50, offset = 0) {
   return { items, total, limit, offset }
+}
+
+export function makeDashboard(overrides: Partial<Schemas['DashboardOut']> = {}): Schemas['DashboardOut'] {
+  return {
+    generated_at: '2026-09-20T04:30:00Z',
+    status_source: 'Calculated from records',
+    as_of: '2026-09-20',
+    orders_at_risk: [],
+    material_shortages: [],
+    quality_holds: [],
+    active_runs: [],
+    pending_approvals: 0,
+    capacity_next_7_days: [],
+    ...overrides,
+  }
 }
 
 export function errorBody(
@@ -105,6 +137,14 @@ export const handlers = [
       page([{ id: STYLE_ID, code: 'STY-001', name: 'Crew-neck tee', product_type: 'T-shirt' }]),
     ),
   ),
+  http.get('/api/v1/orders/:orderId', () => HttpResponse.json(makeOrderDetail())),
+  http.get('/api/v1/orders/:orderId/runs', () => HttpResponse.json(page([]))),
+  http.get('/api/v1/orders/:orderId/history', () => HttpResponse.json(page([]))),
+  http.get('/api/v1/factories/:factoryId/recommendations', () => HttpResponse.json(page([]))),
+  // The Layout header's notifications menu and the overview page's dashboard
+  // fetch on every authenticated screen, so every test needs a default.
+  http.get('/api/v1/factories/:factoryId/notifications', () => HttpResponse.json(page([]))),
+  http.get('/api/v1/factories/:factoryId/dashboard', () => HttpResponse.json(makeDashboard())),
 ]
 
 export const server = setupServer(...handlers)

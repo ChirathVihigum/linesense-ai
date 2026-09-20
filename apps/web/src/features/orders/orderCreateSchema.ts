@@ -30,10 +30,7 @@ export const orderCreateSchema = z.object({
 export type OrderCreateValues = z.infer<typeof orderCreateSchema>
 export const ORDER_FORM_FIELDS = new Set<string>(Object.keys(orderCreateSchema.shape))
 
-/**
- * Where to go after creating an order. The order detail screen is built in
- * Task 21; until then the orders list (with a confirmation toast) is the target.
- */
-export function orderCreatedPath(factoryCode: string): string {
-  return `/f/${encodeURIComponent(factoryCode)}/orders`
+/** Where to go after creating an order: its detail page. */
+export function orderCreatedPath(factoryCode: string, orderId: string): string {
+  return `/f/${encodeURIComponent(factoryCode)}/orders/${orderId}`
 }

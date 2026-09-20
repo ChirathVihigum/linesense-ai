@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_principal, require_idempotency_key
@@ -29,6 +29,7 @@ from app.api.schemas.orders import (
     OperationOut,
     OrderCreate,
     OrderDetail,
+    OrderHistoryEventOut,
     OrderProgressRequest,
     OrderSummary,
     OrderTransitionRequest,
@@ -38,11 +39,12 @@ from app.api.schemas.orders import (
 )
 from app.audit.service import audit_denied
 from app.auth.policy import Principal
-from app.db.models import Customer, Order, Style
+from app.auth.scope import load_scoped
+from app.db.models import AuditEvent, Customer, Order, Style, User
 from app.db.session import get_db_session, get_session_factory
 from app.domain.orders import service as orders_service
 from app.domain.quality.calc import ShipmentEligibility
-from app.domain.vocab import MaterialState, ProductionState, QualityState
+from app.domain.vocab import ActorType, MaterialState, ProductionState, QualityState
 from app.idempotency.service import StoredResponse
 from app.idempotency.service import begin as idempotency_begin
 from app.idempotency.service import finish as idempotency_finish
@@ -327,6 +329,73 @@ async def create_order(
         key=idempotency_key,
         status_code=201,
         body=summary,
+    )
+
+
+ACTOR_TYPE_LABELS: dict[str, str] = {
+    ActorType.SERVICE.value: "Service",
+    ActorType.SYSTEM.value: "System",
+}
+
+
+async def _actor_display_name(session: AsyncSession, event: AuditEvent) -> str:
+    """Resolves an audit event's actor to a display name.
+
+    User actors are stored as the user's UUID (`str(principal.user_id)`);
+    service/system actors use a fixed non-UUID id (e.g. "orchestrator"), so
+    only `USER` events are ever looked up.
+    """
+    if event.actor_type == ActorType.USER.value:
+        try:
+            user_id = uuid.UUID(event.actor_id)
+        except ValueError:
+            return "Unknown user"
+        user = await session.get(User, user_id)
+        return user.display_name if user is not None else "Unknown user"
+    return ACTOR_TYPE_LABELS.get(event.actor_type, event.actor_type)
+
+
+@router.get("/orders/{order_id}/history", response_model=Page[OrderHistoryEventOut])
+async def order_history(
+    order_id: uuid.UUID,
+    page: PageParams = Depends(page_params),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> Page[OrderHistoryEventOut]:
+    """Audit events recorded against this order (`order:read`).
+
+    Scoped to events with `target_type == "order"` and `target_id ==
+    str(order_id)`: the events every order lifecycle write (create,
+    transition, progress, and their denials) already records in
+    `app.domain.orders.service`/this module against the order itself.
+    """
+    await load_scoped(session, Order, order_id, principal, "order:read")
+    base = select(AuditEvent).where(
+        AuditEvent.organization_id == principal.organization_id,
+        AuditEvent.target_type == "order",
+        AuditEvent.target_id == str(order_id),
+    )
+    total = await session.scalar(select(func.count()).select_from(base.subquery()))
+    rows = (
+        await session.scalars(
+            base.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+            .limit(page.limit)
+            .offset(page.offset)
+        )
+    ).all()
+    items = [
+        OrderHistoryEventOut(
+            id=row.id,
+            actor_display_name=await _actor_display_name(session, row),
+            action=row.action,
+            outcome=row.outcome,
+            reason=row.reason,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    return Page[OrderHistoryEventOut](
+        items=items, total=int(total or 0), limit=page.limit, offset=page.offset
     )
 
 

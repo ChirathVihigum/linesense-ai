@@ -2694,3 +2694,128 @@ there concurrently.
   agents' already-present, unreleased routes noted in the fix-round-1 entry above (this task did not
   touch those routes' source, only regenerated the shared schema/typings snapshot).
   Full suites (`make test`, `make test-integration`) remain **PENDING (needs user approval or CI)**.
+
+## 2026-09-20 — Task 21: order detail, live run timeline, evidence, approval review and apply
+
+- **Built (frontend):** `OrderDetailPage` (header: state badges, shipment eligibility, due-date
+  countdown in the factory timezone, allowed-transition buttons behind a `ConfirmDialog` sending
+  `expected_version`, a 409 `STALE_INPUT` banner with reload, `StartAnalysisButton` gated on
+  `analysis:run`/disabled while a run is active) with 8 tabs — `OrderOverviewTab` (parses
+  `OrderDetail.latest_report`, the canonical report Task 21 found already landed on the order
+  detail response mid-task: states, shipment, blockers, agent summaries with source labels, a
+  `stale` banner, a link to the recommendation), `OrderPlanTab`, `OrderMaterialsTab` (BOM demand
+  vs quantity, reservations, a link to Materials for on-hand/available since the order payload
+  does not resolve reservation material codes), `OrderIETab`, `OrderQualityTab`,
+  `OrderEvidenceTab`, `OrderRunsTab`, `OrderHistoryTab`. `features/runs/{RunPage,RunTimeline,
+  AgentResultCard,FindingList,MetricTable,MessageViewer}`: `RunPage` polls `GET /runs/{id}` and
+  `/events` every 2s (`refetchInterval`) while QUEUED/RUNNING, stops otherwise; the LLM label is
+  shown via `SourceLabel({kind:'test_fixture'})` for the fixture provider (exact contractual
+  wording); Cancel/Retry gated on `analysis:run`. `RunTimeline` renders `task.dispatched` via
+  `MessageViewer` (envelope summary line + collapsible pretty JSON), `task.completed`'s reply
+  summary, highlights `orchestrator.replan` with its reason, and falls back to a generic
+  key/value view for other event types. `features/evidence/{EvidenceList,CitationDrawer,
+  evidenceItem}`: a normalized `EvidenceItem` maps three different backend shapes (report
+  evidence, `AgentResult.evidence_refs`, `RecommendationDetailOut.evidence`) onto one renderer;
+  `CitationDrawer` calls `GET /api/v1/citations/{chunk_id}` (started as a plain `fetch` since the
+  retrieval task had not landed yet; the route landed mid-task, so it now goes through the typed
+  `api` client like everywhere else) and renders chunk text as a React text node only (never
+  `dangerouslySetInnerHTML`). `features/approvals/{ApprovalInboxPage,RecommendationPage,
+  DiffTables,DecisionForm,blockedReasons}`: the inbox lists PROPOSED/APPROVED recommendations
+  (segmented control, not the shared `Tabs`, since each tab triggers its own fetch); the review
+  page gates Approve/Reject/Apply entirely on the server's `can_decide`/`can_apply` and
+  `decide_blocked_reason`/`apply_blocked_reason` (never re-derives the rule client-side), shows
+  `stale`/`expired` banners with a "Run new analysis" link, sends `proposal_hash` on every
+  decision/apply, one `Idempotency-Key` per apply attempt, and renders a 409 `STALE_INPUT`
+  apply's `field_errors` as the stale-inputs list. `StartAnalysisButton` sends
+  `expected_order_version`, disables while a run is active, and shows a `StaleBanner` for 409
+  `STALE_INPUT` vs an inline `ErrorState` for 409 `CONFLICT`/429 `RATE_LIMITED`. Wired
+  `RecommendationCompareSection` (new) into `PlanningBoardPage`, fetching PROPOSED
+  ALLOCATION/ALLOCATION_AND_RESERVATION recommendations' details for the board's
+  `RecommendationCompare` panel (built in Task 20, previously unwired because the list route did
+  not exist yet). Router/nav: `orders/:orderId`, `runs/:runId`, `approvals`, `approvals/:recId`
+  added to `router.tsx`; an "Approvals" section (permission `analysis:read`, matching the list
+  route) added to `Layout.tsx`'s nav; `OrderCreatePage`/`orderCreateSchema.orderCreatedPath` now
+  navigate to the new order's detail page instead of the orders list.
+- **Built (backend, small addition per the brief):** `GET /api/v1/orders/{id}/history` in
+  `app/api/orders.py` (checked first: it did not exist) — audit events with `target_type="order"`,
+  `target_id=str(order_id)`, `order:read` scope, actor resolved to a display name for `USER`
+  actors (`Unknown user` if the id does not resolve) and a fixed label for `SERVICE`/`SYSTEM`.
+  `OrderHistoryEventOut` schema added to `app/api/schemas/orders.py`.
+- **Task 14 (approvals/recommendations routes) was already landed** when this task started, so
+  the approval inbox and recommendation review are wired against the real routes throughout, not
+  mocked or deferred.
+- **Cross-task fix:** `app/api/schemas/dashboard.py` and `app/api/dashboard.py` (Task 22, still
+  in flight) defined a second `QualityHoldOut` Pydantic class, colliding with the pre-existing one
+  in `app/api/schemas/quality.py`; FastAPI's OpenAPI generator disambiguated the quality one to
+  `app__api__schemas__quality__QualityHoldOut`, which broke `apps/web/src/features/quality/
+  HoldsTable.tsx` (an already-working file, not part of this task) after `make contracts` picked
+  up the collision. Renamed the dashboard-only class to `DashboardQualityHoldOut` (used only
+  within `app/api/dashboard.py`/its schema module) and regenerated contracts; both features'
+  generated types are correct again. Backend import (`create_app()`), scoped `ruff`/`ruff format`
+  and `mypy` on the touched files: clean.
+- **`make contracts` was run three times** during this task (regenerating `contracts/openapi.json`
+  and `apps/web/src/generated/api.ts`) as other tasks' backend routes landed concurrently in the
+  same working tree (Task 14's routes were already present; the retrieval task's citation route
+  landed partway through). Each run only added routes/schemas; nothing of this task's own was
+  reverted by a later run.
+- **Design deviations (documented, not fabricated data):** the approval inbox's "stale flag" column
+  uses `RecommendationSummary.expired` (the list summary has no `stale` field; full staleness is
+  only computed on the detail page, which does show it). The Materials tab does not join BOM
+  demand to reservation on-hand/available figures: `GET /orders/{id}` returns reservations by
+  `material_id` only (no code/name), so the two are shown as separate tables plus a link to the
+  Materials page, rather than fabricating a join key the payload does not provide.
+- **Tests:** `RunPage.test.tsx` (fake timers: polls every 2s while RUNNING, stops once COMPLETED;
+  fixture label visible), `MessageViewer.test.tsx`/`RunTimeline.test.tsx` (recipient/task type
+  visible, `orchestrator.replan` highlighted with its reason), `CitationDrawer.test.tsx` (renders
+  a chunk's `<script>...</script>` text literally; `document.querySelectorAll('script')` stays
+  empty; a 404 renders the server's message), `RecommendationPage.test.tsx` (hides Approve for a
+  `SELF_APPROVAL`-blocked proposer with the exact explanation text; Reject without a reason shows
+  the validation message and never calls the server; a valid reason sends
+  `{decision, proposal_hash, reason}`; Apply sends `Idempotency-Key` + `proposal_hash` and
+  disables its own confirm button while pending; a 409 `STALE_INPUT` apply renders the
+  `field_errors` stale-inputs list), `OrderDetailPage.test.tsx` (a 409 `STALE_INPUT` transition
+  shows the `StaleBanner`; the History tab lists an audit event). `StateBadge.test.tsx` and
+  `test/server.ts` updated for the new `agent_result` vocabulary and `OrderDetail`/audit/
+  recommendation fixtures (both shared files also carry other tasks' concurrent additions,
+  e.g. `policy`/`document_version`/`audit_outcome` vocabularies and `makeDashboard`, present
+  before and after this task's edits — not authored here).
+  ```
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npx vitest run src/features/orders \
+      src/features/runs src/features/evidence src/features/approvals src/features/planning \
+      src/components/StateBadge.test.tsx src/app/Layout.test.tsx"   # 14 files, 63 passed
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run lint"       # clean for this task's files
+      # (5 remaining errors are all in features/admin and features/knowledge, other tasks)
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run typecheck"  # clean, whole project
+  $ scripts/heavy-job.sh bash -c "cd apps/web && npm run build"      # succeeded
+  $ scripts/heavy-job.sh bash -c "cd services/backend && uv run ruff check app/api/dashboard.py \
+      app/api/schemas/dashboard.py app/api/orders.py app/api/schemas/orders.py \
+      tests/integration/test_order_history_api.py && uv run ruff format --check <same files>"
+      # clean
+  $ scripts/heavy-job.sh bash -c "cd services/backend && uv run mypy app/api/dashboard.py \
+      app/api/schemas/dashboard.py app/api/orders.py app/api/schemas/orders.py"   # clean, 4 files
+  ```
+- **Limitations:** the backend history route's integration test
+  (`tests/integration/test_order_history_api.py`) needs the Postgres test database; this task's
+  dispatch specified no DB access, so it was written (TDD) but **not run** — **PENDING (needs a
+  test DB letter / CI)**. Full web suite (`make web-test`) and full backend suites (`make test`,
+  `make test-integration`, `make test-e2e`) remain **PENDING (needs user approval or CI)** per the
+  heat policy. `contracts/openapi.json`/`apps/web/src/generated/api.ts` are committed with this
+  task: regenerated from the shared backend, they also carry other in-flight tasks' routes/schemas
+  (retrieval, dashboard, admin, nlp) that this task did not author.
+- **Files changed:** new — `apps/web/src/features/orders/{OrderDetailPage,OrderOverviewTab,
+  OrderPlanTab,OrderMaterialsTab,OrderIETab,OrderQualityTab,OrderEvidenceTab,OrderRunsTab,
+  OrderHistoryTab,StartAnalysisButton,orderReport}.{tsx,ts}`,
+  `apps/web/src/features/orders/OrderDetailPage.test.tsx`,
+  `apps/web/src/features/runs/{RunPage,RunTimeline,AgentResultCard,FindingList,MetricTable,
+  MessageViewer}.tsx` + `{MessageViewer,RunTimeline,RunPage}.test.tsx`,
+  `apps/web/src/features/evidence/{EvidenceList,CitationDrawer,evidenceItem}.{tsx,ts}` +
+  `CitationDrawer.test.tsx`, `apps/web/src/features/approvals/{ApprovalInboxPage,
+  RecommendationPage,DiffTables,DecisionForm,blockedReasons}.{tsx,ts}` +
+  `RecommendationPage.test.tsx`, `apps/web/src/features/planning/RecommendationCompareSection.tsx`,
+  `services/backend/tests/integration/test_order_history_api.py`. Modified —
+  `services/backend/app/api/orders.py`, `services/backend/app/api/schemas/orders.py`,
+  `services/backend/app/api/dashboard.py`, `services/backend/app/api/schemas/dashboard.py`,
+  `apps/web/src/app/{router.tsx,Layout.tsx}`, `apps/web/src/features/orders/{orderCreateSchema,
+  OrderCreatePage,OrderCreatePage.test}.tsx`, `apps/web/src/features/planning/PlanningBoardPage.tsx`,
+  `apps/web/src/components/{stateStyles.ts,StateBadge.test.tsx}`, `apps/web/src/test/server.ts`,
+  `apps/web/src/generated/api.ts`, `contracts/openapi.json`.

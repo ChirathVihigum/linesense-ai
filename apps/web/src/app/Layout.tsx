@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 
 import { Icon } from '../components/Icon'
+import { NotificationsMenu } from '../features/notifications/NotificationsMenu'
 import { toApiError } from '../lib/api'
 import { useLogout, useMe } from '../lib/auth'
 import { useCan, useFactory } from '../lib/factory'
@@ -26,6 +27,11 @@ interface NavSection {
 /** Sections are listed only when the user may read them; actions only when permitted. */
 export const NAV_SECTIONS: NavSection[] = [
   {
+    label: 'Overview',
+    permission: 'order:read',
+    items: [{ label: 'Overview', to: 'overview', permission: 'order:read', end: true }],
+  },
+  {
     label: 'Orders',
     permission: 'order:read',
     items: [
@@ -38,6 +44,11 @@ export const NAV_SECTIONS: NavSection[] = [
     label: 'Planning',
     permission: 'capacity:read',
     items: [{ label: 'Planning board', to: 'planning', permission: 'capacity:read', end: true }],
+  },
+  {
+    label: 'Approvals',
+    permission: 'analysis:read',
+    items: [{ label: 'Approval inbox', to: 'approvals', permission: 'analysis:read', end: true }],
   },
   {
     label: 'Materials',
@@ -53,6 +64,21 @@ export const NAV_SECTIONS: NavSection[] = [
     label: 'Quality',
     permission: 'quality:read',
     items: [{ label: 'Inspections and holds', to: 'quality', permission: 'quality:read', end: true }],
+  },
+  {
+    label: 'Notes',
+    permission: 'note:create',
+    items: [{ label: 'Notes', to: 'notes', permission: 'note:create', end: true }],
+  },
+  {
+    label: 'Knowledge base',
+    permission: 'document:read',
+    items: [{ label: 'Documents and search', to: 'knowledge', permission: 'document:read', end: true }],
+  },
+  {
+    label: 'Administration',
+    permission: 'admin:manage',
+    items: [{ label: 'Administration', to: 'admin', permission: 'admin:manage', end: true }],
   },
 ]
 
@@ -254,6 +280,7 @@ export function Layout() {
         </span>
         <div className="ml-auto flex items-center gap-3">
           <FactorySelector />
+          <NotificationsMenu />
           <UserMenu />
         </div>
       </header>

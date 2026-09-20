@@ -103,7 +103,7 @@ describe('OrderCreatePage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create order' }))
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/f/F1/orders')
+      expect(router.state.location.pathname).toBe('/f/F1/orders/77777777-7777-4777-8777-777777777777')
     })
     expect(await screen.findByText('Order PO-2001 created.')).toBeInTheDocument()
 
