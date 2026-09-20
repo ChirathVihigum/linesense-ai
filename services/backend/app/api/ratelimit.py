@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -118,8 +119,19 @@ def _match_bucket(path: str, method: str) -> RateLimitBucket | None:
     return None
 
 
+DEFAULT_MAX_ENTRIES = 50_000
+"""Eviction cap (task-25 review round 1, item 9): the IP-keyed `auth_login`
+bucket in particular has no natural bound on distinct identities (any
+number of source IPs can each get their own entry), so left unbounded this
+dict would grow forever under sustained traffic from many distinct
+addresses -- a slow memory-exhaustion DoS against the rate limiter itself.
+50,000 entries is generously above any real single-instance concurrent
+identity count and small in memory (a few MB of tuples)."""
+
+
 class TokenBucketLimiter:
-    """In-memory token buckets keyed by ``(bucket name, identity)``.
+    """In-memory token buckets keyed by ``(bucket name, identity)``, bounded
+    to ``max_entries`` with least-recently-used eviction.
 
     No lock: every call happens synchronously (no ``await`` between reading
     and writing a bucket's state), and a single asyncio event loop never runs
@@ -128,9 +140,19 @@ class TokenBucketLimiter:
     one event loop (uvicorn's default).
     """
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+    ) -> None:
         self._clock = clock
-        self._state: dict[tuple[str, str], tuple[float, float]] = {}
+        self._max_entries = max_entries
+        # An OrderedDict used as an LRU: every access (read or write) via
+        # `try_consume` moves that key to the end; the oldest (least
+        # recently used) entries are the ones evicted once the cap is hit,
+        # regardless of whether their bucket happens to be full or empty.
+        self._state: OrderedDict[tuple[str, str], tuple[float, float]] = OrderedDict()
 
     def try_consume(self, bucket: RateLimitBucket, identity: str) -> float | None:
         """``None`` if a token was consumed (request allowed); otherwise the
@@ -142,9 +164,17 @@ class TokenBucketLimiter:
         tokens = min(float(bucket.limit), tokens + elapsed * bucket.refill_per_second)
         if tokens >= 1.0:
             self._state[key] = (tokens - 1.0, now)
+            self._state.move_to_end(key)
+            self._evict_if_over_capacity()
             return None
         self._state[key] = (tokens, now)
+        self._state.move_to_end(key)
+        self._evict_if_over_capacity()
         return (1.0 - tokens) / bucket.refill_per_second
+
+    def _evict_if_over_capacity(self) -> None:
+        while len(self._state) > self._max_entries:
+            self._state.popitem(last=False)
 
     def reset(self) -> None:
         """Test helper: clear all bucket state."""

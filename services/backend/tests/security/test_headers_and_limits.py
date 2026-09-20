@@ -102,6 +102,34 @@ def test_token_bucket_limiter_allows_up_to_the_limit_then_blocks_then_refills() 
     assert limiter.try_consume(bucket, "1.2.3.4") is None
 
 
+def test_token_bucket_limiter_evicts_least_recently_used_entries_over_capacity() -> None:
+    # task-25 review round 1, item 9: the state dict must not grow without
+    # bound (e.g. under many distinct source IPs hitting the IP-keyed
+    # `auth_login` bucket).
+    limiter = TokenBucketLimiter(max_entries=3)
+    bucket = RateLimitBucket(
+        "unit-test",
+        frozenset({"GET"}),
+        re.compile(r"^/x$"),
+        limit=5,
+        window_seconds=10.0,
+        keyed_by="ip",
+    )
+
+    for identity in ("a", "b", "c"):
+        limiter.try_consume(bucket, identity)
+    assert len(limiter._state) == 3  # noqa: SLF001 - white-box eviction check
+
+    # Touching "a" again makes it most-recently-used, so adding a 4th
+    # identity must evict "b" (the least recently used), not "a".
+    limiter.try_consume(bucket, "a")
+    limiter.try_consume(bucket, "d")
+
+    assert len(limiter._state) == 3  # noqa: SLF001
+    remaining = {key[1] for key in limiter._state}  # noqa: SLF001
+    assert remaining == {"a", "c", "d"}
+
+
 async def test_auth_login_is_rate_limited_per_ip_with_retry_after() -> None:
     # `/auth/login`'s handler itself talks to the (unreachable, in tests) dev
     # OIDC issuer; `raise_app_exceptions=False` turns that into a normal (if

@@ -88,7 +88,7 @@ fi
 OUT_FILE="$BACKUP_DIR/$TIMESTAMP.tar.enc"
 log "encrypting into $OUT_FILE"
 tar -cf - -C "$WORK_DIR" dump.pgdump documents.tar manifest.json |
-  openssl enc -aes-256-cbc -pbkdf2 -salt -pass "pass:$LS_BACKUP_PASSPHRASE" -out "$OUT_FILE"
+  openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:LS_BACKUP_PASSPHRASE -out "$OUT_FILE"
 
 log "done: $OUT_FILE"
 echo "$OUT_FILE"

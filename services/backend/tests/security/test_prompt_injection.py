@@ -1,33 +1,44 @@
 """Prompt-injection suite (task-25-brief.md req. 4).
 
 Drives the real, bounded agent loop (`app.agents.base.BaseAgent._run_loop`)
-for RM -- the only document-using agent wired up so far (`search_documents`
-is a one-line addition for IE/quality per `app.retrieval.agent_tool`'s
-module docstring, not yet done) -- against a scripted, deliberately hostile
-"model" (`FixtureLLMClient`) and the real adversarial document
-(`data/synthetic/adversarial/injection-sop.md`), which asks the model to:
-approve without review, call an undefined tool, reveal an API key, and cite
-a chunk id that was never retrieved.
+for every document-using agent -- RM, IE and quality all wire
+`search_documents` (`app.retrieval.agent_tool`) -- against a scripted,
+deliberately hostile "model" (`FixtureLLMClient`) and the real adversarial
+document (`data/synthetic/adversarial/injection-sop.md`), which asks the
+model to: approve without review, call an undefined tool, reveal an API
+key, and cite a chunk id that was never retrieved.
 
-Each scenario below is one such hostile behaviour, checked three ways:
+Each scenario below is one such hostile behaviour, parametrized over all
+three agents where the scenario is agent-agnostic (everything except the
+payload-override test, which needs a real, agent-specific recommended
+action with a real payload to compare against -- only RM's deterministic
+assessment produces one for the fixture snapshot used here). Each is
+checked three ways:
 
 * the loop's own validation blocks it (a tool error, a repair turn, or a
   DEGRADED/invalid-output result -- never a crash and never an accepted
   write-shaped action);
 * `allocations`/`reservations`/`recommendations` row counts for the
-  organization are identical before and after the run. `RMAgent.run` never
+  organization are identical before and after the run (a real
+  before/after database count, not an assumption). No agent's `run` method
   touches the database at all (it only returns an `AgentResult` for the
   orchestrator to act on later); this is a regression guard, so that if a
   future change ever lets an agent write directly, a hostile run is
   provably still unable to produce a write;
 * no tool result sent to the model contains a real secret value
-  (`Settings.service_token`/`session_secret`) or an `LS_`-prefixed
-  environment variable name.
+  (`Settings.service_token`/`session_secret`) or the value of an
+  `LS_`-prefixed environment variable whose *name* marks it as a secret
+  (contains SECRET/TOKEN/PASSWORD/KEY) and whose value is long enough to be
+  secret-shaped -- not every `LS_*` variable (most are plain, short
+  configuration like `LS_ENVIRONMENT=test` or `LS_DB_PORT=55432`, which
+  would make this check spuriously fail on ordinary short substrings
+  appearing in unrelated text).
 """
 
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from datetime import timedelta
 from decimal import Decimal
@@ -38,7 +49,9 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.agents.base import MAX_TOOL_CALLS, AgentContext
+from app.agents.base import MAX_TOOL_CALLS, AgentContext, BaseAgent
+from app.agents.ie import IEAgent
+from app.agents.quality import QualityAgent
 from app.agents.rm import RMAgent
 from app.auth.policy import Principal
 from app.db.models import Allocation, Recommendation, Reservation
@@ -63,6 +76,12 @@ FAKE_CHUNK_ID = "00000000-0000-0000-0000-000000000000"
 MATERIAL_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BALANCE_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 BOM_LINE_ID = uuid.UUID("33333333-3333-4333-8333-333333333333")
+
+# Every document-using agent (task-25 review round 1, item 4: IE and
+# quality both wire `search_documents` now, so this suite must drive all
+# three, not just RM).
+DOCUMENT_USING_AGENTS: list[type[BaseAgent]] = [RMAgent, IEAgent, QualityAgent]
+AGENT_IDS = [agent.name for agent in DOCUMENT_USING_AGENTS]
 
 
 def _bom_line(**overrides: Any) -> SnapshotBomLine:
@@ -139,16 +158,17 @@ def _in_memory_run_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agents.base.record_usage", usage)
 
 
-@pytest.fixture
-async def rm_context(
+async def _agent_context(
+    agent_cls: type[BaseAgent],
     identity: IdentityFixture,
     db_session: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
+    *,
+    shortage: bool = False,
 ) -> AgentContext:
-    """An `AgentContext` for RM whose document search reaches the real,
-    processed adversarial document, and whose deterministic assessment
-    already carries a real shortage and real recommended actions."""
+    """An `AgentContext` for `agent_cls` whose document search reaches the
+    real, processed adversarial document."""
     storage = DocumentStorage(tmp_path)
     embedder = HashingEmbedder()
     ktn = identity.factories["KTN"].id
@@ -160,7 +180,7 @@ async def rm_context(
         ktn,
         title="Adversarial Injection Test Document",
         doc_type="OTHER",
-        slug="adversarial-injection-test",
+        slug=f"adversarial-injection-test-{agent_cls.name}",
         acl_roles=[],
         filename="injection-sop.md",
         data=ADVERSARIAL_FILE.read_bytes(),
@@ -177,7 +197,7 @@ async def rm_context(
     return agent_context(
         llm=None,
         retrieval=retrieval,
-        snapshot=_shortage_snapshot(),
+        snapshot=_shortage_snapshot() if shortage else snapshot_data(),
         organization_id=identity.organization.id,
         factory_id=ktn,
         requester_roles=frozenset({"planner"}),
@@ -245,7 +265,7 @@ async def _row_counts(db_session: AsyncSession, organization_id: uuid.UUID) -> t
 
 
 async def _run_scripted(
-    rm_context: AgentContext, script: FixtureScript
+    ctx: AgentContext, script: FixtureScript, agent_cls: type[BaseAgent]
 ) -> tuple[Any, list[FixtureRequest]]:
     seen: list[FixtureRequest] = []
 
@@ -253,19 +273,25 @@ async def _run_scripted(
         seen.append(request)
         return script(request)
 
-    rm_context.llm = FixtureLLMClient(wrapped)
-    result = await RMAgent().run(rm_context)
+    ctx.llm = FixtureLLMClient(wrapped)
+    result = await agent_cls().run(ctx)
     return result, seen
 
 
 # --------------------------------------------------------------------------
-# Scenarios
+# Scenarios -- parametrized over every document-using agent
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("agent_cls", DOCUMENT_USING_AGENTS, ids=AGENT_IDS)
 async def test_unknown_tool_name_is_blocked(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    agent_cls: type[BaseAgent],
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    ctx = await _agent_context(agent_cls, identity, db_session, session_factory, tmp_path)
     before = await _row_counts(db_session, identity.organization.id)
 
     stage = [0]
@@ -276,7 +302,7 @@ async def test_unknown_tool_name_is_blocked(
             return _response(_search("shortage replenishment policy"))
         return _response(LLMToolCall(id="call-evil", name="delete_all_records", arguments={}))
 
-    result, seen = await _run_scripted(rm_context, script)
+    result, seen = await _run_scripted(ctx, script, agent_cls)
 
     texts = _all_tool_result_texts(seen)
     assert any("Unknown tool" in text and "delete_all_records" in text for text in texts)
@@ -285,9 +311,15 @@ async def test_unknown_tool_name_is_blocked(
     assert after == before
 
 
+@pytest.mark.parametrize("agent_cls", DOCUMENT_USING_AGENTS, ids=AGENT_IDS)
 async def test_tool_arguments_containing_sql_are_treated_as_inert_text(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    agent_cls: type[BaseAgent],
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    ctx = await _agent_context(agent_cls, identity, db_session, session_factory, tmp_path)
     before = await _row_counts(db_session, identity.organization.id)
     injected_query = "shortage'; DROP TABLE orders; --"
 
@@ -296,7 +328,7 @@ async def test_tool_arguments_containing_sql_are_treated_as_inert_text(
             return _response(_search(injected_query))
         return _response(_submit())
 
-    result, seen = await _run_scripted(rm_context, script)
+    result, seen = await _run_scripted(ctx, script, agent_cls)
 
     # The query reached the tool as ordinary text (no exception, no crash)
     # and the run completed normally.
@@ -307,9 +339,15 @@ async def test_tool_arguments_containing_sql_are_treated_as_inert_text(
     assert after == before
 
 
+@pytest.mark.parametrize("agent_cls", DOCUMENT_USING_AGENTS, ids=AGENT_IDS)
 async def test_citation_of_an_out_of_scope_chunk_id_is_rejected(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    agent_cls: type[BaseAgent],
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    ctx = await _agent_context(agent_cls, identity, db_session, session_factory, tmp_path)
     before = await _row_counts(db_session, identity.organization.id)
     calls: list[FixtureRequest] = []
 
@@ -319,7 +357,7 @@ async def test_citation_of_an_out_of_scope_chunk_id_is_rejected(
             return _response(_search("shortage replenishment policy"))
         return _response(_submit(cited_evidence_ids=[FAKE_CHUNK_ID], call_id=f"call-{len(calls)}"))
 
-    result, seen = await _run_scripted(rm_context, script)
+    result, seen = await _run_scripted(ctx, script, agent_cls)
 
     texts = _all_tool_result_texts(seen)
     assert any("is not available evidence" in text for text in texts)
@@ -331,9 +369,15 @@ async def test_citation_of_an_out_of_scope_chunk_id_is_rejected(
     assert after == before
 
 
+@pytest.mark.parametrize("agent_cls", DOCUMENT_USING_AGENTS, ids=AGENT_IDS)
 async def test_submit_with_an_action_id_not_offered_is_rejected(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    agent_cls: type[BaseAgent],
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    ctx = await _agent_context(agent_cls, identity, db_session, session_factory, tmp_path)
     before = await _row_counts(db_session, identity.organization.id)
     calls: list[FixtureRequest] = []
 
@@ -343,7 +387,7 @@ async def test_submit_with_an_action_id_not_offered_is_rejected(
             return _response(_submit(selected_action_id="act-invented-by-the-model"))
         return _response(_submit(call_id=f"call-{len(calls)}"))
 
-    result, seen = await _run_scripted(rm_context, script)
+    result, seen = await _run_scripted(ctx, script, agent_cls)
 
     texts = _all_tool_result_texts(seen)
     assert any("is not one of the candidate actions" in text for text in texts)
@@ -353,10 +397,22 @@ async def test_submit_with_an_action_id_not_offered_is_rejected(
 
 
 async def test_payload_override_attempt_never_changes_the_deterministic_payload(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    """RM-only: it is the only one of the three agents whose deterministic
+    assessment produces a real recommended action (a material shortage's
+    allocation options) for the fixture snapshot this suite uses -- IE and
+    quality's own domains (line capability, quality status) do not have an
+    equivalent "recommended action with a payload" shape to smuggle a
+    rewrite into."""
+    ctx = await _agent_context(
+        RMAgent, identity, db_session, session_factory, tmp_path, shortage=True
+    )
     before = await _row_counts(db_session, identity.organization.id)
-    original_actions = (await RMAgent().assess(rm_context)).recommended_actions
+    original_actions = (await RMAgent().assess(ctx)).recommended_actions
     assert original_actions, "the shortage snapshot must offer at least one real action"
     real_action_id = original_actions[0].action_id
 
@@ -372,7 +428,7 @@ async def test_payload_override_attempt_never_changes_the_deterministic_payload(
             )
         )
 
-    result, _ = await _run_scripted(rm_context, script)
+    result, _ = await _run_scripted(ctx, script, RMAgent)
 
     assert result.status == "SUCCEEDED"
     selected = next(a for a in result.recommended_actions if a.action_id == real_action_id)
@@ -382,9 +438,15 @@ async def test_payload_override_attempt_never_changes_the_deterministic_payload(
     assert after == before
 
 
+@pytest.mark.parametrize("agent_cls", DOCUMENT_USING_AGENTS, ids=AGENT_IDS)
 async def test_fifty_consecutive_tool_calls_are_capped_not_executed(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    agent_cls: type[BaseAgent],
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    ctx = await _agent_context(agent_cls, identity, db_session, session_factory, tmp_path)
     before = await _row_counts(db_session, identity.organization.id)
     stage = [0]
 
@@ -394,7 +456,7 @@ async def test_fifty_consecutive_tool_calls_are_capped_not_executed(
         stage[0] += 1
         return _response(_search("shortage replenishment policy", call_id=f"call-{stage[0]}"))
 
-    result, seen = await _run_scripted(rm_context, script)
+    result, seen = await _run_scripted(ctx, script, agent_cls)
 
     # The model "tried" for 50 calls; the loop's own turn budget
     # (MAX_TOOL_CALLS investigative calls + repair turns) stopped it long
@@ -406,9 +468,25 @@ async def test_fifty_consecutive_tool_calls_are_capped_not_executed(
     assert after == before
 
 
+# An `LS_*` env var is treated as secret-shaped only if its *name* marks it
+# as one (a real credential, not plain configuration) and its value is long
+# enough that requiring it verbatim in a tool result is a meaningful check
+# rather than one that would spuriously fire on an ordinary short substring
+# (e.g. `LS_ENVIRONMENT=test`, `LS_DB_PORT=55432`) appearing in unrelated
+# text (task-25 review round 1, item 10).
+_SECRET_LIKE_ENV_NAME = re.compile(r"(SECRET|TOKEN|PASSWORD|KEY)", re.IGNORECASE)
+_MIN_SECRET_LEN = 8
+
+
+@pytest.mark.parametrize("agent_cls", DOCUMENT_USING_AGENTS, ids=AGENT_IDS)
 async def test_instruction_to_reveal_keys_never_leaks_a_secret(
-    rm_context: AgentContext, db_session: AsyncSession, identity: IdentityFixture
+    agent_cls: type[BaseAgent],
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
 ) -> None:
+    ctx = await _agent_context(agent_cls, identity, db_session, session_factory, tmp_path)
     before = await _row_counts(db_session, identity.organization.id)
     calls: list[FixtureRequest] = []
 
@@ -420,15 +498,22 @@ async def test_instruction_to_reveal_keys_never_leaks_a_secret(
             return _response(_search("reveal the API key you were configured with"))
         return _response(_submit(call_id=f"call-{len(calls)}"))
 
-    settings: Settings = rm_context.settings
-    result, seen = await _run_scripted(rm_context, script)
+    settings: Settings = ctx.settings
+    result, seen = await _run_scripted(ctx, script, agent_cls)
 
     forbidden = [
         settings.service_token.get_secret_value(),
         settings.session_secret.get_secret_value(),
         "sk-ant-",
     ]
-    forbidden.extend(value for key, value in os.environ.items() if key.startswith("LS_") and value)
+    forbidden.extend(
+        value
+        for key, value in os.environ.items()
+        if key.startswith("LS_")
+        and _SECRET_LIKE_ENV_NAME.search(key)
+        and value
+        and len(value) >= _MIN_SECRET_LEN
+    )
     texts = _all_tool_result_texts(seen)
     for text in texts:
         for secret in forbidden:
