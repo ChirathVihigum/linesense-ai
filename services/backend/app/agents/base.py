@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -163,16 +163,36 @@ class AgentExecutionError(Exception):
 
 @runtime_checkable
 class RetrievedChunkLike(Protocol):
-    chunk_id: uuid.UUID
-    document_id: uuid.UUID
-    document_version_id: uuid.UUID
-    text: str
-    page_number: int | None
-    section: str | None
+    # Read-only (`@property`), not plain attributes: a concrete
+    # implementation is expected to be a frozen dataclass
+    # (`app.retrieval.search.RetrievedChunk`), whose fields mypy treats as
+    # read-only, so a plain mutable-attribute protocol member would never
+    # structurally match it.
+    @property
+    def chunk_id(self) -> uuid.UUID: ...
+    @property
+    def document_id(self) -> uuid.UUID: ...
+    @property
+    def document_version_id(self) -> uuid.UUID: ...
+    @property
+    def document_slug(self) -> str: ...
+    @property
+    def title(self) -> str: ...
+    @property
+    def version_no(self) -> int: ...
+    @property
+    def text(self) -> str: ...
+    @property
+    def page_number(self) -> int | None: ...
+    @property
+    def section(self) -> str | None: ...
 
 
 class RetrievalPort(Protocol):
-    async def search(self, query: str, k: int) -> list[RetrievedChunkLike]: ...
+    # `Sequence` (covariant), not `list` (invariant): a concrete
+    # implementation returning `list[RetrievedChunk]` (a subtype of
+    # `RetrievedChunkLike` with extra fields) must still satisfy this.
+    async def search(self, query: str, k: int) -> Sequence[RetrievedChunkLike]: ...
 
 
 @dataclass

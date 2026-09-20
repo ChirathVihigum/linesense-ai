@@ -13,13 +13,29 @@ import argparse
 import asyncio
 import json
 import sys
+import uuid
 from dataclasses import asdict
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import sqlalchemy as sa
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.db.models import Membership, User
+from app.db.models.documents import Chunk
 from app.db.session import get_session_factory
+from app.retrieval.embedder import build_embedder
+from app.retrieval.loader import load_corpus_directory
+from app.retrieval.storage import DocumentStorage
 from app.seed.generator import SeedSummary, seed_demo
-from app.settings import get_settings
+from app.settings import get_settings, resolve_backend_path
+
+# services/backend/app/seed/__main__.py -> repo root (5 levels up).
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_CORPUS_DIR = _REPO_ROOT / "data" / "synthetic" / "sops"
+_ADMIN_EMAIL = "admin@demo.test"
 
 
 def _default_anchor_date() -> date:
@@ -34,6 +50,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=None,
         help="Anchor date (YYYY-MM-DD); defaults to today in Asia/Colombo.",
     )
+    parser.add_argument(
+        "--with-documents",
+        action="store_true",
+        help=(
+            "Also load the synthetic SOP corpus (data/synthetic/sops) through the "
+            "document pipeline. Idempotent by (slug, sha256). Uses LS_EMBEDDER "
+            "(fastembed by default); the first run downloads the embedding model."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -44,13 +69,66 @@ def _summary_to_json(summary: SeedSummary) -> dict[str, object]:
     return payload
 
 
-async def _run(anchor_date: date) -> SeedSummary:
+async def _admin_user_id(
+    session_factory: async_sessionmaker[AsyncSession], organization_id: uuid.UUID
+) -> uuid.UUID | None:
+    async with session_factory() as session:
+        user_id: uuid.UUID | None = await session.scalar(
+            select(User.id)
+            .join(Membership, Membership.user_id == User.id)
+            .where(Membership.organization_id == organization_id, User.email == _ADMIN_EMAIL)
+        )
+    return user_id
+
+
+async def _count_chunks(
+    session_factory: async_sessionmaker[AsyncSession], version_ids: list[uuid.UUID]
+) -> int:
+    if not version_ids:
+        return 0
+    async with session_factory() as session:
+        count = await session.scalar(
+            select(sa.func.count())
+            .select_from(Chunk)
+            .where(Chunk.document_version_id.in_(version_ids))
+        )
+    return int(count or 0)
+
+
+async def _load_documents(
+    session_factory: async_sessionmaker[AsyncSession], *, organization_id: uuid.UUID
+) -> dict[str, int]:
+    settings = get_settings()
+    admin_user_id = await _admin_user_id(session_factory, organization_id)
+    embedder = build_embedder(settings)
+    storage = DocumentStorage(resolve_backend_path(settings.document_storage_dir))
+    version_ids = await load_corpus_directory(
+        session_factory,
+        organization_id=organization_id,
+        directory=_CORPUS_DIR,
+        embedder=embedder,
+        storage=storage,
+        created_by=admin_user_id,
+    )
+    chunk_count = await _count_chunks(session_factory, version_ids)
+    return {"versions_created": len(version_ids), "total_chunks": chunk_count}
+
+
+async def _run(
+    anchor_date: date, *, with_documents: bool
+) -> tuple[SeedSummary, dict[str, int] | None]:
     settings = get_settings()
     session_factory = get_session_factory(settings.database_url)
     async with session_factory() as session:
         summary = await seed_demo(session, anchor_date=anchor_date, issuer=settings.oidc_issuer)
         await session.commit()
-    return summary
+
+    documents_summary: dict[str, int] | None = None
+    if with_documents:
+        documents_summary = await _load_documents(
+            session_factory, organization_id=summary.organization_id
+        )
+    return summary, documents_summary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,8 +139,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv)
     anchor_date = args.anchor_date or _default_anchor_date()
-    summary = asyncio.run(_run(anchor_date))
-    print(json.dumps(_summary_to_json(summary), indent=2, sort_keys=True))
+    summary, documents_summary = asyncio.run(_run(anchor_date, with_documents=args.with_documents))
+    payload = _summary_to_json(summary)
+    if documents_summary is not None:
+        payload["documents"] = documents_summary
+    print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 

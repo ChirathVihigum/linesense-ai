@@ -303,6 +303,7 @@ async def test_tool_inputs_default_to_the_first_bom_material(task_type: str) -> 
         "get_expected_receipts",
         "get_consumption_history",
         "get_bom_demand",
+        "search_documents",
     }
     schema = tools["get_material_position"].input_model.model_json_schema()
     assert schema["properties"]["material_code"]["default"] == "M01"

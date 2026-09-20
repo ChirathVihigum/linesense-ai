@@ -1,6 +1,65 @@
 {
   "components": {
     "schemas": {
+      "ActiveRunOut": {
+        "properties": {
+          "deadline_at": {
+            "format": "date-time",
+            "title": "Deadline At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_calls_limit": {
+            "title": "Model Calls Limit",
+            "type": "integer"
+          },
+          "model_calls_used": {
+            "title": "Model Calls Used",
+            "type": "integer"
+          },
+          "order_external_ref": {
+            "title": "Order External Ref",
+            "type": "string"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "order_external_ref",
+          "status",
+          "model_calls_used",
+          "model_calls_limit",
+          "started_at",
+          "deadline_at"
+        ],
+        "title": "ActiveRunOut",
+        "type": "object"
+      },
       "AgentErrorCode": {
         "enum": [
           "MISSING_DATA",
@@ -557,6 +616,45 @@
         "title": "BoardLineOut",
         "type": "object"
       },
+      "Body_upload_document_api_v1_factories__factory_id__documents_post": {
+        "properties": {
+          "acl_roles": {
+            "default": "",
+            "title": "Acl Roles",
+            "type": "string"
+          },
+          "doc_type": {
+            "title": "Doc Type",
+            "type": "string"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "title",
+          "doc_type",
+          "slug",
+          "scope"
+        ],
+        "title": "Body_upload_document_api_v1_factories__factory_id__documents_post",
+        "type": "object"
+      },
       "Body_upload_orders_csv_api_v1_factories__factory_id__imports_orders_post": {
         "properties": {
           "file": {
@@ -661,6 +759,112 @@
         "title": "CapacityBoardOut",
         "type": "object"
       },
+      "CapacityLineUtilizationOut": {
+        "properties": {
+          "allocated_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Allocated Minutes",
+            "type": "string"
+          },
+          "capacity_minutes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Capacity Minutes",
+            "type": "string"
+          },
+          "line_code": {
+            "title": "Line Code",
+            "type": "string"
+          },
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "line_name": {
+            "title": "Line Name",
+            "type": "string"
+          },
+          "utilization_fraction": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilization Fraction"
+          }
+        },
+        "required": [
+          "line_id",
+          "line_code",
+          "line_name",
+          "capacity_minutes",
+          "allocated_minutes",
+          "utilization_fraction"
+        ],
+        "title": "CapacityLineUtilizationOut",
+        "type": "object"
+      },
+      "CitationOut": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "document": {
+            "$ref": "#/components/schemas/DocumentRef"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "document",
+          "version_no",
+          "status",
+          "page_number",
+          "section",
+          "text"
+        ],
+        "title": "CitationOut",
+        "type": "object"
+      },
       "CorrectionCreate": {
         "properties": {
           "movement_id": {
@@ -743,6 +947,113 @@
           "name"
         ],
         "title": "CustomerRef",
+        "type": "object"
+      },
+      "DashboardOut": {
+        "properties": {
+          "active_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ActiveRunOut"
+            },
+            "title": "Active Runs",
+            "type": "array"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "capacity_next_7_days": {
+            "items": {
+              "$ref": "#/components/schemas/CapacityLineUtilizationOut"
+            },
+            "title": "Capacity Next 7 Days",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "material_shortages": {
+            "items": {
+              "$ref": "#/components/schemas/MaterialShortageOut"
+            },
+            "title": "Material Shortages",
+            "type": "array"
+          },
+          "orders_at_risk": {
+            "items": {
+              "$ref": "#/components/schemas/OrderAtRiskOut"
+            },
+            "title": "Orders At Risk",
+            "type": "array"
+          },
+          "pending_approvals": {
+            "title": "Pending Approvals",
+            "type": "integer"
+          },
+          "quality_holds": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardQualityHoldOut"
+            },
+            "title": "Quality Holds",
+            "type": "array"
+          },
+          "status_source": {
+            "title": "Status Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generated_at",
+          "status_source",
+          "as_of",
+          "orders_at_risk",
+          "material_shortages",
+          "quality_holds",
+          "active_runs",
+          "pending_approvals",
+          "capacity_next_7_days"
+        ],
+        "title": "DashboardOut",
+        "type": "object"
+      },
+      "DashboardQualityHoldOut": {
+        "description": "A quality hold as shown on the dashboard.\n\nNamed distinctly from `app.api.schemas.quality.QualityHoldOut` (a\ndifferent, larger shape): FastAPI/OpenAPI generates one schema name per\nclass, and two classes sharing a name in different modules collide in\nthe generated OpenAPI document (`openapi-typescript` then also renames\nthe other one, breaking every existing caller of it).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "order_external_ref": {
+            "title": "Order External Ref",
+            "type": "string"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "order_external_ref",
+          "reason",
+          "created_at"
+        ],
+        "title": "DashboardQualityHoldOut",
         "type": "object"
       },
       "DataQuality": {
@@ -1046,6 +1357,301 @@
           "by_defect_code"
         ],
         "title": "DefectTrendOut",
+        "type": "object"
+      },
+      "DocumentDetail": {
+        "properties": {
+          "acl_roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acl Roles",
+            "type": "array"
+          },
+          "doc_type": {
+            "title": "Doc Type",
+            "type": "string"
+          },
+          "factory_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factory Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentVersionOut"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "doc_type",
+          "factory_id",
+          "acl_roles",
+          "versions"
+        ],
+        "title": "DocumentDetail",
+        "type": "object"
+      },
+      "DocumentRef": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title"
+        ],
+        "title": "DocumentRef",
+        "type": "object"
+      },
+      "DocumentSummary": {
+        "properties": {
+          "acl_roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acl Roles",
+            "type": "array"
+          },
+          "doc_type": {
+            "title": "Doc Type",
+            "type": "string"
+          },
+          "factory_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factory Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentVersionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "doc_type",
+          "factory_id",
+          "acl_roles",
+          "latest_version"
+        ],
+        "title": "DocumentSummary",
+        "type": "object"
+      },
+      "DocumentUploadResult": {
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "version_id",
+          "slug",
+          "version_no",
+          "status"
+        ],
+        "title": "DocumentUploadResult",
+        "type": "object"
+      },
+      "DocumentVersionOut": {
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Count"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version_no",
+          "status",
+          "media_type",
+          "size_bytes",
+          "page_count",
+          "rejection_reason",
+          "created_at",
+          "activated_at"
+        ],
+        "title": "DocumentVersionOut",
+        "type": "object"
+      },
+      "EntityMentionOut": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "resolved_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Id"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "text",
+          "start",
+          "end",
+          "resolved_id"
+        ],
+        "title": "EntityMentionOut",
         "type": "object"
       },
       "EvidenceOut": {
@@ -2137,6 +2743,64 @@
         "title": "MaterialReservationOut",
         "type": "object"
       },
+      "MaterialShortageOut": {
+        "properties": {
+          "available_now": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Now",
+            "type": "string"
+          },
+          "below_reorder_point": {
+            "title": "Below Reorder Point",
+            "type": "boolean"
+          },
+          "demand": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Demand",
+            "type": "string"
+          },
+          "material_code": {
+            "title": "Material Code",
+            "type": "string"
+          },
+          "material_id": {
+            "format": "uuid",
+            "title": "Material Id",
+            "type": "string"
+          },
+          "material_name": {
+            "title": "Material Name",
+            "type": "string"
+          },
+          "reorder_point": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reorder Point",
+            "type": "string"
+          },
+          "shortage_qty": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Shortage Qty",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "material_id",
+          "material_code",
+          "material_name",
+          "unit",
+          "available_now",
+          "demand",
+          "reorder_point",
+          "below_reorder_point",
+          "shortage_qty"
+        ],
+        "title": "MaterialShortageOut",
+        "type": "object"
+      },
       "MaterialState": {
         "enum": [
           "UNKNOWN",
@@ -2378,6 +3042,49 @@
         "title": "MeUser",
         "type": "object"
       },
+      "MembershipOut": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/RoleAssignmentOut"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "email",
+          "display_name",
+          "is_active",
+          "roles"
+        ],
+        "title": "MembershipOut",
+        "type": "object"
+      },
       "Metric": {
         "additionalProperties": false,
         "properties": {
@@ -2532,6 +3239,77 @@
           "created_at"
         ],
         "title": "MovementOut",
+        "type": "object"
+      },
+      "NoteCreate": {
+        "properties": {
+          "text": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "NoteCreate",
+        "type": "object"
+      },
+      "NoteOut": {
+        "properties": {
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "classifier_version": {
+            "title": "Classifier Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/EntityMentionOut"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "notice": {
+            "default": "Entity links are for navigation only; they do not authorize any action.",
+            "title": "Notice",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/components/schemas/EntityMentionOut"
+            },
+            "title": "Unresolved",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "classification",
+          "classifier_version",
+          "entities",
+          "unresolved",
+          "created_at"
+        ],
+        "title": "NoteOut",
         "type": "object"
       },
       "NotificationOut": {
@@ -2872,6 +3650,71 @@
         "title": "OperatorAliasOut",
         "type": "object"
       },
+      "OrderAtRiskOut": {
+        "properties": {
+          "customer_code": {
+            "title": "Customer Code",
+            "type": "string"
+          },
+          "due_date": {
+            "format": "date",
+            "title": "Due Date",
+            "type": "string"
+          },
+          "external_ref": {
+            "title": "External Ref",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "material_state": {
+            "title": "Material State",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "produced_units": {
+            "title": "Produced Units",
+            "type": "integer"
+          },
+          "production_state": {
+            "title": "Production State",
+            "type": "string"
+          },
+          "quality_state": {
+            "title": "Quality State",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "style_code": {
+            "title": "Style Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "external_ref",
+          "customer_code",
+          "style_code",
+          "due_date",
+          "quantity",
+          "produced_units",
+          "priority",
+          "production_state",
+          "material_state",
+          "quality_state"
+        ],
+        "title": "OrderAtRiskOut",
+        "type": "object"
+      },
       "OrderCreate": {
         "properties": {
           "customer_id": {
@@ -2973,6 +3816,18 @@
             "title": "Inspections",
             "type": "array"
           },
+          "latest_report": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Report"
+          },
           "latest_run": {
             "anyOf": [
               {
@@ -3065,9 +3920,56 @@
           "inspections",
           "holds",
           "latest_run",
+          "latest_report",
           "allowed_transitions"
         ],
         "title": "OrderDetail",
+        "type": "object"
+      },
+      "OrderHistoryEventOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_display_name": {
+            "title": "Actor Display Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "id",
+          "actor_display_name",
+          "action",
+          "outcome",
+          "reason",
+          "created_at"
+        ],
+        "title": "OrderHistoryEventOut",
         "type": "object"
       },
       "OrderProgressRequest": {
@@ -3370,6 +4272,37 @@
         "title": "Page[CustomerOut]",
         "type": "object"
       },
+      "Page_DocumentSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[DocumentSummary]",
+        "type": "object"
+      },
       "Page_LineOut_": {
         "properties": {
           "items": {
@@ -3432,6 +4365,37 @@
         "title": "Page[MaterialReservationOut]",
         "type": "object"
       },
+      "Page_MembershipOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[MembershipOut]",
+        "type": "object"
+      },
       "Page_MovementOut_": {
         "properties": {
           "items": {
@@ -3461,6 +4425,37 @@
           "offset"
         ],
         "title": "Page[MovementOut]",
+        "type": "object"
+      },
+      "Page_NoteOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NoteOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[NoteOut]",
         "type": "object"
       },
       "Page_NotificationOut_": {
@@ -3525,6 +4520,37 @@
         "title": "Page[OperatorAliasOut]",
         "type": "object"
       },
+      "Page_OrderHistoryEventOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrderHistoryEventOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[OrderHistoryEventOut]",
+        "type": "object"
+      },
       "Page_OrderSummary_": {
         "properties": {
           "items": {
@@ -3585,6 +4611,37 @@
           "offset"
         ],
         "title": "Page[PolicyOut]",
+        "type": "object"
+      },
+      "Page_PolicyVersionOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyVersionOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[PolicyVersionOut]",
         "type": "object"
       },
       "Page_QualityHoldOut_": {
@@ -3761,6 +4818,78 @@
           "label"
         ],
         "title": "PolicyOut",
+        "type": "object"
+      },
+      "PolicyVersionOut": {
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_demo": {
+            "title": "Is Demo",
+            "type": "boolean"
+          },
+          "rules": {
+            "additionalProperties": true,
+            "title": "Rules",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "version_no",
+          "is_demo",
+          "status",
+          "rules",
+          "approved_by",
+          "approved_at",
+          "created_at"
+        ],
+        "title": "PolicyVersionOut",
         "type": "object"
       },
       "ProductionState": {
@@ -4744,6 +5873,75 @@
         "title": "ReservationOut",
         "type": "object"
       },
+      "RoleAssignmentOut": {
+        "properties": {
+          "factory_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factory Code"
+          },
+          "factory_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factory Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "factory_id",
+          "factory_code"
+        ],
+        "title": "RoleAssignmentOut",
+        "type": "object"
+      },
+      "RoleGrantCreate": {
+        "properties": {
+          "factory_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factory Id"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "RoleGrantCreate",
+        "type": "object"
+      },
       "RunAccepted": {
         "properties": {
           "run_id": {
@@ -5045,6 +6243,195 @@
         "title": "RunSummary",
         "type": "object"
       },
+      "SearchResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "mode",
+          "items"
+        ],
+        "title": "SearchResponse",
+        "type": "object"
+      },
+      "SearchResultOut": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_slug": {
+            "title": "Document Slug",
+            "type": "string"
+          },
+          "document_version_id": {
+            "format": "uuid",
+            "title": "Document Version Id",
+            "type": "string"
+          },
+          "lexical_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lexical Rank"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "vector_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Rank"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "document_id",
+          "document_slug",
+          "document_version_id",
+          "version_no",
+          "title",
+          "page_number",
+          "section",
+          "text",
+          "score",
+          "lexical_rank",
+          "vector_rank"
+        ],
+        "title": "SearchResultOut",
+        "type": "object"
+      },
+      "SentenceOut": {
+        "properties": {
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence_ids"
+        ],
+        "title": "SentenceOut",
+        "type": "object"
+      },
+      "SettingsOut": {
+        "properties": {
+          "llm_model": {
+            "title": "Llm Model",
+            "type": "string"
+          },
+          "llm_provider": {
+            "title": "Llm Provider",
+            "type": "string"
+          },
+          "max_tool_calls": {
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "max_upload_bytes": {
+            "title": "Max Upload Bytes",
+            "type": "integer"
+          },
+          "model_calls_limit": {
+            "title": "Model Calls Limit",
+            "type": "integer"
+          },
+          "run_deadline_seconds": {
+            "title": "Run Deadline Seconds",
+            "type": "integer"
+          },
+          "token_budget": {
+            "title": "Token Budget",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model_calls_limit",
+          "token_budget",
+          "run_deadline_seconds",
+          "max_tool_calls",
+          "max_upload_bytes",
+          "llm_provider",
+          "llm_model"
+        ],
+        "title": "SettingsOut",
+        "type": "object"
+      },
       "ShipmentOut": {
         "properties": {
           "eligible": {
@@ -5298,8 +6685,15 @@
             "title": "Current Version"
           },
           "expected_version": {
-            "title": "Expected Version",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
           },
           "id": {
             "format": "uuid",
@@ -5318,6 +6712,50 @@
           "current_version"
         ],
         "title": "StaleInputOut",
+        "type": "object"
+      },
+      "StatusSummaryOut": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "report_run_id": {
+            "format": "uuid",
+            "title": "Report Run Id",
+            "type": "string"
+          },
+          "sentences": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceOut"
+            },
+            "title": "Sentences",
+            "type": "array"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "summary_source": {
+            "title": "Summary Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary_source",
+          "sentences",
+          "report_run_id",
+          "stale",
+          "label"
+        ],
+        "title": "StatusSummaryOut",
         "type": "object"
       },
       "StockCommandResult": {
@@ -5593,6 +7031,508 @@
         ]
       }
     },
+    "/api/v1/admin/memberships": {
+      "get": {
+        "operationId": "list_memberships_api_v1_admin_memberships_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MembershipOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Memberships",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/memberships/{membership_id}/deactivate": {
+      "post": {
+        "operationId": "deactivate_membership_api_v1_admin_memberships__membership_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deactivate Membership",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/memberships/{membership_id}/roles": {
+      "post": {
+        "operationId": "grant_role_api_v1_admin_memberships__membership_id__roles_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleGrantCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grant Role",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies": {
+      "get": {
+        "operationId": "list_policies_api_v1_admin_policies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PolicyVersionOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Policies",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/role-assignments/{role_assignment_id}": {
+      "delete": {
+        "operationId": "revoke_role_api_v1_admin_role_assignments__role_assignment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role_assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Role Assignment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Role",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/settings": {
+      "get": {
+        "operationId": "get_settings_view_api_v1_admin_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings View",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/citations/{chunk_id}": {
+      "get": {
+        "operationId": "get_chunk_citation_api_v1_citations__chunk_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chunk Citation",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/api/v1/document-versions/{version_id}": {
+      "get": {
+        "operationId": "get_document_version_api_v1_document_versions__version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentVersionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document Version",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/document-versions/{version_id}/download": {
+      "get": {
+        "operationId": "download_document_version_api_v1_document_versions__version_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Document Version",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "get": {
+        "operationId": "get_document_api_v1_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
     "/api/v1/factories/{factory_id}/audit-events": {
       "get": {
         "operationId": "list_audit_events_api_v1_factories__factory_id__audit_events_get",
@@ -5817,6 +7757,177 @@
         "summary": "List Customers",
         "tags": [
           "reference"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/dashboard": {
+      "get": {
+        "operationId": "get_dashboard_api_v1_factories__factory_id__dashboard_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Dashboard",
+        "tags": [
+          "dashboard"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/documents": {
+      "get": {
+        "operationId": "list_documents_api_v1_factories__factory_id__documents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DocumentSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Documents",
+        "tags": [
+          "documents"
+        ]
+      },
+      "post": {
+        "operationId": "upload_document_api_v1_factories__factory_id__documents_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_document_api_v1_factories__factory_id__documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentUploadResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Document",
+        "tags": [
+          "documents"
         ]
       }
     },
@@ -6271,6 +8382,150 @@
         "summary": "Material Ledger",
         "tags": [
           "inventory"
+        ]
+      }
+    },
+    "/api/v1/factories/{factory_id}/notes": {
+      "get": {
+        "operationId": "list_notes_api_v1_factories__factory_id__notes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "classification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Classification"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_NoteOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Notes",
+        "tags": [
+          "notes"
+        ]
+      },
+      "post": {
+        "operationId": "create_note_api_v1_factories__factory_id__notes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Note",
+        "tags": [
+          "notes"
         ]
       }
     },
@@ -6980,6 +9235,86 @@
         ]
       }
     },
+    "/api/v1/factories/{factory_id}/search": {
+      "get": {
+        "operationId": "search_documents_api_v1_factories__factory_id__search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Factory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "hybrid",
+              "enum": [
+                "hybrid",
+                "lexical",
+                "vector"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Documents",
+        "tags": [
+          "search"
+        ]
+      }
+    },
     "/api/v1/factories/{factory_id}/stock/corrections": {
       "post": {
         "operationId": "record_correction_api_v1_factories__factory_id__stock_corrections_post",
@@ -7655,6 +9990,73 @@
         ]
       }
     },
+    "/api/v1/orders/{order_id}/history": {
+      "get": {
+        "description": "Audit events recorded against this order (`order:read`).\n\nScoped to events with `target_type == \"order\"` and `target_id ==\nstr(order_id)`: the events every order lifecycle write (create,\ntransition, progress, and their denials) already records in\n`app.domain.orders.service`/this module against the order itself.",
+        "operationId": "order_history_api_v1_orders__order_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OrderHistoryEventOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Order History",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
     "/api/v1/orders/{order_id}/holds": {
       "post": {
         "operationId": "create_hold_api_v1_orders__order_id__holds_post",
@@ -8017,6 +10419,63 @@
         "summary": "List Order Runs",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_id}/status-summary": {
+      "get": {
+        "operationId": "order_status_summary_api_v1_orders__order_id__status_summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "deterministic",
+              "enum": [
+                "deterministic",
+                "model"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Order Status Summary",
+        "tags": [
+          "summaries"
         ]
       }
     },
