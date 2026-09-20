@@ -38,6 +38,7 @@ from app.db.models import (
 )
 from app.domain.clock import utcnow
 from app.domain.vocab import (
+    REPORT_EVENT_TYPE,
     ActorType,
     AuditOutcome,
     RecommendationStatus,
@@ -52,7 +53,7 @@ from app.orchestration.events import append_event
 from app.orchestration.protocol import AgentErrorCode, AgentResult, InputRef, TaskEnvelope
 from app.orchestration.recommendations import create_recommendation
 from app.orchestration.snapshot import SnapshotData
-from app.orchestration.synthesis import REPORT_EVENT_TYPE, build_order_report
+from app.orchestration.synthesis import build_order_report
 
 logger = structlog.get_logger("app.orchestration")
 
@@ -603,7 +604,10 @@ async def _finalize_deadline(
     )
     reasons = _degraded_reasons(results, tasks)
     status = RunStatus.DEGRADED.value if planning_succeeded else RunStatus.FAILED.value
+    # Set before the report is built, so a cancelled task's degraded reason in
+    # the report is the run's own error code (``_close_run`` writes it again).
     run.status = status
+    run.error_code = AgentErrorCode.DEADLINE_EXCEEDED.value
     await _append_report(
         session, run, tasks, results, await session.get(RunSnapshot, run.snapshot_id), None
     )

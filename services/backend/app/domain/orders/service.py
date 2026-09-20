@@ -63,6 +63,7 @@ from app.domain.orders.lifecycle import TRANSITIONS, InvalidTransition, get_tran
 from app.domain.quality import service as quality_service
 from app.domain.quality.calc import ShipmentEligibility, ShipmentFacts, shipment_eligibility
 from app.domain.vocab import (
+    REPORT_EVENT_TYPE,
     ActorType,
     AuditOutcome,
     InspectionResult,
@@ -75,7 +76,6 @@ from app.domain.vocab import (
     Role,
 )
 from app.jobs.queue import enqueue
-from app.orchestration.synthesis import REPORT_EVENT_TYPE as ORDER_REPORT_EVENT_TYPE
 
 # The job type the cancellation path enqueues (app.jobs.handlers registers the
 # handler under this same literal string; kept as a constant here too so a
@@ -718,7 +718,7 @@ async def _latest_report(session: AsyncSession, order: Order) -> dict[str, Any] 
             .join(RunSnapshot, RunSnapshot.id == AnalysisRun.snapshot_id)
             .where(
                 AnalysisRun.order_id == order.id,
-                RunEvent.event_type == ORDER_REPORT_EVENT_TYPE,
+                RunEvent.event_type == REPORT_EVENT_TYPE,
             )
             .order_by(RunEvent.id.desc())
             .limit(1)

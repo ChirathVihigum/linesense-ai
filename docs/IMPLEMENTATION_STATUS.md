@@ -2303,18 +2303,13 @@ Addressed the review findings from `task-23-report.md`'s round 1:
         app/domain/orders/service.py app/domain/inventory/readiness.py \
         app/api/schemas/orders.py app/api/runs.py   # clean for these files
   ```
-- **Limitations.** Full suites and `make contracts` are PENDING (user approval/CI);
-  `contracts/openapi.json` is not in this commit (the working copy carries other agents'
-  unreleased routes) but `latest_report` changes it, so it must be regenerated. Six agent tasks
-  now share the documented 12 model calls per run, so with the fixture provider (3 calls per task)
-  planning r1 and RM r1 fall back to their deterministic assessments with `BUDGET_EXCEEDED`; the
-  demo recommendation is therefore `generated_by="deterministic"` and
-  `tests/integration/test_two_agent_flow.py` was updated to assert that. Raising the budget,
-  reducing fixture tool depth, or honouring the envelope's `max_tool_calls` per task are the
-  options — a product decision, not taken here. `get_operation_statistics` reports
-  `min_seconds`/`max_seconds` as null with a note: the snapshot keeps the median and sample count
-  only. `tests/agents/test_rm_agent.py` and `uv run mypy app` fail only on another agent's
-  in-flight `search_documents`/retrieval work.
+- **Limitations.** Full suites are PENDING (user approval/CI). Six agent tasks now share the
+  documented 12 model calls per run, which is two calls each; the run budget therefore binds when
+  anything spends more (a provider outage burns three attempts per task), and the remaining tasks
+  return their deterministic assessment with `BUDGET_EXCEEDED`. `get_operation_statistics` reports
+  the observation count and median only: the snapshot does not retain the observed range.
+  `tests/agents/test_rm_agent.py` and `uv run mypy app` fail only on another agent's in-flight
+  `search_documents`/retrieval work.
 
 ## 2026-09-20 — Task 26: container images, Compose, Keycloak realm, CI pipeline, static infra validation
 
@@ -2542,3 +2537,50 @@ there concurrently.
   summaries.py}`, `tests/unit/{test_entities.py,test_classifier.py,test_summarize.py}`,
   `tests/integration/{test_notes_api.py,test_status_summary.py}`, `docs/architecture/nlp.md`.
   Modified — `app/main.py`.
+
+### 2026-09-20 — Task 15 fix round 1
+
+- **Model-call budget (controller ruling).** The documented 12 model calls per run stay; the
+  fixture client's default script now makes **one** investigative tool call and then
+  `submit_assessment` (`FIXTURE_TOOL_CALLS = 1`), so six agent tasks fit exactly, and the agent
+  loop honours the dispatching envelope's `constraints.max_tool_calls` as an upper bound alongside
+  its own `MAX_TOOL_CALLS` (`AgentContext.max_tool_calls`, set by the executor from the envelope).
+  The demo run is model-explained end to end again: `tests/integration/test_two_agent_flow.py`
+  asserts `summary_source == "model"`, `generated_by == "model"` and that the run stayed inside its
+  budget. `tests/unit/test_fixture_client.py` asserts the new one-investigation script.
+  `test_four_agent_flow.py`'s outage assertions stay relaxed: three failed attempts per task each
+  reserve a call, so the budget still binds under an outage.
+- `get_operation_statistics` no longer advertises `min_seconds`/`max_seconds` (the snapshot keeps
+  the count and median only).
+- `REPORT_EVENT_TYPE` moved to `app/domain/vocab.py`; `app/domain/orders/service.py` no longer
+  imports from `app.orchestration`. (`app/api/summaries.py` keeps its own literal copy — another
+  agent owns that file.)
+- The IE agent's snapshot views parse with `extra="ignore"`, like the quality agent's, so an older
+  or newer snapshot cannot raise.
+- `build_order_report`'s `tasks` argument is now required (no silent empty-report default).
+- A task the run itself cancelled now reports the run's own reason (`run.error_code`, e.g.
+  `DEADLINE_EXCEEDED`) instead of `TASK_FAILED`, so `report.degraded_reasons` and
+  `analysis_runs.error_code` agree; the deadline path sets `error_code` before the report is built.
+  Covered by `test_a_cancelled_task_reports_the_runs_own_reason`.
+- Deferred (documented in `app/orchestration/synthesis.py`): the RM finding-code → `MaterialState`
+  mapping still exists in two places; collapsing it needs the finding to carry the state, a
+  protocol change beyond this task.
+- Commands (each via `scripts/heavy-job.sh`, DB letter **c**):
+  ```
+  $ ... uv run pytest tests/unit/test_synthesis.py tests/unit/test_fixture_client.py \
+        tests/agents/test_ie_agent.py tests/agents/test_quality_agent.py \
+        tests/agents/test_agent_loop.py tests/integration/test_two_agent_flow.py \
+        tests/integration/test_four_agent_flow.py tests/integration/test_orchestrator.py -q  # 54 passed
+  $ ... uv run pytest tests/integration/test_budget.py tests/integration/test_executor.py \
+        tests/integration/test_analysis_api.py tests/integration/test_orders_api.py \
+        tests/agents/test_planning_agent.py tests/agents/test_result_validation.py \
+        tests/unit/test_llm_factory.py tests/integration/test_internal_dispatch.py -q  # 86 passed
+  $ uv run ruff check <files> && uv run ruff format --check <files>                    # clean
+  $ uv run mypy app/agents app/orchestration/synthesis.py app/orchestration/orchestrator.py \
+        app/domain/orders/service.py app/domain/vocab.py app/api/runs.py app/llm   # clean (24 files)
+  $ make contracts                                                                   # ran; see below
+  ```
+  `contracts/openapi.json` and `apps/web/src/generated/api.ts` are **not** in this commit: they
+  already carry `latest_report` (another agent regenerated them) together with several unreleased
+  routes of theirs (documents, search, notes, admin, dashboard, order history, status summary), so
+  they are theirs to commit. Full suites remain PENDING (user approval/CI).

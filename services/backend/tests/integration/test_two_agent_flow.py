@@ -119,11 +119,10 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
         assert record is not None
         result = AgentResult.model_validate(record.payload)
         assert "REVISED_FOR_MATERIAL" in [finding.code for finding in result.findings]
-        # Six agent tasks share the run's 12 model calls, and the four round-0
-        # and round-0-dependent tasks spend them: the revision falls back to its
-        # deterministic assessment (BUDGET_EXCEEDED) rather than skipping work.
-        assert result.summary_source == "deterministic"
-        assert result.execution_metadata.degraded_reason == "BUDGET_EXCEEDED"
+        # Six agent tasks share the run's 12 model calls; two calls each
+        # (one investigation, then submit) is exactly what fits.
+        assert result.summary_source == "model"
+        assert result.execution_metadata.degraded_reason is None
 
         # Task 14 adds GET /factories/{code}/recommendations; until then the
         # PROPOSED row itself is the contract.
@@ -140,7 +139,7 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
         assert recommendation.run_id == run_id
         assert recommendation.order_id == order_id
         assert recommendation.kind == "ALLOCATION_AND_RESERVATION"
-        assert recommendation.generated_by == "deterministic"
+        assert recommendation.generated_by == "model"
         allocated = sum(
             (Decimal(row["units"]) for row in recommendation.proposal["allocations"]), Decimal(0)
         )
@@ -155,7 +154,8 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
     assert [row["status"] for row in body["recommendations"]] == [
         RecommendationStatus.PROPOSED.value
     ]
-    assert body["recommendations"][0]["generated_by"] == "deterministic"
+    assert body["recommendations"][0]["generated_by"] == "model"
+    assert body["model_calls_used"] <= body["model_calls_limit"]
     assert body["replan_count"] == 1
 
     report = body["report"]

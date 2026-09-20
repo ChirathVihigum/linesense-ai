@@ -60,6 +60,12 @@ class RunStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+# The ``run_events.event_type`` of the canonical per-order report an analysis
+# run finalizes into (written by ``app.orchestration.synthesis``, read by the
+# run detail API and the order detail's ``latest_report``).
+REPORT_EVENT_TYPE = "run.report"
+
+
 class RecommendationStatus(StrEnum):
     DRAFT = "DRAFT"
     PROPOSED = "PROPOSED"

@@ -29,9 +29,9 @@ from app.domain.vocab import GeneratedBy, MaterialState, TaskStatus
 from app.orchestration.protocol import AgentResult
 from app.orchestration.snapshot import SnapshotData
 
-REPORT_EVENT_TYPE = "run.report"
 SHIPMENT_SOURCE = "Calculated from records"
 TASK_FAILED_REASON = "TASK_FAILED"
+TASK_CANCELLED_REASON = "TASK_CANCELLED"
 NO_RESULT_SUMMARY = "This agent produced no result."
 
 # How a recommendation's provenance is shown next to it.
@@ -41,6 +41,12 @@ SOURCE_LABELS = {
 }
 
 # The RM finding codes that carry a material's deterministic state.
+#
+# Deferred (review round 1, item 6): these codes are emitted by
+# ``app.agents.rm.agent`` from ``app.domain.inventory.calc.material_state`` and
+# mapped back here, so the pairing lives in two places. Collapsing it needs the
+# RM agent to carry the state on the finding itself (a protocol change), which
+# is out of scope for this task.
 _MATERIAL_STATE_BY_FINDING: dict[str, MaterialState] = {
     "MATERIAL_SHORTAGE": MaterialState.SHORTAGE,
     "PLAN_MATERIAL_SHORT": MaterialState.SHORTAGE,
@@ -170,8 +176,13 @@ def _blockers(
     return sorted(blockers, key=lambda blocker: blocker.source != "deterministic")
 
 
-def _degraded_reason(task: AgentTask, result: AgentResult | None) -> str | None:
+def _degraded_reason(run: AnalysisRun, task: AgentTask, result: AgentResult | None) -> str | None:
     if result is None:
+        if task.status == TaskStatus.CANCELLED.value:
+            # A task the run itself stopped (deadline, cancellation): report the
+            # run's own reason so the report and ``analysis_runs.error_code``
+            # never disagree.
+            return run.error_code or TASK_CANCELLED_REASON
         return TASK_FAILED_REASON
     if result.status == "FAILED" or task.status == TaskStatus.FAILED.value:
         return (
@@ -203,7 +214,7 @@ def _agent_summaries(
                 summary_source=result.summary_source if result is not None else "deterministic",
                 provider=metadata.provider if metadata is not None else run.llm_provider,
                 model=metadata.model if metadata is not None else run.llm_model,
-                degraded_reason=_degraded_reason(task, result),
+                degraded_reason=_degraded_reason(run, task, result),
                 finding_codes=(
                     [finding.code for finding in result.findings] if result is not None else []
                 ),
@@ -237,7 +248,7 @@ def build_order_report(
     results_by_task: Mapping[uuid.UUID, AgentResult],
     recommendation: Recommendation | None,
     *,
-    tasks: Sequence[AgentTask] = (),
+    tasks: Sequence[AgentTask],
 ) -> OrderReport:
     """The run's canonical report, built from deterministic state only."""
     summaries = _agent_summaries(run, tasks, results_by_task)
@@ -280,4 +291,4 @@ def build_order_report(
     )
 
 
-__all__ = ["REPORT_EVENT_TYPE", "OrderReport", "build_order_report"]
+__all__ = ["OrderReport", "build_order_report"]
