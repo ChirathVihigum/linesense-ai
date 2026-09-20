@@ -84,10 +84,10 @@ make test             # unit/domain tests (no database required)
 make test-integration # tests against the real PostgreSQL test database
 make lint              # ruff check + ruff format --check
 make typecheck         # mypy
-make docs-check        # verify relative links in docs/, README.md, CLAUDE.md
+make docs-check        # verify relative links in docs/, README.md, docs/development-guide.md
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the full command reference (including
+See [`docs/development-guide.md`](docs/development-guide.md) for the full command reference (including
 commands planned for later tasks) and critical invariants.
 
 ## Setup

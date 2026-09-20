@@ -341,7 +341,7 @@ added here and names the planned module(s) or document:
 | Week 6 mid evaluation: 20 marks | Architecture, roles/communication, progress demo, RAI check, business pitch | Slides and a working two-agent vertical slice | Phase 2 exit gate |
 | Week 10 Gen AI video: 25 marks | 3–5-minute explanation using a generative-video tool | Final video with accurate claims and identifiable synthetic scenes | Phase 6 |
 | Week 10 report: 30 marks | Design, methodology, RAI, commercialization, evaluation | Official template populated with actual results | Phase 6 |
-| Week 10 repository: 5 marks | Setup, usage, contributors, tests, documentation | Reproducible README and repository | This document, `README.md`, `CLAUDE.md` |
+| Week 10 repository: 5 marks | Setup, usage, contributors, tests, documentation | Reproducible README and repository | This document, `README.md`, `docs/development-guide.md` |
 | Week 11 viva: 20 marks | Each member explains code, decisions, protocols, results | Contribution log and individual rehearsals | Contribution log (`README.md` Contributors section) |
 
 ## 7. Explicit out-of-scope list

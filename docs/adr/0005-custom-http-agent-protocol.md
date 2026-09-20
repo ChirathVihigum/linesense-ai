@@ -45,7 +45,7 @@ assessment materials.
   diagram, retry demo") since no ecosystem tooling validates it for us.
 - Readers unfamiliar with the codebase cannot assume A2A/MCP tooling
   applies; this is intentional and stated up front in this ADR and in
-  `CLAUDE.md`.
+  `docs/development-guide.md`.
 
 ## Alternatives considered
 

@@ -1,7 +1,7 @@
 """Integration tests for the deterministic synthetic seed generator (Task 6).
 
 Runs against the real PostgreSQL test database (see
-``.superpowers/sdd/2026-09-17-linesense-build/implementer-rules.md``:
+`internal review notes (not published)`:
 this task's isolated test database is ``linesense_test_d``).
 """
 

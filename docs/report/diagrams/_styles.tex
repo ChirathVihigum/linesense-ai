@@ -1,0 +1,77 @@
+% Shared TikZ styles for every LineSense report diagram.
+% Input once from the preamble of docs/report/linesense-report.tex.
+%
+% Layout rules every diagram in this directory follows:
+%   * nodes are placed on an explicit coordinate grid (or with `positioning`
+%     at fixed distances), never by an automatic layout engine;
+%   * every connector is orthogonal -- pure vertical/horizontal segments, or
+%     TikZ's `-|` / `|-` routing;
+%   * every edge label is a node with `midway`/`pos=`, drawn with an opaque
+%     white background so a label never sits on top of a line;
+%   * node widths are fixed, so boxes in the same row can never overlap.
+
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,shapes.geometric,%
+                shapes.multipart,calc,decorations.pathreplacing,patterns}
+
+\definecolor{lsblue}{HTML}{1F4E79}
+\definecolor{lsblued}{HTML}{DCE6F2}
+\definecolor{lsgreen}{HTML}{2E6F40}
+\definecolor{lsgreend}{HTML}{DCEEDF}
+\definecolor{lsamber}{HTML}{8A5A00}
+\definecolor{lsamberd}{HTML}{FBEBCF}
+\definecolor{lsgrey}{HTML}{4D4D4D}
+\definecolor{lsgreyd}{HTML}{ECECEC}
+\definecolor{lsred}{HTML}{8B2020}
+\definecolor{lsredd}{HTML}{F7DDDD}
+
+% Hyphenation inside a narrow node box produces ugly "ap-\\plies" breaks and
+% can push a word over a neighbouring node, so it is switched off for every
+% node style below (body text keeps normal hyphenation).
+\newcommand{\nohyph}{\hyphenpenalty=10000\exhyphenpenalty=10000\relax}
+
+\tikzset{
+  lsbox/.style        = {draw, rounded corners=2pt, align=center,
+                         font=\scriptsize\nohyph, inner sep=3pt,
+                         minimum height=1.25cm, text width=3.0cm},
+  person/.style       = {lsbox, draw=lsblue, fill=lsblued, line width=0.5pt},
+  system/.style       = {lsbox, draw=lsblue, fill=lsblue!25, line width=0.9pt,
+                         font=\scriptsize\bfseries\nohyph},
+  container/.style    = {lsbox, draw=lsblue, fill=lsblued, line width=0.7pt},
+  component/.style    = {lsbox, draw=lsgreen, fill=lsgreend, line width=0.5pt},
+  store/.style        = {lsbox, draw=lsamber, fill=lsamberd, line width=0.7pt},
+  external/.style     = {lsbox, draw=lsgrey, fill=lsgreyd, line width=0.5pt},
+  danger/.style       = {lsbox, draw=lsred,  fill=lsredd,  line width=0.6pt},
+  %
+  state/.style        = {draw=lsblue, fill=lsblued, rounded corners=7pt,
+                         align=center, font=\scriptsize\nohyph, inner sep=3pt,
+                         minimum height=0.85cm, text width=2.5cm},
+  terminal/.style     = {state, draw=lsgreen, fill=lsgreend},
+  badstate/.style     = {state, draw=lsred,  fill=lsredd},
+  choice/.style       = {draw=lsamber, fill=lsamberd, diamond, aspect=2.1,
+                         align=center, font=\tiny\nohyph, inner sep=1.5pt},
+  dot/.style          = {circle, fill=lsblue, minimum size=3.2mm, inner sep=0pt},
+  %
+  flow/.style         = {-{Stealth[length=2.0mm,width=1.6mm]}, draw=lsgrey,
+                         line width=0.55pt},
+  biflow/.style       = {{Stealth[length=2.0mm,width=1.6mm]}-%
+                         {Stealth[length=2.0mm,width=1.6mm]},
+                         draw=lsgrey, line width=0.55pt},
+  reply/.style        = {flow, dashed, dash pattern=on 2pt off 1.4pt},
+  trans/.style        = {-{Stealth[length=2.0mm,width=1.6mm]}, draw=lsblue,
+                         line width=0.6pt},
+  badtrans/.style     = {-{Stealth[length=2.0mm,width=1.6mm]}, draw=lsred,
+                         line width=0.6pt},
+  lifeline/.style     = {draw=lsgrey!60, dashed, dash pattern=on 1.6pt off 1.6pt,
+                         line width=0.4pt},
+  %
+  lbl/.style          = {font=\tiny\nohyph, fill=white, inner sep=1.4pt,
+                         align=center, text=black},
+  lblw/.style         = {lbl, text width=2.6cm},
+  lblx/.style         = {lbl, text width=3.4cm},
+  note/.style         = {font=\tiny\itshape\nohyph, align=left, text=lsgrey,
+                         fill=white, inner sep=2pt},
+  boundary/.style     = {draw=lsblue!55, dashed, rounded corners=5pt,
+                         line width=0.6pt, inner sep=9pt},
+  boundlbl/.style     = {font=\tiny\bfseries\nohyph, text=lsblue, inner sep=2pt,
+                         align=left},
+}

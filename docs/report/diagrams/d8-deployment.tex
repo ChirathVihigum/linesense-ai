@@ -1,0 +1,129 @@
+% Deployment view: the single-host Docker Compose topology.
+% NOTE: statically validated only (`make infra-check`); never built or run in
+% the environment that produced this report.
+%
+% Host services sit on a fixed grid (rows y = 5.0 | 1.4 | -2.2); external
+% systems sit outside the dashed host boundary on the far left (browser,
+% backups) and far right (LLM provider).  Corridors y = -0.4 and y = -4.6 and
+% x = 4.6 carry the connectors that would otherwise cross a node.
+\begin{tikzpicture}[font=\scriptsize]
+
+  % ---------- host services ----------------------------------------------
+  \node[container, text width=3.4cm, minimum height=1.9cm] (web) at (-1.0, 5.0)
+    {\textbf{\texttt{web}} -- \texttt{caddy:2.11-alpine}\\[2pt]
+     \normalfont\scriptsize TLS terminator and static SPA; \textbf{the only service
+     that publishes a host port} (443); \texttt{/internal/*} $\rightarrow$ 404 at the
+     edge};
+
+  \node[container, text width=3.4cm, minimum height=1.8cm] (api) at (-4.8, 1.4)
+    {\textbf{\texttt{api}} -- backend image, first argument \texttt{api}\\[2pt]
+     \normalfont\scriptsize \texttt{uvicorn --proxy-headers}, forwarded IPs limited
+     to \texttt{LS\_FORWARDED\_ALLOW\_IPS}; runs as non-root uid 10001};
+
+  \node[container, text width=3.4cm, minimum height=1.8cm] (worker) at (2.6, 1.4)
+    {\textbf{\texttt{worker}} -- \emph{the same image}, first argument
+     \texttt{worker}\\[2pt]
+     \normalfont\scriptsize \texttt{python -m app.jobs}: orchestrator, agent
+     executor, document pipeline, maintenance};
+
+  \node[container, text width=3.4cm, minimum height=1.7cm] (mig) at (-4.8,-2.2)
+    {\textbf{\texttt{migrate}} -- one-shot, first argument \texttt{migrate}\\[2pt]
+     \normalfont\scriptsize \texttt{alembic upgrade head} as
+     \texttt{linesense\_owner}; \texttt{api} and \texttt{worker} wait on
+     \texttt{service\_completed\_}\\\texttt{successfully}};
+
+  \node[store, text width=3.4cm, minimum height=1.7cm] (db) at (2.6,-2.2)
+    {\textbf{\texttt{db}} -- \texttt{pgvector/}\\\texttt{pgvector:0.8.6-pg16}\\[2pt]
+     \normalfont\scriptsize named volume; roles, database and the
+     \texttt{vector}/\texttt{pg\_trgm} extensions created once by
+     \texttt{db-init/01-roles.sh}};
+
+  \node[external, text width=3.4cm, minimum height=1.7cm] (kc) at (9.2,-2.2)
+    {\textbf{\texttt{keycloak}} -- \texttt{quay.io/keycloak/}\\\texttt{keycloak:26.7.4}\\[2pt]
+     \normalfont\scriptsize \texttt{dev} Compose profile only
+     (\texttt{start-dev --import-realm}); a real deployment points
+     \texttt{LS\_OIDC\_ISSUER} at a managed IdP instead};
+
+  \node[store, text width=3.4cm, minimum height=1.5cm] (vol) at (9.2, 1.4)
+    {\textbf{document volume}\\ \normalfont\scriptsize
+     \texttt{LS\_DOCUMENT\_STORAGE\_DIR}: private, never served directly; downloads
+     always go through a scope-checked API route};
+
+  \begin{scope}[on background layer]
+    \node[boundary, fit=(web)(api)(worker)(mig)(db)(kc)(vol)] (host) {};
+  \end{scope}
+  \node[boundlbl, anchor=south west, text width=12.0cm]
+    at ([shift={(0pt,3pt)}]host.north west)
+    {Single host -- \texttt{infra/compose/docker-compose.yml}. Everything except
+     \texttt{web}'s :443 stays on the private \texttt{internal} network. One host
+     is \emph{not} highly available: this is a student/pilot baseline, not an
+     enterprise SLA.};
+
+  % ---------- external systems --------------------------------------------
+  \node[person, text width=3.0cm, minimum height=1.3cm] (browser) at (-11.6, 5.0)
+    {\textbf{Browser}\\ \normalfont\scriptsize the only client that reaches the host};
+  \node[store, text width=3.0cm, minimum height=1.6cm] (bak) at (-11.6,-2.2)
+    {\textbf{Encrypted backups}\\ \normalfont\scriptsize \texttt{scripts/backup.sh}:
+     \texttt{pg\_dump -Fc} + document tar + row-count manifest, all
+     \texttt{openssl aes-256-cbc -pbkdf2}};
+  \node[external, text width=3.0cm, minimum height=1.3cm] (llm) at (15.2, 1.4)
+    {\textbf{LLM provider}\\ \normalfont\scriptsize outbound HTTPS only; no inbound
+     path into the host};
+
+  % ---------- connectors ---------------------------------------------------
+  \draw[biflow] (browser.east) -- node[lbl, above, midway, text width=3.4cm]
+      {HTTPS :443 -- the only published port on the host} (web.west);
+
+  % web -> api, along the corridor y = 3.2
+  \draw[flow] (-2.354, 4.05) -- (-2.354, 3.2) --
+      node[lbl, above, midway, text width=3.0cm]
+      {\texttt{/api} and \texttt{/auth} reverse proxy} (-4.8,3.2) -- (api.north);
+
+  % web -> keycloak, along the corridor y = 3.7
+  \draw[flow] (0.354, 4.05) -- (0.354, 3.7) --
+      node[lbl, above, midway, text width=5.0cm]
+      {a second Caddy site, \texttt{idp.localhost}: the browser \emph{and} the API
+       container must reach the OIDC issuer at one hostname} (11.6,3.7)
+      -- (11.6,-2.2) -- (kc.east);
+
+  \draw[biflow] (api.east) -- node[lbl, above, midway, text width=2.8cm]
+      {\texttt{/internal/v1}, bearer service token} (worker.west);
+
+  % api -> db, along the corridor y = -0.4
+  \draw[flow] (api.south) -- (-4.8,-0.4) --
+      node[lbl, above, midway, text width=2.8cm]
+      {\texttt{linesense\_app}: DML only} (1.517,-0.4) -- (1.517,-1.35);
+
+  % worker -> db, pure vertical
+  \draw[flow] (3.683, 0.5) -- node[lbl, midway, text width=2.4cm]
+      {claim jobs, commit results} (3.683,-1.35);
+
+  % worker -> document volume
+  \draw[biflow] (worker.east) -- node[lbl, above, midway, text width=2.6cm]
+      {document originals} (vol.west);
+
+  % worker -> LLM provider, along the corridor y = 2.8 (leaves the host)
+  \draw[flow] (2.6, 2.3) -- (2.6, 2.8) --
+      node[lbl, above, midway, text width=4.2cm]
+      {outbound HTTPS: redacted messages and tool specs, inside the run's
+       call and token budget} (15.2,2.8) -- (llm.north);
+
+  \draw[flow] (mig.east) -- node[lbl, above, midway, text width=2.8cm]
+      {\texttt{linesense\_owner}: DDL, exactly once per release} (db.west);
+
+  \draw[biflow] (db.south) -- (2.6,-4.6) --
+      node[lbl, above, midway, text width=3.2cm]
+      {nightly dump; \texttt{restore.sh} verifies row counts, document keys and the
+       stock ledger} (-11.6,-4.6) -- (bak.south);
+
+  \node[note, anchor=north west, text width=24.0cm] at (-13.2,-5.4)
+    {\textbf{Never executed.} There is no Docker in the environment that produced
+     this report. Every artefact above was checked \emph{statically} by
+     \texttt{scripts/validate-infra.py} (\texttt{make infra-check}): required
+     services and keys present, no \texttt{latest} image tag, no floating GitHub
+     Action reference, \texttt{/internal} blocked in the Caddyfile, the Keycloak
+     client confidential with PKCE~S256, and no secret-shaped literal in any
+     committed file. Every image tag was confirmed against the registry's own API
+     before it was pinned. \emph{Statically valid is not the same as working.}};
+
+\end{tikzpicture}

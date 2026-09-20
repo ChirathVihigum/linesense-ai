@@ -2,7 +2,7 @@
 
 ## Status: PENDING (needs user approval or CI)
 
-This machine's heat/workload policy (`.superpowers/sdd/2026-09-17-linesense-build/
+This machine's heat/workload policy (internal review notes (not published)
 implementer-rules.md`) explicitly overrides this task's brief for this one item: **do not run
 `make perf` or any load test locally.** Sustained concurrent load against a real server for 60
 seconds is exactly the class of job that policy exists to prevent on this laptop. The script,

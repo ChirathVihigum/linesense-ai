@@ -1,0 +1,61 @@
+% C4 level 1 -- system context.
+% Grid: people on row y=4.6, the system at y=0, external systems at y=-4.6.
+% Every connector is a pure vertical segment (x of the actor == x of its
+% entry point on the system box), so no arrow can cross a node.
+\begin{tikzpicture}
+
+  % ---------- actors (row y = 4.6) -------------------------------------
+  \node[person, text width=3.1cm] (p1) at (-4.6, 4.6)
+    {\textbf{Planner\\ Supervisor}\\[1pt]
+     creates orders, starts analyses,\\ approves and applies proposals};
+  \node[person, text width=3.1cm] (p2) at ( 0.0, 4.6)
+    {\textbf{Storekeeper, IE engineer,\\ Quality manager}\\[1pt]
+     records stock, cycle observations,\\ inspections and releases};
+  \node[person, text width=3.1cm] (p3) at ( 4.6, 4.6)
+    {\textbf{Viewer\\ Organization admin}\\[1pt]
+     read-only dashboards;\\ membership and configuration};
+
+  % ---------- the system (row y = 0) -----------------------------------
+  \node[system, text width=11.4cm, minimum height=2.0cm] (sys) at (0,0)
+    {LineSense AI\\[2pt]
+     \normalfont\scriptsize Factory operations decision-support for apparel
+     manufacturing. Four bounded agents (planning, raw materials, industrial
+     engineering, quality) investigate one order over deterministic domain
+     calculations, produce evidence-linked findings, and route every proposed
+     change through human approval before it is applied.};
+
+  % ---------- external systems (row y = -4.6) --------------------------
+  \node[external, text width=3.1cm] (idp) at (-4.6,-4.6)
+    {\textbf{OIDC identity provider}\\[1pt]
+     development provider locally;\\ Keycloak / hosted IdP in deployment};
+  \node[external, text width=3.1cm] (llm) at ( 0.0,-4.6)
+    {\textbf{LLM provider}\\[1pt]
+     Anthropic \texttt{claude-opus-5};\\
+     a deterministic \texttt{fixture} double in this build};
+  \node[external, text width=3.1cm] (src) at ( 4.6,-4.6)
+    {\textbf{Order CSV files\\ SOP and policy documents}\\[1pt]
+     synthetic in this build; no live ERP/MES connector};
+
+  % ---------- connectors: actors -> system -----------------------------
+  \draw[flow] (p1.south) -- node[lblw, midway]
+      {HTTPS, same origin;\\ opaque \texttt{ls\_session} cookie}
+      (p1.south |- sys.north);
+  \draw[flow] (p2.south) -- node[lblw, midway]
+      {records facts through\\ validated command endpoints}
+      (p2.south |- sys.north);
+  \draw[flow] (p3.south) -- node[lblw, midway]
+      {reads dashboards, evidence\\ and the audit trail}
+      (p3.south |- sys.north);
+
+  % ---------- connectors: system -> external systems -------------------
+  \draw[biflow] (idp.north |- sys.south) -- node[lblw, midway]
+      {authorization code + PKCE;\\ tokens stay server-side}
+      (idp.north);
+  \draw[flow] (llm.north |- sys.south) -- node[lblw, midway]
+      {redacted prompt, tool results;\\ explanation only, never a number}
+      (llm.north);
+  \draw[flow] (src.north) -- node[lblw, midway]
+      {imported / uploaded,\\ validated and quarantined}
+      (src.north |- sys.south);
+
+\end{tikzpicture}

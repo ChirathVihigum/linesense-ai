@@ -2,7 +2,7 @@
 
 ``seed_demo`` builds the full demonstration dataset described in
 ``docs/architecture/backend-contracts.md`` section 9 and
-`.superpowers/sdd/2026-09-17-linesense-build/task-6-brief.md`: the
+internal review notes (not published): the
 identity org/factories/users, master data (customers, styles, BOMs,
 materials, lines), ~100 orders with consistent capacity/inventory/quality
 state, and the ``PO-DEMO-001`` walkthrough scenario (``app.seed.scenario``).

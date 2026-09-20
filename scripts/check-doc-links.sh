@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verify that every relative markdown link target in docs/, README.md, and
-# CLAUDE.md resolves to a file that actually exists on disk. Absolute URLs
+# docs/development-guide.md resolves to a file that actually exists on disk. Absolute URLs
 # (http/https), mailto: links, and pure in-page fragments (#heading) are
 # skipped. Exits non-zero and prints one "BROKEN LINK" line per bad target.
 #
@@ -15,7 +15,7 @@ cd "$root_dir"
 
 files=()
 [ -f README.md ] && files+=("README.md")
-[ -f CLAUDE.md ] && files+=("CLAUDE.md")
+[ -f docs/development-guide.md ] && files+=("docs/development-guide.md")
 if [ -d docs ]; then
   while IFS= read -r -d '' f; do
     files+=("$f")

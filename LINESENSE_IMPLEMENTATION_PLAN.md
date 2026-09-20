@@ -136,7 +136,7 @@ linesense/
   .env.example
   Makefile
   README.md
-  CLAUDE.md
+  docs/development-guide.md
 ```
 
 Backend Pydantic/OpenAPI definitions own the wire contract. Generate the TypeScript API client; CI detects drift. Do not maintain unrelated handwritten versions of the same API types. Start without Kafka, Redis, Kubernetes, a separate vector database, fine-tuning, multiple orchestration frameworks, or autonomous browser tools.
@@ -553,12 +553,3 @@ Charge onboarding/connector work separately after estimating effort. Define a ru
 
 Monthly cost model: allocated compute + database + storage/backups + monitoring + model/embedding usage + support labor + identity/email costs if applicable. Measure actual token usage per run; calculate `(revenue - service delivery cost) / revenue` for gross margin. Verify current provider prices when preparing a commercial offer.
 
-A pilot should measure time to identify a blocker, time preparing an order-status report, stale/missing-data rate, proposal acceptance, and supervisor-rated usefulness. Avoid promising productivity percentages before collecting before/after evidence. Progress from synthetic demo to read-only pilot, then supervised actions, then integrations only after validation.
-
-## 17. Claude Code execution contract
-
-Use the companion `CLAUDE_CODE_BUILD_PROMPT.md`. The plan is model-independent: choose the model actually available in your Claude Code installation. No assumption is made here that “Opus 5” is an available model identifier.
-
-Tell Claude to read the source brief/image and this plan, inspect existing repository instructions, then implement one gated phase at a time. Keep a concise `CLAUDE.md` with commands, invariants, and pointers; store progress in a separate file so sessions can resume without inventing completion. Small verifiable tasks and concrete validation commands follow Claude Code's published guidance. [Claude Code best practices](https://code.claude.com/docs/en/best-practices)
-
-Do not allow the coding assistant to downgrade tests to hide failures, replace required backend functionality with mocks, rewrite unrelated work, expose secrets, guess API availability, or report tests it did not run. When credentials or the official report template are absent, complete independent work and mark the exact external blocker. A stubbed CI test is not evidence of a live integration.

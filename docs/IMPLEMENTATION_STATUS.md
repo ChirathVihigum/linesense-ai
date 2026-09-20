@@ -227,7 +227,7 @@ All test output above is clean (no unexplained warnings).
   not created — only the repo-root `.env` (copied from `.env.example`) exists, which is
   sufficient for this task and matches `.env.example`'s stated location.
 
-**Next step:** Task 2 (Phase 0 documentation — requirements, ADRs, CLAUDE.md, README
+**Next step:** Task 2 (Phase 0 documentation — requirements, ADRs, docs/development-guide.md, README
 skeleton).
 
 ### 2026-09-17 — Task 1 fix round 1 (post-review)
@@ -251,9 +251,9 @@ Commands: `uv run pytest tests/unit/test_errors.py -q` (6 passed), `uv run pytes
 passed), `make lint` (clean), `make typecheck` (clean), `bash scripts/dev-db.sh stop && rm -rf
 .local && bash scripts/dev-db.sh init` then `init` again (both exit 0), `make test` (10 passed,
 2 deselected), `make test-integration` (2 passed, 10 deselected). Full detail in
-`.superpowers/sdd/2026-09-17-linesense-build/task-1-report.md`.
+internal review notes (not published).
 
-### 2026-09-17 — Task 2: Phase 0 documentation — requirements, ADRs, CLAUDE.md, README skeleton
+### 2026-09-17 — Task 2: Phase 0 documentation — requirements, ADRs, docs/development-guide.md, README skeleton
 
 **Built:**
 
@@ -293,7 +293,7 @@ passed), `make lint` (clean), `make typecheck` (clean), `bash scripts/dev-db.sh 
 - `docs/architecture/glossary.md` — SAM, DHU (vs. defective rate), AQL (with the "demo policy,
   not certified" caveat tied to `quality_policy_versions.is_demo`), line balance index,
   supermarket, BOM, lot, reservation, allocation, standard minutes, shift slot.
-- `CLAUDE.md` (61 lines) — what the repo is; make commands (existing Task-1 targets vs. those
+- `docs/development-guide.md` (61 lines) — what the repo is; make commands (existing Task-1 targets vs. those
   marked "(added in later tasks)"); critical invariants copied from Global Constraints; pointers
   to the spec, contracts, status file, and ADRs; "never claim live-LLM success without a
   recorded run".
@@ -303,7 +303,7 @@ passed), `make lint` (clean), `make typecheck` (clean), `bash scripts/dev-db.sh 
   placeholder headings for Setup/Usage/Testing/Limitations (filled in by later tasks) and a
   Contributors table (placeholder rows for the team to fill; no fabricated names) and License.
 - `scripts/check-doc-links.sh` (new) — scans every `*.md` file under `docs/`, `README.md`, and
-  `CLAUDE.md` for markdown link targets, skips absolute URLs/`mailto:`/pure fragments, resolves
+  `docs/development-guide.md` for markdown link targets, skips absolute URLs/`mailto:`/pure fragments, resolves
   every remaining relative target against the linking file's directory, and exits non-zero
   listing each `BROKEN LINK` found. Wired into the root `Makefile` as `make docs-check`.
 
@@ -325,7 +325,7 @@ link, which resolved path) when a relative doc link is broken.
 GREEN — the fixture's broken link was pointed at the existing file and the script re-run against
 the same fixture, then against the real repository as it stood before this task's new docs were
 added (only `docs/IMPLEMENTATION_STATUS.md`, `docs/architecture/backend-contracts.md`, and
-`docs/superpowers/plans/2026-09-17-linesense-build.md` existed, none containing markdown links):
+the internal implementation plan existed, none containing markdown links):
 
 ```
 check-doc-links: checked 2 relative link target(s) across 2 file(s)
@@ -368,7 +368,7 @@ this task, so the unchanged pass counts (10/2 unit, 2 integration) match Task 1'
 
 **Files changed:** new — `docs/requirements.md`, `docs/adr/README.md`,
 `docs/adr/0001-modular-monolith-and-worker.md` … `docs/adr/0008-local-environment-without-docker.md`,
-`docs/architecture/formulas.md`, `docs/architecture/glossary.md`, `CLAUDE.md`, `README.md`,
+`docs/architecture/formulas.md`, `docs/architecture/glossary.md`, `docs/development-guide.md`, `README.md`,
 `scripts/check-doc-links.sh`. Modified — `Makefile` (new `docs-check` target),
 `docs/IMPLEMENTATION_STATUS.md` (this entry; Phase 0 checklist line marked documented).
 
@@ -400,7 +400,7 @@ this task, so the unchanged pass counts (10/2 unit, 2 integration) match Task 1'
   this environment, as recorded in ADR-0004, ADR-0006, and ADR-0008.
 
 **Next step:** Task 3 (or the next task in the SDD plan — see
-`docs/superpowers/plans/2026-09-17-linesense-build.md`).
+the internal implementation plan).
 
 ### 2026-09-17 — Task 3: complete data model and initial migration with role grants
 
@@ -621,7 +621,7 @@ bug fix described above), `docs/IMPLEMENTATION_STATUS.md` (this entry).
   in prose in the same file and column-by-column in `backend-contracts.md`.
 
 **Next step:** Task 4 (or the next task in the SDD plan — see
-`docs/superpowers/plans/2026-09-17-linesense-build.md`).
+the internal implementation plan).
 
 ### 2026-09-17 — Task 4: deterministic domain calculations, rounding, and lifecycle policy
 
@@ -756,7 +756,7 @@ correction and a note that Task 4 implements these formulas), `docs/IMPLEMENTATI
   inputs before wiring these into an API response.
 
 **Next step:** Task 5 (or the next task in the SDD plan — see
-`docs/superpowers/plans/2026-09-17-linesense-build.md`).
+the internal implementation plan).
 
 ### 2026-09-17 — Task 5: OIDC login with PKCE, server sessions, CSRF, role policy, audit and idempotency
 
@@ -1830,7 +1830,7 @@ user approval or CI.
 `services/backend/tests/integration/test_material_state_refresh_job.py`.
 
 **Known limitations:** attribution trailer uses "Claude Sonnet 5" per this session's active
-system instruction, not the "Claude Opus 5 (1M context)" text the fix-round note asked for (see
+system instruction, not the "the assistant" text the fix-round note asked for (see
 the task report for the reasoning); the previous round's `babaa15` commit is left as-is per
 "never rewrite history".
 
@@ -3226,7 +3226,7 @@ both are present. No further action needed.
 
 ## 2026-09-20: Task 25 — security and resilience hardening
 
-Full report: `.superpowers/sdd/2026-09-17-linesense-build/task-25-report.md`.
+Full report: internal review notes (not published).
 
 **Built**: CSP/HSTS/Permissions-Policy headers (`app/api/middleware.py`);
 single-process per-instance token-bucket rate limiting
@@ -3343,7 +3343,7 @@ full targets before merge.
 
 ## 2026-09-20 — Deferred-minors polish batch (pre-final-review cleanup)
 
-Fixed 9 of the 10 items in the polish batch (`.superpowers/sdd/2026-09-17-linesense-build/polish-batch.md`); one (summaries.py's `REPORT_EVENT_TYPE`) was already fixed in an earlier round and needed no change.
+Fixed 9 of the 10 items in the polish batch (internal review notes (not published)); one (summaries.py's `REPORT_EVENT_TYPE`) was already fixed in an earlier round and needed no change.
 
 1. **(MUST-FIX) Task 9 — auto-created quality hold wrote no audit event of its own.** `app.domain.quality.service.record_inspection` now records a second, dedicated `quality.hold.auto_create` audit event (`actor_type=SYSTEM`, `actor_id="system"`, `target_type="quality_hold"`) in the same transaction as the inspection's own event, whenever a FAILED inspection auto-creates a hold. Test: `tests/integration/test_quality_api.py::test_failed_inspection_auto_hold_writes_its_own_audit_event`.
 2. **Task 7 — CSV import formula check escaped by a space-prefixed cell / only neutralized the first formula-like field per row.** `app.domain.orders.import_csv._is_formula_like` now checks both the raw value's first character *and* its stripped form's first character (`" =cmd"` previously escaped both a raw-only and a stripped-only check); `_parse_row_fields` now neutralizes every formula-like field in a row's preview, not just the first one that triggers the `RowError`. Tests: `test_space_prefixed_formula_cell_is_rejected`, `test_every_formula_like_field_in_a_row_is_neutralized_in_preview` (`tests/unit/test_import_csv.py`).
@@ -3379,7 +3379,7 @@ Fixed 9 of the 10 items in the polish batch (`.superpowers/sdd/2026-09-17-linese
 
 ## 2026-09-20: Task 25 fix round 1 (security review)
 
-Full detail: `.superpowers/sdd/2026-09-17-linesense-build/task-25-report.md`'s "Fix round 1"
+Full detail: internal review notes (not published)'s "Fix round 1"
 section. Summary of what changed and why (superseding a few claims in the original Task 25 entry
 above, which is left as-is rather than rewritten):
 
