@@ -1,9 +1,10 @@
 """Reusable ``search_documents`` agent tool factory (task-17-brief.md req. 5).
 
-Wired into ``app.agents.rm.agent.RMAgent`` in this task. IE and quality own
-their own agent modules concurrently (Task 15); wiring the same tool into
-them is a one-line addition to their ``tools()`` — a documented follow-up,
-not done here to avoid touching files another in-flight agent owns.
+Wired into ``app.agents.rm.agent.RMAgent``, ``app.agents.ie.agent.IEAgent``
+and ``app.agents.quality.agent.QualityAgent`` (the latter two by Task 15,
+each in their own agent module).
+``tests/security/test_prompt_injection.py`` drives the real agent loop for
+all three against the real adversarial document.
 
 The excerpt returned to the model is untrusted document text passed as
 tool-result *data* (the agent loop already treats every tool result as

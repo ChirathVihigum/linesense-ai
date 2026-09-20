@@ -146,7 +146,11 @@ async def _timed_get(
     started = time.perf_counter()
     try:
         response = await client.get(url, cookies=cookies, timeout=10.0)
-        ok = response.status_code < 500
+        # A 4xx (auth/scope/validation failure) is a real error for this
+        # smoke test's purposes, not a "success" just because it isn't a
+        # 5xx -- counting it as ok would understate the error rate task-25
+        # req. 9 asks this script to report.
+        ok = 200 <= response.status_code < 300
     except httpx.HTTPError:
         ok = False
     stats.record((time.perf_counter() - started) * 1000, ok)
@@ -179,10 +183,25 @@ async def _worker(
                 await _timed_get(client, cookies, url, stats_by_endpoint[name])
 
 
+async def _order_versions(
+    session_factory: async_sessionmaker[AsyncSession], order_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """Each order's real, current ``version`` -- a hardcoded ``1`` would be
+    wrong for any seeded order that has already been transitioned at least
+    once, making every acknowledgement request 409 ``STALE_INPUT`` instead
+    of the 202 this is meant to time (task-25 review round 1, item 7)."""
+    async with session_factory() as session:
+        rows = (
+            await session.execute(sa.select(Order.id, Order.version).where(Order.id.in_(order_ids)))
+        ).all()
+    return {row.id: row.version for row in rows}
+
+
 async def _time_analysis_acknowledgements(
     base_url: str,
     session_pair: tuple[str, str],
     order_ids: list[uuid.UUID],
+    order_versions: dict[uuid.UUID, int],
     stats: EndpointStats,
 ) -> None:
     token, csrf = session_pair
@@ -194,7 +213,7 @@ async def _time_analysis_acknowledgements(
             try:
                 response = await client.post(
                     f"{base_url}/api/v1/orders/{order_id}/analyses",
-                    json={"expected_order_version": 1},
+                    json={"expected_order_version": order_versions[order_id]},
                     headers={**headers, "Idempotency-Key": f"perf-{uuid.uuid4().hex}"},
                     cookies=cookies,
                     timeout=10.0,
@@ -276,7 +295,10 @@ async def _main(args: argparse.Namespace) -> None:
 
     ack_stats = EndpointStats("analysis_ack")
     ack_order_ids = extra_order_ids[: args.concurrency] or [primary_order_id]
-    await _time_analysis_acknowledgements(args.base_url, sessions[0], ack_order_ids, ack_stats)
+    ack_order_versions = await _order_versions(session_factory, ack_order_ids)
+    await _time_analysis_acknowledgements(
+        args.base_url, sessions[0], ack_order_ids, ack_order_versions, ack_stats
+    )
 
     _print_report(stats_by_endpoint, ack_stats, _machine_info())
     await get_engine(settings.database_url).dispose()

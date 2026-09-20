@@ -115,10 +115,11 @@ backup:
 # directory; never touches $(BACKUP_DB) itself beyond reading it. See
 # docs/operations/backup-restore.md for recorded timings.
 restore-check:
-	bash scripts/backup.sh $(BACKUP_DB)
-	@latest=$$(ls -t .local/backups/*.tar.enc | head -1); \
+	@echo "restore-check: backing up $(BACKUP_DB)"; \
+	time bash scripts/backup.sh $(BACKUP_DB); \
+	latest=$$(ls -t .local/backups/*.tar.enc | head -1); \
 	echo "restore-check: restoring $$latest"; \
-	bash scripts/restore.sh "$$latest"
+	time bash scripts/restore.sh "$$latest"
 
 contracts:
 	bash scripts/export-openapi.sh

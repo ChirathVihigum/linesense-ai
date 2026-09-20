@@ -39,40 +39,46 @@ pgvector, port 55432), which at the time held a full seeded demo dataset (`make 
 allocations, 61 BOM lines, 720 cycle observations, 26 customers, ... — see the manifest excerpt
 below).
 
+Verbatim transcript of one real, single, back-to-back run (fix round 1: the previous version of
+this section stitched together two separate runs with inconsistent timestamps between the backup
+and restore logs; this is one run, `LS_BACKUP_PASSPHRASE` elided):
+
 ```
-$ time LS_BACKUP_PASSPHRASE=*** bash scripts/backup.sh linesense_dev
+$ export LS_BACKUP_PASSPHRASE=***
+$ time bash scripts/backup.sh linesense_dev
 [backup] dumping database 'linesense_dev'
 [backup] recording table row counts
-[backup] archiving document storage (.../.local/documents)
-[backup] encrypting into .../.local/backups/20260920T072330Z.tar.enc
-[backup] done: .../.local/backups/20260920T072330Z.tar.enc
-real  0m0.87s
+[backup] archiving document storage (/Users/samitha/Projects/chirath/.local/documents)
+[backup] encrypting into /Users/samitha/Projects/chirath/.local/backups/20260920T080449Z.tar.enc
+[backup] done: /Users/samitha/Projects/chirath/.local/backups/20260920T080449Z.tar.enc
+/Users/samitha/Projects/chirath/.local/backups/20260920T080449Z.tar.enc
+bash scripts/backup.sh linesense_dev  0.43s user 0.19s system 70% cpu 0.877 total
 
-$ time LS_BACKUP_PASSPHRASE=*** bash scripts/restore.sh .local/backups/20260920T072330Z.tar.enc
-[restore] decrypting .local/backups/20260920T072330Z.tar.enc
-[restore] extracting documents into .../.local/restore-documents/20260920T071511Z
+$ time bash scripts/restore.sh .local/backups/20260920T080449Z.tar.enc
+[restore] decrypting .local/backups/20260920T080449Z.tar.enc
+[restore] extracting documents into /Users/samitha/Projects/chirath/.local/restore-documents/20260920T080450Z
 [restore] recreating database linesense_restore
 [restore] restoring dump into linesense_restore
 [restore] verifying row counts against the backup manifest
 [restore] verifying document_versions.storage_key files exist
 [restore] verifying material_balances against the movement ledger
-[restore] verification passed. Restored database: linesense_restore; documents: .../.local/restore-documents/20260920T071511Z
-real  0m1.07s
+[restore] verification passed. Restored database: linesense_restore; documents: /Users/samitha/Projects/chirath/.local/restore-documents/20260920T080450Z
+bash scripts/restore.sh "$latest"  0.48s user 0.22s system 46% cpu 1.507 total
 ```
 
-Backup: **0.87s**, 368,672-byte encrypted archive. Restore + full three-part verification:
-**1.07s**. Both comfortably inside the machine-heat policy's "run it once if it stays under ~2
+Backup: **0.877s**, 368,672-byte encrypted archive. Restore + full three-part verification:
+**1.507s**. Both comfortably inside the machine-heat policy's "run it once if it stays under ~2
 minutes" allowance for `make restore-check`, and inside §12's "recovery within 4 hours" planning
-objective by four orders of magnitude at this dataset size — the dataset here is a demo-scale
+objective by three orders of magnitude at this dataset size — the dataset here is a demo-scale
 synthetic seed, not a production-scale one, so this is evidence the mechanism works correctly and
 quickly at this scale, not a claim about restore time at real-factory data volumes.
 
-Manifest excerpt from that run (`manifest.json`, inside the encrypted archive):
+Manifest excerpt from that same run (`manifest.json`, inside the encrypted archive):
 
 ```json
 {
   "database": "linesense_dev",
-  "created_at": "20260920T072330Z",
+  "created_at": "20260920T080449Z",
   "row_counts": {
     "agent_results": 0,
     "agent_tasks": 0,
@@ -83,18 +89,29 @@ Manifest excerpt from that run (`manifest.json`, inside the encrypted archive):
     "audit_events": 0,
     "bom_lines": 61,
     "bom_versions": 16,
+    "chunks": 0,
     "customers": 26,
     "cycle_observations": 720,
-    "defect_observations": 23
+    "defect_observations": 23,
+    "document_acl": 0,
+    "document_versions": 0,
+    "documents": 0
   }
 }
 ```
 
-(`document_versions`/`chunks`/`documents` were 0 in this run: the seeded dataset used for this
-exercise had not had `make seed --with-documents` run against it, so the storage-key check had
-zero rows to verify — the check itself is exercised end to end by
-`tests/agents/test_document_tool.py`/`tests/security/test_prompt_injection.py`, which do upload and
-process a real document.)
+**Honest gap, not a covered case:** `document_versions`/`chunks`/`documents` were 0 in this run —
+the `linesense_dev` database this exercise ran against has not had `make seed --with-documents` run
+against it, so verification step 2 (every ACTIVE/SUPERSEDED `document_versions.storage_key` exists
+in the restored store) had zero rows to check and its code path was not exercised by this run.
+`tests/agents/test_document_tool.py` and `tests/security/test_prompt_injection.py` upload and
+process a real document, but neither one calls `scripts/backup.sh`/`restore.sh` at all — they
+exercise the retrieval/agent pipeline, not this script's verification logic. **No automated test
+currently exercises `restore.sh`'s storage-key check against a real non-empty document store**;
+running `make seed --with-documents` before a future `make restore-check` (or adding a small
+integration test that seeds one document, runs both scripts, and asserts the check actually ran
+over a non-zero row count) would close this gap. Flagging it here rather than presenting the
+already-passing empty case as if it proved more than it does.
 
 ## Known limitations
 

@@ -58,7 +58,7 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 log "decrypting $BACKUP_FILE"
-openssl enc -d -aes-256-cbc -pbkdf2 -pass "pass:$LS_BACKUP_PASSPHRASE" -in "$BACKUP_FILE" |
+openssl enc -d -aes-256-cbc -pbkdf2 -pass env:LS_BACKUP_PASSPHRASE -in "$BACKUP_FILE" |
   tar -xf - -C "$WORK_DIR"
 for required in dump.pgdump documents.tar manifest.json; do
   if [ ! -f "$WORK_DIR/$required" ]; then
@@ -139,10 +139,21 @@ log "verifying material_balances against the movement ledger"
 # (unique(factory_id, material_id)) -- the join must match on both columns,
 # not material_id alone, or one factory's movements would be summed into
 # another factory's balance for the same material.
+#
+# Both joins are LEFT JOINs, not INNER: an INNER JOIN from material_balances
+# to material_lots would silently drop any balance row that has *no*
+# matching ACCEPTED lot at all from the query's result set entirely (an
+# INNER JOIN with zero matches produces zero rows, and a row that is never
+# produced can never fail the `having` check below) -- exactly the shape a
+# corrupted balance ("on_hand_accepted > 0 with zero real accepted stock")
+# would take, and exactly the case this check exists to catch. With LEFT
+# JOIN, every material_balances row is still verified, and one with no
+# accepted lots at all correctly gets `coalesce(sum(sm.quantity), 0) = 0`
+# to compare its `on_hand_accepted` against.
 BALANCE_MISMATCHES="$(psql_restore "
   select mb.factory_id || ':' || mb.material_id
   from material_balances mb
-  join material_lots ml
+  left join material_lots ml
     on ml.material_id = mb.material_id
    and ml.factory_id = mb.factory_id
    and ml.status = 'ACCEPTED'

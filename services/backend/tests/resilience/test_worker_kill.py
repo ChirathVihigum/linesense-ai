@@ -17,13 +17,16 @@ delay (``LS_FIXTURE_DELAY_SECONDS``) and a 5-second lease
 it; start worker 2 (no delay) and let it reclaim the job once the lease
 expires and drive the run to a terminal status.
 
-Assertions: the run reaches a terminal status; the task worker 1 was killed
-mid-flight on has *exactly one* stored result (the unique
-``(task_id)`` index on ``agent_results`` is what guarantees this, but a
-crash at the wrong moment could in principle have produced zero -- this
-proves it produced exactly one, not zero and not two); and no
-allocation/reservation was created (recommendations here are never
-auto-applied, so there is nothing a duplicate delivery could double-write).
+Assertions: the run reaches a terminal status; *every* task the run created
+(not just the one worker 1 was killed on) has exactly one stored result;
+exactly one recommendation was proposed for the run (the kill-and-recover
+cycle did not cause the orchestrator to double-propose); driving that
+recommendation through a real approve + apply produces exactly one set of
+allocations/reservations for the order, and applying the same
+(now-APPLIED) recommendation a second time is rejected (409) and creates
+no more rows -- so "no duplicate allocations" is a proven outcome of an
+actual apply, not a vacuous check on a step nothing ever reached
+(task-25 review round 1, item 8).
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.analyses import start_run
+from app.api.errors import AppError
 from app.auth.policy import Principal
 from app.db.models import (
     AgentResultRecord,
@@ -51,10 +55,12 @@ from app.db.models import (
     Allocation,
     AnalysisRun,
     Order,
+    Recommendation,
     Reservation,
     User,
 )
-from app.domain.vocab import TaskStatus
+from app.domain.approvals import service as approvals
+from app.domain.vocab import RecommendationStatus, TaskStatus
 from app.seed.generator import DEMO_ORDER_REF, seed_demo
 from app.settings import Settings
 
@@ -113,6 +119,13 @@ async def _wait_for_server(port: int) -> None:
                 pass
             await asyncio.sleep(0.2)
     raise AssertionError("the internal dispatch server never became ready")
+
+
+async def _order_scoped_count(session: AsyncSession, model: type, order_id: uuid.UUID) -> int:
+    count = await session.scalar(
+        sa.select(sa.func.count()).select_from(model).where(model.order_id == order_id)
+    )
+    return int(count or 0)
 
 
 async def _poll_until(
@@ -285,20 +298,134 @@ async def test_a_sigkilled_worker_never_loses_or_duplicates_a_task(
         )
         assert result_count == 1, "the killed task must have exactly one stored result"
 
-        after_allocations = await session.scalar(
+        # Every task the run created -- not just the one worker 1 was
+        # killed on -- must have exactly one stored result: a task-25
+        # review point (a kill affecting only one task would be a weak
+        # proof if sibling/later tasks were never checked at all).
+        task_ids = (
+            await session.scalars(sa.select(AgentTask.id).where(AgentTask.run_id == run_id))
+        ).all()
+        assert len(task_ids) >= 4, "expected at least the round-0 rm/ie/quality + planning tasks"
+        result_counts_by_task = dict(
+            (
+                await session.execute(
+                    sa.select(AgentResultRecord.task_id, sa.func.count())
+                    .where(AgentResultRecord.task_id.in_(task_ids))
+                    .group_by(AgentResultRecord.task_id)
+                )
+            ).all()
+        )
+        for task_id in task_ids:
+            assert result_counts_by_task.get(task_id) == 1, (
+                f"task {task_id} has {result_counts_by_task.get(task_id, 0)} results, expected 1"
+            )
+
+        # Exactly one recommendation was proposed for this run (the
+        # kill-and-recover cycle did not cause the orchestrator to
+        # double-propose).
+        recommendation_ids = (
+            await session.scalars(
+                sa.select(Recommendation.id).where(Recommendation.run_id == run_id)
+            )
+        ).all()
+        assert len(recommendation_ids) == 1, (
+            f"expected exactly one recommendation for the run, found {len(recommendation_ids)}"
+        )
+        rec_id = recommendation_ids[0]
+
+        supervisor_user = await session.scalar(
+            sa.select(User).where(User.email == "supervisor@demo.test")
+        )
+        assert supervisor_user is not None
+        supervisor_principal = Principal(
+            user_id=supervisor_user.id,
+            organization_id=order.organization_id,
+            session_id=uuid.uuid4(),
+            csrf_token="test-csrf",
+            display_name=supervisor_user.display_name,
+            roles_by_factory={order.factory_id: frozenset({"supervisor"})},
+        )
+
+        order_allocations_before_apply = await _order_scoped_count(session, Allocation, order.id)
+        order_reservations_before_apply = await _order_scoped_count(session, Reservation, order.id)
+
+    # `decide`/`apply` each run in "the caller's transaction" (their own
+    # docstrings): a fresh session + explicit commit per call, exactly as
+    # the owning API route does.
+    async with session_factory() as session:
+        rec = await session.get(Recommendation, rec_id)
+        assert rec is not None
+        await approvals.decide(
+            session,
+            supervisor_principal,
+            rec_id,
+            decision="APPROVED",
+            reason=None,
+            proposal_hash=rec.proposal_hash,
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rec = await session.get(Recommendation, rec_id)
+        assert rec is not None
+        assert rec.status == RecommendationStatus.APPROVED.value
+        await approvals.apply(
+            session, supervisor_principal, rec_id, proposal_hash=rec.proposal_hash
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rec = await session.get(Recommendation, rec_id)
+        assert rec is not None
+        assert rec.status == RecommendationStatus.APPLIED.value
+
+        order_allocations_after_apply = await _order_scoped_count(session, Allocation, order.id)
+        order_reservations_after_apply = await _order_scoped_count(session, Reservation, order.id)
+        # The real apply produced *some* allocation and/or reservation for
+        # this order (proving apply is not a no-op) -- exactly one set,
+        # from exactly one apply. Which of the two depends on
+        # `rec.kind` (ALLOCATION / RESERVATION / ALLOCATION_AND_RESERVATION),
+        # so the invariant checked here is "at least one side moved",
+        # not "both did".
+        assert (order_allocations_after_apply - order_allocations_before_apply) + (
+            order_reservations_after_apply - order_reservations_before_apply
+        ) > 0, "apply() produced no allocation and no reservation for this order"
+
+    # Applying the same, now-APPLIED recommendation again must be rejected
+    # (409 CONFLICT, since only an APPROVED recommendation can be applied)
+    # and must create no further rows -- the direct proof that nothing
+    # here can double-write.
+    async with session_factory() as session:
+        rec = await session.get(Recommendation, rec_id)
+        assert rec is not None
+        with pytest.raises(AppError) as exc_info:
+            await approvals.apply(
+                session, supervisor_principal, rec_id, proposal_hash=rec.proposal_hash
+            )
+        assert exc_info.value.status_code == 409
+        await session.rollback()
+
+    async with session_factory() as session:
+        order_allocations_final = await _order_scoped_count(session, Allocation, order.id)
+        order_reservations_final = await _order_scoped_count(session, Reservation, order.id)
+        assert order_allocations_final == order_allocations_after_apply
+        assert order_reservations_final == order_reservations_after_apply
+
+        # Organization-wide totals moved by exactly what this one apply
+        # produced for this order -- nothing else wrote to these tables.
+        org_allocations_final = await session.scalar(
             sa.select(sa.func.count())
             .select_from(Allocation)
             .where(Allocation.organization_id == order.organization_id)
         )
-        after_reservations = await session.scalar(
+        org_reservations_final = await session.scalar(
             sa.select(sa.func.count())
             .select_from(Reservation)
             .where(Reservation.organization_id == order.organization_id)
         )
-        # Nothing in this flow auto-applies a recommendation (that always
-        # needs a human decision), so processing this run -- including the
-        # kill-and-resume -- must not have created any new allocation or
-        # reservation row (a duplicate delivery of the killed task's job
-        # would have been the way that happened).
-        assert after_allocations == before_allocations
-        assert after_reservations == before_reservations
+        assert (org_allocations_final or 0) - before_allocations == (
+            order_allocations_after_apply - order_allocations_before_apply
+        )
+        assert (org_reservations_final or 0) - before_reservations == (
+            order_reservations_after_apply - order_reservations_before_apply
+        )
