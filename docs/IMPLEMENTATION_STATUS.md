@@ -3223,3 +3223,120 @@ contained this task's `eval` target and `LS_EVAL_DATABASE_URL`/
 `LS_EVAL_MIGRATION_DATABASE_URL` lines merged in alongside theirs.
 Confirmed via `git show HEAD:Makefile` / `git show HEAD:.env.example`:
 both are present. No further action needed.
+
+## 2026-09-20: Task 25 — security and resilience hardening
+
+Full report: `.superpowers/sdd/2026-09-17-linesense-build/task-25-report.md`.
+
+**Built**: CSP/HSTS/Permissions-Policy headers (`app/api/middleware.py`);
+single-process per-instance token-bucket rate limiting
+(`app/api/ratelimit.py`, wired into `app/main.py` ahead of
+`CsrfMiddleware`, matched by path regex so no owned route module needed
+changing); a route-generated IDOR matrix
+(`tests/security/test_idor_matrix.py`, walks the live FastAPI app's routes
+via `fastapi.routing._IncludedRouter`); a prompt-injection suite driving
+the real RM agent loop against the real adversarial document and a
+scripted hostile fixture model (`tests/security/test_prompt_injection.py`
+— unknown tool, SQL-shaped args, out-of-scope citation, unoffered action
+id, payload-override attempt, 50 consecutive tool calls, reveal-keys); an
+XSS test for findings/notes/citations/rationale
+(`apps/web/src/test/xss.test.tsx`); a real-subprocess worker-kill
+resilience test (`tests/resilience/test_worker_kill.py` — SIGKILL mid-task,
+lease expiry, reclaim, exactly one result, run finalizes); query-count
+regression tests for 5 list endpoints
+(`tests/integration/test_query_counts.py`) that caught and let me fix a
+real N+1 in `app.domain.approvals.service.list_recommendations`; encrypted
+backup/restore scripts with three-part verification
+(`scripts/backup.sh`/`restore.sh`); secret-scan and dependency-audit
+scripts (`scripts/secret-scan.sh`/`dependency-audit.sh`); a role-matrix
+generator (`scripts/gen_role_matrix.py`); a performance smoke script
+(`scripts/perf_smoke.py`, written and lint/mypy/`--help`-checked, not run);
+`docs/security/threat-model.md`, `role-matrix.md`, `scan-results.md`;
+`docs/operations/backup-restore.md`; `docs/evaluation/performance.md`; a
+deferred-minor fix in `app/llm/redaction.py` (NFD-decomposed Unicode emails
+were partially/fully missed by the local/domain character-class scan —
+fixed by treating Unicode combining marks, category `M*`, as word
+characters). `Makefile`: `security`, `perf`, `backup`, `restore-check`
+targets (re-read the file immediately before every edit per the shared-file
+rule; still lost my first edit once to a concurrent overwrite — see
+Concerns).
+
+**Commands and results** (all via `scripts/heavy-job.sh`, test DB letter
+`b`): `uv run pytest tests/unit/test_redaction.py` (34 passed);
+`uv run pytest tests/security/test_headers_and_limits.py
+tests/security/test_idor_matrix.py tests/security/test_prompt_injection.py
+tests/resilience/test_worker_kill.py -q` (81 passed, ~15s);
+`uv run pytest tests/integration/test_query_counts.py
+tests/integration/test_approvals.py -q` (19 passed); `uv run ruff
+check`/`ruff format --check`/`mypy app` on every changed file (clean);
+`bash scripts/secret-scan.sh` (0 findings in 413 tracked files — one
+documented, reviewed exclusion: this repo's own redaction/anthropic-client
+tests use literal fake `sk-ant-...` strings by design);
+`bash scripts/dependency-audit.sh` (0 findings, backend and web); one real
+`bash scripts/backup.sh linesense_dev` + `bash scripts/restore.sh` cycle
+against the actual dev cluster (0.87s backup, 1.07s restore+verify — see
+`docs/operations/backup-restore.md`); `uv run python
+../../scripts/gen_role_matrix.py` (wrote the committed, drift-proof
+`role-matrix.md`).
+
+**PENDING (needs user approval or CI)**: the load test itself
+(`make perf` / `scripts/perf_smoke.py` at 20 concurrent users for 60s) —
+the machine heat/workload policy explicitly overrides this task's brief
+for this one item; the script, Makefile target and doc are complete and
+smoke-checked (`--help`, ruff, mypy), but no load was generated locally.
+`make security`/`make test`/`make test-integration`/`make web-test` as
+whole-suite invocations were not run (heat policy: only the files this
+task touched were run, listed above); CI or the controller should run the
+full targets before merge.
+
+**Self-review / concerns**:
+- The IDOR matrix covers `GET` routes only (a documented, deliberate
+  scope: a write route's body/`Idempotency-Key` validation can race a
+  bodyless negative-auth request against FastAPI's own dependency-solving
+  order in a way that would make the test's expected status ambiguous per
+  route). Every write route's own permission/scope check is still covered
+  by each owning task's existing tests (`test_order_access.py`,
+  `test_approval_rules.py`, etc.).
+- The IDOR matrix's cross-tenant check uses a real KTN row only for the
+  `factory_id`/`order_id` path parameters and a random (so, nonexistent)
+  UUID for every other id; documented in the test file's own docstring as
+  exercising the same `load_scoped` code path either way, not a shortcut
+  taken silently.
+- The prompt-injection suite exercises RM only: it is the only
+  document-using agent wired up as of this task (`search_documents` is a
+  documented one-line follow-up for IE/quality, not done here to avoid
+  touching those agents' owning tasks' files).
+- Twice during this task a shared file's freshly-made edit was silently
+  overwritten by another agent's concurrent write before I could commit
+  it (`Makefile`'s `security`/`perf`/`backup`/`restore-check` target
+  bodies once, `.env.example`'s new lines once) — caught both times by
+  re-reading the file immediately before the *next* edit and diffing
+  before commit, per the shared-file rule, and both are now committed
+  correctly (`d208be9`). Any agent touching `Makefile`/`.env.example`
+  after this should still re-read fresh; the race is inherent to
+  concurrent editing of one file, not fully preventable from one side.
+- `scripts/restore.sh` restores as the cluster superuser rather than
+  `linesense_owner` (documented in `backup-restore.md`): required because
+  `vector`/`pg_trgm` are owned by the superuser and a dump's
+  `COMMENT ON EXTENSION` fails under any other role; fine for the
+  verification-only `linesense_restore` target, but a production restore
+  runbook would need an ownership fix-up step afterward.
+
+**Files changed**: created —
+`services/backend/app/api/ratelimit.py`;
+`services/backend/tests/security/test_headers_and_limits.py`,
+`test_idor_matrix.py`, `test_prompt_injection.py`;
+`services/backend/tests/resilience/test_worker_kill.py`;
+`services/backend/tests/integration/test_query_counts.py`;
+`apps/web/src/test/xss.test.tsx`; `scripts/backup.sh`, `restore.sh`,
+`secret-scan.sh`, `dependency-audit.sh`, `gen_role_matrix.py`,
+`perf_smoke.py`; `docs/security/threat-model.md`, `role-matrix.md`,
+`scan-results.md`; `docs/operations/backup-restore.md`;
+`docs/evaluation/performance.md`. Modified —
+`services/backend/app/api/middleware.py`, `errors.py`, `main.py`,
+`settings.py`; `services/backend/app/llm/redaction.py`, `fixture_client.py`;
+`services/backend/app/jobs/__main__.py`;
+`services/backend/app/domain/approvals/service.py` (N+1 fix);
+`services/backend/tests/unit/test_redaction.py`;
+`services/backend/pyproject.toml` (`security` pytest marker);
+`apps/web/vite.config.ts`, `index.html`; `Makefile`, `.env.example`.
