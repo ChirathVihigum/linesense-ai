@@ -2932,3 +2932,63 @@ there concurrently.
   `apps/web/src/app/Layout.test.tsx`, `apps/web/src/components/{Icon.tsx,stateStyles.ts}`
   (`stateStyles.ts` landed in another task's commit), `apps/web/src/lib/permissions.ts`,
   `apps/web/src/test/server.ts` (landed in another task's commit).
+
+## 2026-09-20 — Task 21 fix round 1: shared shipment badge, batched history actor lookup
+
+Review findings from the Task 21 review (Approved with 2 Important + 2 cheap minors), addressed:
+
+1. **Shared shipment-eligibility badge.** The eligibility pill (icon + colour + text) was
+   duplicated verbatim in `OrderDetailPage.tsx`, `OrderOverviewTab.tsx` and `OrderQualityTab.tsx`.
+   Extracted to `apps/web/src/components/ShipmentEligibilityBadge.tsx` with parameterised
+   `eligibleLabel`/`ineligibleLabel` props (the three screens phrase it slightly differently:
+   "Eligible for shipment", "Eligible", "Shipment eligible"); all three now render it. The
+   surrounding reasons-list layout, which differs per screen, was left as each screen's own
+   markup (only the pill itself was duplicated verbatim).
+2. **`GET /orders/{id}/history` N+1 fixed.** `_actor_display_name` did one `session.get(User,
+   ...)` per row. Replaced with `_actor_display_names`: collects every row's distinct `USER`
+   actor id first, resolves them all in one `SELECT ... WHERE id IN (...)`, then builds the
+   per-event display name from that in-memory map — one extra query total regardless of page
+   size (0 if a page has no `USER`-actor rows). Added
+   `test_history_query_count_independent_of_page_size` (mirrors
+   `test_orders_api.py::test_list_orders_query_count_independent_of_page_size`'s
+   `before_cursor_execute` counting pattern): six audit events across two distinct users,
+   asserts the statement count for `limit=1` equals `limit=6`.
+- **Cheap minors:**
+  (a) The approval inbox's "Expires" column now shows a relative countdown
+  (`lib/format.ts::formatCountdown`, new — `Intl.RelativeTimeFormat` at minute/hour/day
+  granularity, "Expired" once past) with the absolute time kept as the `title` tooltip
+  (`formatDateTime`, unchanged).
+  (b) `RecommendationPage`'s apply mutation now has an `onError` that invalidates the
+  recommendation query specifically on 409 `STALE_INPUT`: `apply()` commits the
+  proposal's `SUPERSEDED` status change before rejecting the request (backend-contracts.md /
+  Task 14), so the page was showing stale `can_apply`/status until a manual reload; it now
+  refetches immediately so the Apply button (and status badge) reflect `SUPERSEDED` right away.
+  The rendered stale-inputs list from the 409 itself is unaffected (it comes from
+  `applyMutation.error`, a separate piece of state from the refetched query).
+- **Deferred (per review):** the Materials tab's float-based BOM demand display (computed in
+  the browser from `Decimal`-as-string fields) remains a documented deferral, not fixed in this
+  round.
+- **Tests (each once, via `scripts/heavy-job.sh`):**
+  ```
+  $ LS_TEST_DATABASE_URL=postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test_c \
+    LS_TEST_MIGRATION_DATABASE_URL=postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test_c \
+    uv run pytest tests/integration/test_order_history_api.py -q          # 3 passed
+  $ uv run ruff check app/api/orders.py tests/integration/test_order_history_api.py \
+      && uv run ruff format --check <same files>                          # clean
+  $ uv run mypy app/api/orders.py                                          # clean
+  $ bash -c "cd apps/web && npx eslint --max-warnings=0 \
+      src/components/ShipmentEligibilityBadge.tsx src/features/orders/OrderDetailPage.tsx \
+      src/features/orders/OrderQualityTab.tsx src/features/orders/OrderOverviewTab.tsx \
+      src/features/approvals/ApprovalInboxPage.tsx src/features/approvals/RecommendationPage.tsx \
+      src/lib/format.ts"                                                   # clean
+  $ bash -c "cd apps/web && npx vitest run src/features/orders/OrderDetailPage.test.tsx \
+      src/features/orders/OrderCreatePage.test.tsx \
+      src/features/approvals/RecommendationPage.test.tsx \
+      src/features/planning/PlanningBoardPage.test.tsx"                    # 4 files, 15 passed
+  $ bash -c "cd apps/web && npm run typecheck"                             # clean, whole project
+  ```
+- **Files changed:** new — `apps/web/src/components/ShipmentEligibilityBadge.tsx`. Modified —
+  `services/backend/app/api/orders.py`, `services/backend/tests/integration/
+  test_order_history_api.py`, `apps/web/src/features/orders/{OrderDetailPage,OrderQualityTab,
+  OrderOverviewTab}.tsx`, `apps/web/src/features/approvals/{ApprovalInboxPage,
+  RecommendationPage}.tsx`, `apps/web/src/lib/format.ts`.

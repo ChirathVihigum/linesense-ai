@@ -67,6 +67,28 @@ export function formatDateTime(isoDateTime: string | null | undefined, timeZone:
   }).format(date)
 }
 
+const relativeTimeFormat = new Intl.RelativeTimeFormat(LOCALE, { numeric: 'auto' })
+
+/**
+ * A short relative countdown to a future instant (e.g. "in 3 hours", "in 2 days"),
+ * for values a reader needs to act on quickly (a recommendation's expiry). The
+ * exact instant is not shown here; callers pair this with `formatDateTime` as a
+ * tooltip/title so the absolute time is still available.
+ */
+export function formatCountdown(isoDateTime: string | null | undefined, now: Date = new Date()): string {
+  if (!isoDateTime) return MISSING_VALUE
+  const target = new Date(isoDateTime)
+  if (Number.isNaN(target.getTime())) return isoDateTime
+  const diffMs = target.getTime() - now.getTime()
+  if (diffMs <= 0) return 'Expired'
+  const minutes = diffMs / 60_000
+  if (minutes < 60) return relativeTimeFormat.format(Math.ceil(minutes), 'minute')
+  const hours = diffMs / 3_600_000
+  if (hours < 24) return relativeTimeFormat.format(Math.ceil(hours), 'hour')
+  const days = diffMs / 86_400_000
+  return relativeTimeFormat.format(Math.ceil(days), 'day')
+}
+
 /** Converts a string-backed human label: `IN_PRODUCTION` → `In production`. */
 export function humanizeCode(code: string): string {
   const words = code.toLowerCase().split('_').filter(Boolean).join(' ')

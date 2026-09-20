@@ -60,6 +60,14 @@ function RecommendationView({ recId }: { recId: string }) {
       showToast('Recommendation applied.')
       await queryClient.invalidateQueries({ queryKey: ['recommendation', recId] })
     },
+    onError: (error) => {
+      // A 409 STALE_INPUT means the server already committed a status change
+      // (superseded) before rejecting the apply; refetch so the page (and the
+      // Apply button's can_apply/apply_blocked_reason) reflects it.
+      if (error instanceof ApiError && error.code === 'STALE_INPUT') {
+        void queryClient.invalidateQueries({ queryKey: ['recommendation', recId] })
+      }
+    },
   })
 
   if (query.isPending) return <LoadingState label="Loading recommendation…" variant="page" />

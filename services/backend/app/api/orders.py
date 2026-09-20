@@ -5,6 +5,7 @@ progress (backend-contracts.md sections 3-5; task-7-brief.md).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
@@ -338,21 +339,45 @@ ACTOR_TYPE_LABELS: dict[str, str] = {
 }
 
 
-async def _actor_display_name(session: AsyncSession, event: AuditEvent) -> str:
-    """Resolves an audit event's actor to a display name.
+UNKNOWN_USER_LABEL = "Unknown user"
+
+
+async def _actor_display_names(
+    session: AsyncSession, events: Sequence[AuditEvent]
+) -> dict[int, str]:
+    """Resolves every event's actor to a display name with one extra query.
 
     User actors are stored as the user's UUID (`str(principal.user_id)`);
     service/system actors use a fixed non-UUID id (e.g. "orchestrator"), so
-    only `USER` events are ever looked up.
+    only `USER` events are ever looked up, and all of them in a single
+    `SELECT ... WHERE id IN (...)` rather than one `session.get` per row.
     """
-    if event.actor_type == ActorType.USER.value:
+    user_ids: set[uuid.UUID] = set()
+    for event in events:
+        if event.actor_type != ActorType.USER.value:
+            continue
+        try:
+            user_ids.add(uuid.UUID(event.actor_id))
+        except ValueError:
+            continue
+
+    display_names: dict[uuid.UUID, str] = {}
+    if user_ids:
+        users = (await session.scalars(select(User).where(User.id.in_(user_ids)))).all()
+        display_names = {user.id: user.display_name for user in users}
+
+    result: dict[int, str] = {}
+    for event in events:
+        if event.actor_type != ActorType.USER.value:
+            result[event.id] = ACTOR_TYPE_LABELS.get(event.actor_type, event.actor_type)
+            continue
         try:
             user_id = uuid.UUID(event.actor_id)
         except ValueError:
-            return "Unknown user"
-        user = await session.get(User, user_id)
-        return user.display_name if user is not None else "Unknown user"
-    return ACTOR_TYPE_LABELS.get(event.actor_type, event.actor_type)
+            result[event.id] = UNKNOWN_USER_LABEL
+            continue
+        result[event.id] = display_names.get(user_id, UNKNOWN_USER_LABEL)
+    return result
 
 
 @router.get("/orders/{order_id}/history", response_model=Page[OrderHistoryEventOut])
@@ -383,10 +408,11 @@ async def order_history(
             .offset(page.offset)
         )
     ).all()
+    display_names = await _actor_display_names(session, rows)
     items = [
         OrderHistoryEventOut(
             id=row.id,
-            actor_display_name=await _actor_display_name(session, row),
+            actor_display_name=display_names[row.id],
             action=row.action,
             outcome=row.outcome,
             reason=row.reason,
