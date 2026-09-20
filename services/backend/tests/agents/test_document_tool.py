@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agents.ie.agent import IEAgent
+from app.agents.quality.agent import QualityAgent
 from app.agents.rm.agent import RMAgent
 from app.auth.policy import Principal
 from app.llm.client import LLMResponse, LLMToolCall
@@ -17,7 +19,7 @@ from app.orchestration.protocol import AgentErrorCode
 from app.retrieval.agent_tool import make_search_documents_tool
 from app.retrieval.embedder import HashingEmbedder
 from app.retrieval.pipeline import create_document_upload, process_document_version
-from app.retrieval.search import RetrievalScope, ScopedRetrieval
+from app.retrieval.search import RetrievalScope, ScopedRetrieval, get_citation
 from app.retrieval.storage import DocumentStorage
 from tests.helpers.agents import agent_context
 from tests.helpers.auth import IdentityFixture, seed_identity
@@ -64,6 +66,53 @@ def _principal(identity: IdentityFixture, *, factory_id: uuid.UUID, role: str) -
     )
 
 
+async def _upload_ktn_and_byg_docs(
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    storage: DocumentStorage,
+    embedder: HashingEmbedder,
+    *,
+    topic: str,
+) -> None:
+    """One KTN-scoped and one BYG-scoped document, both ACTIVE, differing only by factory."""
+    ktn = identity.factories["KTN"].id
+    byg = identity.factories["BYG"].id
+    principal = _principal(identity, factory_id=ktn, role="planner")
+
+    ktn_version = await create_document_upload(
+        db_session,
+        principal,
+        ktn,
+        title=f"KTN Only {topic} SOP",
+        doc_type="SOP",
+        slug=f"ktn-only-{topic.lower()}-sop",
+        acl_roles=[],
+        filename="ktn.md",
+        data=f"# {topic}\nKatunayake specific {topic.lower()} procedure content.".encode(),
+        storage=storage,
+    )
+    byg_version = await create_document_upload(
+        db_session,
+        principal,
+        byg,
+        title=f"BYG Only {topic} SOP",
+        doc_type="SOP",
+        slug=f"byg-only-{topic.lower()}-sop",
+        acl_roles=[],
+        filename="byg.md",
+        data=f"# {topic}\nBiyagama specific {topic.lower()} procedure content.".encode(),
+        storage=storage,
+    )
+    await db_session.commit()
+    await process_document_version(
+        session_factory, ktn_version.id, embedder=embedder, storage=storage
+    )
+    await process_document_version(
+        session_factory, byg_version.id, embedder=embedder, storage=storage
+    )
+
+
 async def test_search_documents_tool_returns_only_in_scope_chunks(
     identity: IdentityFixture,
     db_session: AsyncSession,
@@ -73,39 +122,8 @@ async def test_search_documents_tool_returns_only_in_scope_chunks(
     storage = DocumentStorage(tmp_path)
     embedder = HashingEmbedder()
     ktn = identity.factories["KTN"].id
-    byg = identity.factories["BYG"].id
-    principal = _principal(identity, factory_id=ktn, role="planner")
-
-    ktn_version = await create_document_upload(
-        db_session,
-        principal,
-        ktn,
-        title="KTN Only Gadget SOP",
-        doc_type="SOP",
-        slug="ktn-only-gadget-sop",
-        acl_roles=[],
-        filename="ktn.md",
-        data=b"# Gadgets\nKatunayake specific gadget assembly zephyr procedure content.",
-        storage=storage,
-    )
-    byg_version = await create_document_upload(
-        db_session,
-        principal,
-        byg,
-        title="BYG Only Gadget SOP",
-        doc_type="SOP",
-        slug="byg-only-gadget-sop",
-        acl_roles=[],
-        filename="byg.md",
-        data=b"# Gadgets\nBiyagama specific gadget assembly zephyr procedure content.",
-        storage=storage,
-    )
-    await db_session.commit()
-    await process_document_version(
-        session_factory, ktn_version.id, embedder=embedder, storage=storage
-    )
-    await process_document_version(
-        session_factory, byg_version.id, embedder=embedder, storage=storage
+    await _upload_ktn_and_byg_docs(
+        identity, db_session, session_factory, storage, embedder, topic="Gadget"
     )
 
     scope = RetrievalScope(
@@ -120,12 +138,92 @@ async def test_search_documents_tool_returns_only_in_scope_chunks(
         requester_roles=frozenset({"planner"}),
     )
 
-    tool = make_search_documents_tool(default_query="gadget assembly zephyr procedure")
+    tool = make_search_documents_tool(default_query="gadget procedure")
     result = await tool.handler(ctx, tool.input_model())
 
     titles = {item["title"] for item in result.data["results"]}
     assert "KTN Only Gadget SOP" in titles
     assert "BYG Only Gadget SOP" not in titles
+
+
+async def test_ie_agent_search_documents_tool_is_scoped_and_citable(
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    storage = DocumentStorage(tmp_path)
+    embedder = HashingEmbedder()
+    ktn = identity.factories["KTN"].id
+    await _upload_ktn_and_byg_docs(
+        identity, db_session, session_factory, storage, embedder, topic="Bottleneck"
+    )
+
+    scope = RetrievalScope(
+        organization_id=identity.organization.id, factory_id=ktn, roles=frozenset({"planner"})
+    )
+    retrieval = ScopedRetrieval(session_factory, scope, embedder)
+    ctx = agent_context(
+        llm=None,
+        retrieval=retrieval,
+        organization_id=identity.organization.id,
+        factory_id=ktn,
+        requester_roles=frozenset({"planner"}),
+    )
+
+    tool = next(t for t in IEAgent().tools(ctx) if t.name == "search_documents")
+    result = await tool.handler(ctx, tool.input_model(query="bottleneck procedure"))
+
+    titles = {item["title"] for item in result.data["results"]}
+    assert "KTN Only Bottleneck SOP" in titles
+    assert "BYG Only Bottleneck SOP" not in titles
+
+    assert result.evidence, "expected at least one document evidence ref"
+    for evidence in result.evidence:
+        assert evidence.chunk_id is not None
+        citation = await get_citation(db_session, scope, evidence.chunk_id)
+        assert citation is not None
+        assert citation.title == "KTN Only Bottleneck SOP"
+
+
+async def test_quality_agent_search_documents_tool_is_scoped_and_citable(
+    identity: IdentityFixture,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    storage = DocumentStorage(tmp_path)
+    embedder = HashingEmbedder()
+    ktn = identity.factories["KTN"].id
+    await _upload_ktn_and_byg_docs(
+        identity, db_session, session_factory, storage, embedder, topic="QualityHold"
+    )
+
+    scope = RetrievalScope(
+        organization_id=identity.organization.id, factory_id=ktn, roles=frozenset({"planner"})
+    )
+    retrieval = ScopedRetrieval(session_factory, scope, embedder)
+    ctx = agent_context(
+        llm=None,
+        retrieval=retrieval,
+        organization_id=identity.organization.id,
+        factory_id=ktn,
+        requester_roles=frozenset({"planner"}),
+    )
+
+    tool = next(t for t in QualityAgent().tools(ctx) if t.name == "search_documents")
+    result = await tool.handler(ctx, tool.input_model(query="qualityhold procedure"))
+
+    titles = {item["title"] for item in result.data["results"]}
+    assert "KTN Only QualityHold SOP" in titles
+    assert "BYG Only QualityHold SOP" not in titles
+
+    assert result.evidence, "expected at least one document evidence ref"
+    for evidence in result.evidence:
+        assert evidence.chunk_id is not None
+        citation = await get_citation(db_session, scope, evidence.chunk_id)
+        assert citation is not None
+        assert citation.title == "KTN Only QualityHold SOP"
 
 
 async def test_adversarial_document_cannot_hijack_the_agent_loop(

@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import AuditEvent
+from app.db.models import AuditEvent, Membership, RoleAssignment
 from app.domain.vocab import AuditOutcome
 from tests.helpers.auth import IdentityFixture, login_as, seed_identity
 
@@ -184,6 +184,64 @@ async def test_acl_restricted_document_is_404_for_planner_but_visible_to_supervi
     allowed = await supervisor.get(f"/api/v1/documents/{document_id}")
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["slug"] == "worker-data-privacy-acl-test"
+
+
+async def test_org_wide_acl_visibility_in_the_list_matches_the_url_factorys_roles(
+    identity: IdentityFixture,
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """`GET /factories/{f}/documents` must never disagree with `GET /factories/{f}/search`
+    on an org-wide, ACL-restricted document's visibility (fix round 1): both resolve the
+    ACL against exactly the roles the caller holds *at that factory*, never a role held
+    only at some other factory.
+    """
+    supervisor = await login_as(client, session_factory, "supervisor@demo.test")
+    ktn = identity.factories["KTN"].id
+    byg = identity.factories["BYG"].id
+
+    upload = await supervisor.post(
+        f"/api/v1/factories/{ktn}/documents",
+        data={
+            "title": "Org Wide Supervisor Only",
+            "doc_type": "OTHER",
+            "slug": "org-wide-supervisor-only",
+            "scope": "org",
+            "acl_roles": "supervisor",
+        },
+        files={"file": ("doc.md", _md("Restricted content"), "text/markdown")},
+        headers={"Idempotency-Key": "upload-org-wide-acl-1"},
+    )
+    assert upload.status_code == 202, upload.text
+
+    # byg.planner@demo.test normally holds only "planner" at BYG; grant them
+    # "supervisor" at KTN too, so this one user holds different roles at
+    # different factories (the case where the two routes could disagree).
+    async with session_factory() as session:
+        byg_planner = identity.users["byg.planner@demo.test"]
+        membership = await session.scalar(
+            sa.select(Membership).where(
+                Membership.organization_id == identity.organization.id,
+                Membership.user_id == byg_planner.id,
+            )
+        )
+        assert membership is not None
+        session.add(RoleAssignment(membership_id=membership.id, factory_id=ktn, role="supervisor"))
+        await session.commit()
+
+    multi_role_user = await login_as(
+        _other_client(client), session_factory, "byg.planner@demo.test"
+    )
+
+    ktn_list = await multi_role_user.get(f"/api/v1/factories/{ktn}/documents")
+    assert ktn_list.status_code == 200, ktn_list.text
+    ktn_slugs = {item["slug"] for item in ktn_list.json()["items"]}
+    assert "org-wide-supervisor-only" in ktn_slugs
+
+    byg_list = await multi_role_user.get(f"/api/v1/factories/{byg}/documents")
+    assert byg_list.status_code == 200, byg_list.text
+    byg_slugs = {item["slug"] for item in byg_list.json()["items"]}
+    assert "org-wide-supervisor-only" not in byg_slugs
 
 
 async def test_download_requires_an_activated_version(

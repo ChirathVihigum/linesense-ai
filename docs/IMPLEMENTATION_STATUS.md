@@ -2992,3 +2992,66 @@ Review findings from the Task 21 review (Approved with 2 Important + 2 cheap min
   test_order_history_api.py`, `apps/web/src/features/orders/{OrderDetailPage,OrderQualityTab,
   OrderOverviewTab}.tsx`, `apps/web/src/features/approvals/{ApprovalInboxPage,
   RecommendationPage}.tsx`, `apps/web/src/lib/format.ts`.
+
+### 2026-09-20 — Task 17 fix round 1
+
+Task 15 (IE/quality agents) had landed (`5149206`, `09e6df7`), removing the earlier blocker on the
+one deferred item from Task 17's original commit.
+
+- **Wired `search_documents` into IE and quality.** `app/agents/ie/agent.py` and `app/agents/
+  quality/agent.py` each append `make_search_documents_tool(default_query=...)` as the *last* entry
+  in their `tools()` list (IE: `"bottleneck escalation line balancing"`; quality: `"quality hold
+  release final inspection policy"`, exactly as the brief specified). Re-read both files first
+  (they changed under Task 15: new tools, `extra="ignore"` views, the envelope's
+  `constraints.max_tool_calls`). Checked the one real risk directly: `app/llm/fixture_client.py`'s
+  default script now makes exactly one investigative call, picking the *first* not-yet-called tool
+  in `tools()` order — appending at the end (not the front) leaves that pick, and every existing
+  IE/quality/four-agent-flow test, unchanged (confirmed by running them: 12 + 4 passed, no diffs
+  needed). `docs/architecture/retrieval.md`'s "follow-up" paragraph is gone; all three agents are
+  now listed as wired.
+- **Added a scoped-and-citable test per agent** in `tests/agents/test_document_tool.py`: each
+  uploads a KTN- and a BYG-scoped document, calls the agent's own wired tool (not a bare factory
+  call), asserts only the KTN document's title comes back, and resolves every returned
+  `EvidenceRef.chunk_id` through `app.retrieval.search.get_citation` to prove it is a real,
+  independently fetchable citation, not just an item in the tool's own JSON. The KTN/BYG upload
+  boilerplate (previously duplicated for RM) is now a shared `_upload_ktn_and_byg_docs` helper.
+- **(Minor) Fixed an org-wide ACL inconsistency between browsing and search.**
+  `app/api/documents.py::_acl_relevant_roles` used to union the caller's roles across *every*
+  factory for an org-wide document, while `app/api/search.py` always resolves
+  `RetrievalScope.roles = principal.roles_for(factory_id)` for the one factory in the URL — so the
+  same ACL-restricted, org-wide document could appear in `GET /factories/{f}/documents` (which has
+  a URL factory it wasn't using) while being invisible to `GET /factories/{f}/search` for a caller
+  whose matching role lived at a *different* factory. Fixed by giving `_acl_relevant_roles` an
+  optional `factory_id` that, when passed, is used exactly like `RetrievalScope.roles` regardless of
+  the document's own scope; `list_documents` now passes the URL's `factory_id`. The three item
+  routes (document detail, version detail, download) have no factory in their URL to align to and
+  keep their existing fallback (documented in the function's docstring as the intentionally
+  narrower scope of this fix). New test:
+  `tests/security/test_document_access.py::test_org_wide_acl_visibility_in_the_list_matches_the_url_factorys_roles`
+  (grants one user `supervisor`-at-KTN + `planner`-at-BYG and confirms an org-wide,
+  `acl_roles=supervisor` document appears in the KTN list but not the BYG list).
+- **Left as documented deferrals**, per the review: `storage.activate()`'s crash window between the
+  file move and the transaction commit, and the per-page `except Exception` in
+  `app/retrieval/extract.py`'s PDF text extraction.
+- Commands (DB letter `e`, each via `scripts/heavy-job.sh`):
+  ```
+  $ uv run pytest tests/agents/test_ie_agent.py tests/agents/test_quality_agent.py -q      # 12 passed
+  $ uv run pytest tests/integration/test_four_agent_flow.py -q                             # 4 passed
+  $ uv run pytest tests/agents/test_document_tool.py -q                                    # 4 passed
+  $ uv run pytest tests/security/test_document_access.py -q                                # 6 passed
+  $ uv run pytest tests/agents/test_document_tool.py tests/agents/test_ie_agent.py \
+      tests/agents/test_quality_agent.py tests/security/test_document_access.py \
+      tests/integration/test_four_agent_flow.py tests/integration/test_search.py \
+      tests/integration/test_document_pipeline.py -q                                       # 41 passed
+  $ uv run ruff check <files> && uv run ruff format --check <files>                         # clean
+  $ uv run mypy app/agents/ie/agent.py app/agents/quality/agent.py app/api/documents.py \
+      app/retrieval                                                       # clean (12 files)
+  ```
+  (`uv run mypy app` over the whole tree separately reported one pre-existing error in
+  `tests/helpers/worker.py`, last touched by Task 15's commit `5149206` — not this round's code.)
+  `scripts/export-openapi.sh` re-run to confirm no schema drift (no route signatures changed this
+  round): `contracts/openapi.json` diff is empty, so it and `apps/web/src/generated/api.ts` are not
+  part of this commit.
+- **Files changed:** modified — `services/backend/app/agents/ie/agent.py`, `app/agents/quality/
+  agent.py`, `app/api/documents.py`, `tests/agents/test_document_tool.py`,
+  `tests/security/test_document_access.py`, `docs/architecture/retrieval.md`.

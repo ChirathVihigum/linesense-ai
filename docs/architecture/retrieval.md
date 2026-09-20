@@ -107,11 +107,13 @@ never invoke an undefined tool for real or make its way into a cited evidence re
 `tests/agents/test_document_tool.py`). Quality's numeric eligibility rules still come only from the
 policy tables, never from retrieved text — the tool only ever adds explanatory evidence.
 
-This task wired `search_documents` into the RM agent (`app/agents/rm/agent.py`, default query
-"material shortage replenishment reservation policy"). Wiring the same factory into the IE and
-quality agents (default queries "bottleneck escalation line balancing" and "quality hold release
-final inspection policy") is a **follow-up** left to whoever owns `app/agents/ie/` and
-`app/agents/quality/`, to avoid touching those in-flight files concurrently.
+`search_documents` is wired into all three agents that can call the model: RM (`app/agents/rm/
+agent.py`, default query "material shortage replenishment reservation policy"), IE (`app/agents/
+ie/agent.py`, "bottleneck escalation line balancing") and quality (`app/agents/quality/agent.py`,
+"quality hold release final inspection policy"). Each wiring is one line —
+`make_search_documents_tool(default_query=...)` appended to the agent's `tools()` list — and is
+covered per agent in `tests/agents/test_document_tool.py` (in-scope filtering and citability of the
+returned evidence).
 
 ## Seeding
 

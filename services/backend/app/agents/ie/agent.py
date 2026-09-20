@@ -42,8 +42,10 @@ from app.orchestration.protocol import (
     RecommendedAction,
 )
 from app.orchestration.snapshot import SnapshotData, SnapshotLine
+from app.retrieval.agent_tool import make_search_documents_tool
 
 ASSESS_TASK_TYPE = "assess_line_capability"
+DOCUMENT_SEARCH_DEFAULT_QUERY = "bottleneck escalation line balancing"
 # A line whose modelled throughput falls below this share of its SAM-based
 # capacity is flagged: the plan assumes the SAM figure.
 CAPACITY_WARNING_RATIO = Decimal("0.9")
@@ -344,6 +346,7 @@ class IEAgent(BaseAgent):
                 input_model=_line_input("CompareObservedInput", default_line),
                 handler=_tool_compare_observed_vs_standard,
             ),
+            make_search_documents_tool(default_query=DOCUMENT_SEARCH_DEFAULT_QUERY),
         ]
 
 
