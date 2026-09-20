@@ -2449,3 +2449,96 @@ there concurrently.
   `infra/identity/keycloak/linesense-realm.json`, `infra/identity/README.md`,
   `.github/workflows/ci.yml`, `docs/operations/deployment.md`, `scripts/validate-infra.py`.
   Modified — `Makefile` (`infra-check` target only).
+
+## 2026-09-20 — Task 18: entity extraction, note classification, grounded status summaries, notes API
+
+- **Built:**
+  - `services/backend/app/nlp/entities.py` — `MasterData`/`load_master_data` (orders/lines scoped
+    to organization+factory, styles/materials scoped to organization only — those tables have no
+    `factory_id`; operations/defects from `app.seed.vocabulary`), `EntityMention`, and
+    `EntityExtractor`: `spacy.blank("en")` + one `EntityRuler` (`phrase_matcher_attr="LOWER"`)
+    compiled from a factory's own master data, plus one token-regex pattern
+    (`^po-[a-z]{3}-\d{4}$`) that flags well-formed-but-unknown order refs without ever resolving
+    or acting on them. A custom tokenizer drops spaCy's alpha-hyphen-alpha infix rule so codes like
+    `DEF-OS`/`PO-KTN-0020` survive as single tokens (spaCy's default already keeps `ST-01`). Overlap
+    (`Cotton Pique Fabric` vs `Fabric`) is resolved by spaCy's own `EntityRuler` (longest span).
+    Ambiguity (two materials sharing a name) is encoded with a nil-UUID sentinel (`AMBIGUOUS_ID`).
+  - `services/backend/app/nlp/classifier.py` — `KeywordBaselineClassifier` (fixed, documented
+    keyword lists per class, evaluation-baseline only), `TfidfNoteClassifier`
+    (`TfidfVectorizer(1,2-grams) + LogisticRegression`, deterministic given a seed,
+    `predict_with_margin` returns `unknown` below probability 0.45), `get_default_classifier()`
+    (trains once from `data/eval/notes_train.jsonl`, process-cached, version =
+    `sha256(train file)[:12]`; reads via builtin `open()` so a test can prove the test split is
+    never opened).
+  - `services/backend/app/nlp/summarize.py` — `grounded_summary(report)` (pure deterministic
+    template over the Task 15 `OrderReport` JSON shape — one sentence each for states, shipment
+    eligibility, every blocker, and the recommendation, every sentence's evidence ids drawn only
+    from the report's own blockers/evidence) and `model_summary(report, llm, budget_reserver)`
+    (one LLM call, validates every sentence has evidence ids that exist and rejects any shipment
+    claim contradicting `shipment.eligible=false`; falls back to the deterministic summary, labelled
+    per situation — `FIXTURE_LABEL`/`DISABLED_LABEL`/`UNAVAILABLE_LABEL`/`REJECTED_LABEL` — and
+    returns `None` only when `budget_reserver()` refuses). `OrderReport` is a plain `dict[str,
+    Any]` here, not a Task 15 import, since Task 15 was in flight concurrently.
+  - `services/backend/app/api/notes.py` + `app/api/schemas/notes.py` —
+    `POST/GET /api/v1/factories/{factory_id}/notes`, gated by `note:create` (the only permission
+    the contract defines for notes; there is no `note:read`, so both routes share it). Create
+    classifies + extracts, stores `classification`/`entities` (resolved, non-ambiguous mentions
+    only — matches the `notes` table, which has no column for the transient `unresolved` list or a
+    per-note classifier version), audits `note.create`, and returns the notice
+    "Entity links are for navigation only; they do not authorize any action."
+  - `services/backend/app/api/summaries.py` + `app/api/schemas/summaries.py` — new module (per
+    dispatch, to avoid touching `app/api/orders.py` while Task 15 owns it concurrently), registered
+    in `app/main.py`. `GET /api/v1/orders/{id}/status-summary`: finds the order's latest
+    `COMPLETED`/`DEGRADED` run's `run.report` event itself (same lookup pattern as
+    `app/api/runs.py`'s `REPORT_EVENT_TYPE`), computes `stale` from
+    `run_snapshots.input_versions["order"]` vs the order's current `version` (task-15-brief.md
+    requirement 5's rule, reimplemented locally since `OrderDetail.latest_report` does not exist
+    yet). No report yet → **409 `CONFLICT`** (the documented, tested degrade-gracefully choice —
+    see `docs/architecture/nlp.md` for the reasoning). `?mode=model` requires `analysis:run`; caps
+    at 10 `summary.model_generated` audit events per order per rolling 24h (counted directly from
+    `audit_events`); the audit event is written for any real LLM call attempt (accepted or
+    rejected/unavailable) but not when the provider is `disabled` (`build_llm_client` returns
+    `None`, matching `app/agents/base.py`'s treatment of a `None` client) — over the cap → 429
+    `RATE_LIMITED`.
+  - `docs/architecture/nlp.md` — full design/decision write-up.
+- **Modified:** `services/backend/app/main.py` (registered `notes_router`/`summaries_router`;
+  re-read immediately before each edit — another agent added `documents_router`/`search_router`
+  imports concurrently, left untouched).
+- **TDD evidence:**
+  - RED: `uv run pytest tests/unit/test_entities.py -q` before `app/nlp/classifier.py`/
+    `summarize.py` existed failed collection with `ModuleNotFoundError: No module named
+    'app.nlp.classifier'` (the package `__init__` re-exports everything); after writing
+    `entities.py` alone it collected and passed cleanly once the sibling modules existed.
+    `tests/integration/test_notes_api.py`/`test_status_summary.py` failed every case with 404
+    before `app/main.py` registered the new routers (confirmed the routers, not the route logic,
+    were missing), then passed once registered.
+  - GREEN: all listed test files passed on the first full run after implementation (see below).
+- **Tests (all via `scripts/heavy-job.sh`, test DB letter `f`):**
+  ```
+  LS_TEST_DATABASE_URL=...linesense_test_f LS_TEST_MIGRATION_DATABASE_URL=...linesense_test_f \
+    uv run pytest tests/unit/test_entities.py tests/unit/test_classifier.py \
+      tests/unit/test_summarize.py tests/integration/test_notes_api.py \
+      tests/integration/test_status_summary.py -q
+  # 48 passed
+  uv run ruff check <files> && uv run ruff format --check <files>   # clean
+  uv run mypy app/nlp app/api/notes.py app/api/summaries.py app/api/schemas/notes.py \
+    app/api/schemas/summaries.py                                    # Success: no issues in 8 files
+  uv run python -c "from app.main import create_app; create_app().openapi()"
+                                                                      # both new routes present
+  ```
+- **Limitations / PENDING:** full suites (`make test`, `make test-integration`) and `make contracts`
+  (npm-based OpenAPI/TS client regeneration) are **PENDING (needs user approval or CI)** per the
+  heat policy — not run; the notes/status-summary routes were instead verified by directly
+  inspecting `create_app().openapi()`'s path list. `GET .../notes` always returns `unresolved: []`
+  and the *current* process's `classifier_version` for every note (neither is persisted — see
+  `docs/architecture/nlp.md`). The `?mode=model` cap check and its audit write are two separate
+  statements (no row lock) — an acceptable, documented race for a demo-scale feature. `app/api/
+  summaries.py` reimplements the Task 15 "latest report"/staleness lookup locally rather than
+  consuming `OrderDetail.latest_report`, since Task 15 had not landed as of this commit; once it
+  does, `app/api/orders.py`'s equivalent logic and this route's `_latest_report` should be
+  reconciled (left as a follow-up, not done here to avoid touching `app/api/orders.py`).
+- **Files changed:** new — `services/backend/app/nlp/{__init__.py,entities.py,classifier.py,
+  summarize.py}`, `app/api/notes.py`, `app/api/summaries.py`, `app/api/schemas/{notes.py,
+  summaries.py}`, `tests/unit/{test_entities.py,test_classifier.py,test_summarize.py}`,
+  `tests/integration/{test_notes_api.py,test_status_summary.py}`, `docs/architecture/nlp.md`.
+  Modified — `app/main.py`.
