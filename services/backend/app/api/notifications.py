@@ -25,7 +25,7 @@ from app.auth.policy import Principal
 from app.auth.scope import load_scoped
 from app.db.models import Factory, Notification
 from app.db.session import get_db_session
-from app.domain.clock import utcnow
+from app.domain import clock
 
 router = APIRouter(prefix="/api/v1", tags=["notifications"])
 
@@ -102,6 +102,6 @@ async def mark_notification_read(
         raise AppError(404, "NOT_FOUND", "Resource not found.")
 
     if notification.read_at is None:
-        notification.read_at = utcnow()
+        notification.read_at = clock.utcnow()
         await session.flush()
     return NotificationOut.model_validate(notification)

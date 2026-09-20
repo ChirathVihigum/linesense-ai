@@ -8,8 +8,10 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db.models import AuditEvent
 from app.domain.vocab import ProductionState
 from tests.factories import make_order, make_quality_policy
 from tests.helpers.auth import IdentityFixture, login_as, seed_identity
@@ -148,6 +150,43 @@ async def test_failed_inspection_creates_hold_and_release_of_it_is_conflict(
         headers=_key("release-failed"),
     )
     assert release.status_code == 409
+
+
+async def test_failed_inspection_auto_hold_writes_its_own_audit_event(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    order_with_policy: Any,
+) -> None:
+    order, _policy = order_with_policy
+    quality_user = await login_as(client, session_factory, "quality@demo.test")
+
+    response = await quality_user.post(
+        f"/api/v1/orders/{order.id}/inspections",
+        json=_inspection_payload(
+            defective_units=5, defects=[{"defect_code": "STITCH", "severity": "MAJOR", "count": 5}]
+        ),
+        headers=_key("fail-audit"),
+    )
+    assert response.status_code == 201, response.text
+    hold_id = response.json()["holds"][0]["id"]
+
+    event = await db_session.scalar(
+        select(AuditEvent).where(AuditEvent.action == "quality.hold.auto_create")
+    )
+    assert event is not None
+    assert event.target_type == "quality_hold"
+    assert event.target_id == hold_id
+    assert event.actor_type == "SYSTEM"
+    assert event.outcome == "SUCCESS"
+    assert event.reason is not None and event.reason.startswith("Automatic hold:")
+
+    # The inspection's own audit event still exists too: this is an
+    # additional event, not a replacement.
+    inspection_event = await db_session.scalar(
+        select(AuditEvent).where(AuditEvent.action == "quality.inspection.record")
+    )
+    assert inspection_event is not None
 
 
 async def test_pass_then_release_by_different_user_releases_holds_and_order(

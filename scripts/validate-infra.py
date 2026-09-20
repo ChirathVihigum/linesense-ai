@@ -63,7 +63,39 @@ SECRET_PATTERNS = [
 ]
 
 PINNED_ACTION_RE = re.compile(r"^[^@]+@(v?\d[\w.-]*)$")
+# A full 40-character commit SHA is also an acceptable pin (the strongest
+# one, in fact -- immutable regardless of tag moves) even though it need not
+# start with a digit (e.g. `@a1b2c3...`), which `PINNED_ACTION_RE` requires.
+SHA_PINNED_ACTION_RE = re.compile(r"^[^@]+@([0-9a-fA-F]{40})$")
 FLOATING_ACTION_REFS = {"main", "master", "latest", "head"}
+
+# `image: repo/name:${VAR:-default}` (Compose/shell-style interpolation with
+# a default): the default is what actually applies whenever the variable is
+# unset, which is the common case for a plain checkout with no `.env`
+# override, so it is what the "pins latest" check must look at.
+_VAR_DEFAULT_RE = re.compile(r"^\$\{[^}:]+:-(.*)\}$")
+
+
+def _resolve_tag_default(tag: str) -> str:
+    """Resolve a `${VAR:-default}` interpolated tag to its default value;
+    any other tag (including a plain literal) is returned unchanged."""
+    match = _VAR_DEFAULT_RE.match(tag)
+    return match.group(1) if match else tag
+
+
+def _image_tag(image_ref: str) -> str | None:
+    """The tag portion of ``image_ref`` (after the last ``/``, everything
+    after the *first* remaining ``:``), or ``None`` if it has no tag.
+
+    Splitting on the first colon (not the last) matters once the tag itself
+    is a `${VAR:-default}` interpolation: that syntax has its own internal
+    colon (`${TAG:-latest}`), so `rsplit(":", 1)` picks the wrong one and
+    returns a truncated, unrecognizable tag like `-latest}`.
+    """
+    last_segment = image_ref.rsplit("/", 1)[-1]
+    if ":" not in last_segment:
+        return None
+    return last_segment.split(":", 1)[1]
 
 
 def _rel(path: Path) -> str:
@@ -128,12 +160,12 @@ def check_compose(compose: dict[str, Any]) -> list[str]:
 
         image = definition.get("image")
         if isinstance(image, str):
-            tag = image.rsplit(":", 1)[-1] if ":" in image.rsplit("/", 1)[-1] else None
+            tag = _image_tag(image)
             if tag is None:
                 problems.append(
                     f"docker-compose.yml: service '{name}' image '{image}' has no explicit tag"
                 )
-            elif tag == "latest":
+            elif _resolve_tag_default(tag) == "latest":
                 problems.append(
                     f"docker-compose.yml: service '{name}' pins image tag 'latest' "
                     "(pin an explicit, verified version)"
@@ -303,7 +335,7 @@ def check_workflow(workflow: dict[Any, Any]) -> list[str]:
             uses = step.get("uses")
             if not isinstance(uses, str):
                 continue
-            match = PINNED_ACTION_RE.match(uses)
+            match = PINNED_ACTION_RE.match(uses) or SHA_PINNED_ACTION_RE.match(uses)
             if not match:
                 problems.append(f"ci.yml: job '{job_name}' step 'uses: {uses}' has no pinned ref")
                 continue
@@ -329,9 +361,10 @@ def check_image_tags_not_latest(dockerfile_paths: list[Path]) -> list[str]:
             if not match:
                 continue
             image_ref = match.group(1)
-            if ":" not in image_ref.rsplit("/", 1)[-1]:
+            tag = _image_tag(image_ref)
+            if tag is None:
                 problems.append(f"{_rel(path)}: '{image_ref}' has no explicit tag")
-            elif image_ref.rsplit(":", 1)[-1] == "latest":
+            elif _resolve_tag_default(tag) == "latest":
                 problems.append(f"{_rel(path)}: '{image_ref}' pins tag 'latest'")
     return problems
 

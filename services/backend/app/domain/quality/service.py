@@ -267,10 +267,11 @@ async def record_inspection(
     """Record an inspection (``quality:inspect``) and evaluate it against the
     organization's currently ACTIVE quality policy.
 
-    A FAIL auto-creates an ACTIVE hold (`created_by=None`, a system rule) and
-    `orders.quality_state` is recomputed either way. Raises 409 ``CONFLICT``
-    "No approved quality policy" when no policy is ACTIVE (never passes by
-    default).
+    A FAIL auto-creates an ACTIVE hold (`created_by=None`, a system rule),
+    recorded with its own `quality.hold.auto_create` audit event
+    (`actor_type=SYSTEM`), and `orders.quality_state` is recomputed either
+    way. Raises 409 ``CONFLICT`` "No approved quality policy" when no policy
+    is ACTIVE (never passes by default).
     """
     scoped = await load_scoped(session, Order, order_id, principal, "quality:inspect")
     order = await _lock_order(session, scoped.id)
@@ -340,18 +341,18 @@ async def record_inspection(
             )
         )
 
+    auto_hold: QualityHold | None = None
     if evaluation.result == InspectionResult.FAIL.value:
-        session.add(
-            QualityHold(
-                organization_id=order.organization_id,
-                factory_id=order.factory_id,
-                order_id=order.id,
-                inspection_id=inspection.id,
-                reason=f"Automatic hold: {', '.join(evaluation.reasons)}",
-                status=QualityHoldStatus.ACTIVE.value,
-                created_by=None,
-            )
+        auto_hold = QualityHold(
+            organization_id=order.organization_id,
+            factory_id=order.factory_id,
+            order_id=order.id,
+            inspection_id=inspection.id,
+            reason=f"Automatic hold: {', '.join(evaluation.reasons)}",
+            status=QualityHoldStatus.ACTIVE.value,
+            created_by=None,
         )
+        session.add(auto_hold)
 
     order.version += 1
     await session.flush()
@@ -375,6 +376,26 @@ async def record_inspection(
             "quality_state": order.quality_state,
         },
     )
+
+    if auto_hold is not None:
+        await record_audit(
+            session,
+            organization_id=order.organization_id,
+            factory_id=order.factory_id,
+            actor_type=ActorType.SYSTEM.value,
+            actor_id="system",
+            action="quality.hold.auto_create",
+            target_type="quality_hold",
+            target_id=str(auto_hold.id),
+            outcome=AuditOutcome.SUCCESS.value,
+            reason=auto_hold.reason,
+            after={
+                "order_id": str(order.id),
+                "inspection_id": str(inspection.id),
+                "quality_state": order.quality_state,
+            },
+        )
+
     return inspection
 
 

@@ -113,7 +113,17 @@ class _Lookups:
 
 
 def _is_formula_like(value: str) -> bool:
-    return bool(value) and value[0] in _FORMULA_PREFIXES
+    """True if ``value`` is formula-like either as given or once whitespace
+    is stripped -- a *leading-tab/CR* injection vector only shows up
+    unstripped, while a *space-padded* formula (`" =cmd"`) only shows up
+    once the padding is removed, so both forms must be checked or one of
+    the two escapes detection."""
+    if not value:
+        return False
+    if value[0] in _FORMULA_PREFIXES:
+        return True
+    stripped = value.strip()
+    return bool(stripped) and stripped[0] in _FORMULA_PREFIXES
 
 
 def _neutralize(value: str) -> str:
@@ -159,18 +169,17 @@ def _parse_row_fields(
         )
 
     unstripped = dict(zip(EXPECTED_HEADER, raw_row, strict=True))
-    formula_field = next(
-        (field for field in EXPECTED_HEADER if _is_formula_like(unstripped[field])), None
-    )
+    formula_fields = [field for field in EXPECTED_HEADER if _is_formula_like(unstripped[field])]
 
     raw = {field: value.strip() for field, value in unstripped.items()}
+    formula_fields_set = set(formula_fields)
     preview: dict[str, Any] = {
-        field: (_neutralize(unstripped[field]) if field == formula_field else value)
+        field: (_neutralize(unstripped[field]) if field in formula_fields_set else value)
         for field, value in raw.items()
     }
 
-    if formula_field is not None:
-        return preview, RowError(row_number, formula_field, _FORMULA_MESSAGE)
+    if formula_fields:
+        return preview, RowError(row_number, formula_fields[0], _FORMULA_MESSAGE)
 
     if not raw["external_ref"]:
         return preview, RowError(row_number, "external_ref", "external_ref is required.")
@@ -374,15 +383,20 @@ async def validate_csv(
     if tuple(cell.strip() for cell in header) != EXPECTED_HEADER:
         return _file_level_result(f"Header must be exactly: {','.join(EXPECTED_HEADER)}")
 
-    # Physical line numbers (the header is line 1), so a blank line still
-    # consumes a number even though it produces no row and numbers never
-    # drift. `csv.Error` here (e.g. a field over Python's 128 KiB field-size
-    # limit) becomes a file-level error rather than an unhandled exception.
+    # Physical line numbers, taken from the reader's own `line_num` (the
+    # count of physical lines consumed so far) rather than counting logical
+    # records: a quoted field that itself contains a newline spans more than
+    # one physical line, and `enumerate()` over logical records would drift
+    # out of sync with the file's real line numbers as soon as one appears.
+    # A blank line still consumes a number even though it produces no row,
+    # so numbers never drift there either. `csv.Error` here (e.g. a field
+    # over Python's 128 KiB field-size limit) becomes a file-level error
+    # rather than an unhandled exception.
     physical_rows: list[tuple[int, list[str]]] = []
     try:
-        for line_number, row in enumerate(reader, start=2):
+        for row in reader:
             if row:
-                physical_rows.append((line_number, row))
+                physical_rows.append((reader.line_num, row))
     except csv.Error as exc:
         return _file_level_result(f"Could not parse the CSV file: {exc}")
 

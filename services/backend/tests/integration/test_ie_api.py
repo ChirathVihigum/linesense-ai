@@ -118,6 +118,32 @@ async def test_seeded_demo_line_reproduces_op04_bottleneck(
     )
 
 
+async def test_no_capacity_slots_flags_planned_efficiency_assumption(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    rig,
+) -> None:
+    """`rig` creates no `LineCapacitySlot` rows, so the analysis must fall
+    back to an assumed 100% planned efficiency -- and disclose that
+    assumption as a limitation rather than silently treating it as fact."""
+    factory, line, style, operation, alias = rig
+    now = utcnow()
+    for seconds in (D("39"), D("40"), D("41")):
+        await make_cycle_observation(
+            db_session, line, operation, alias, observed_seconds=seconds, observed_at=now
+        )
+    await db_session.commit()
+
+    ie_user = await login_as(client, session_factory, "ie@demo.test")
+    response = await ie_user.get(
+        f"/api/v1/factories/{factory.id}/ie/lines/{line.id}/styles/{style.id}/analysis"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert any("planned efficiency" in limitation.lower() for limitation in body["limitations"])
+
+
 async def test_outlier_exclusion_changes_representative_value(
     client: AsyncClient,
     db_session: AsyncSession,

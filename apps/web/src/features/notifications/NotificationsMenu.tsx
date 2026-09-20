@@ -125,24 +125,25 @@ export function NotificationsMenu() {
                     <p className="mt-1 text-xs text-fg-muted">{formatDateTime(item.created_at, factory.timezone)}</p>
                   </>
                 )
+                const rowClassName = "block w-full rounded-md p-2 text-left text-sm hover:bg-surface-sunken"
+                const onSelect = () => {
+                  if (unread) markRead.mutate(item.id)
+                  setOpen(false)
+                }
                 return (
                   <li key={item.id}>
-                    <button
-                      type="button"
-                      className="block w-full rounded-md p-2 text-left text-sm hover:bg-surface-sunken"
-                      onClick={() => {
-                        if (unread) markRead.mutate(item.id)
-                        setOpen(false)
-                      }}
-                    >
-                      {resolvedLink ? (
-                        <Link to={resolvedLink} className="contents">
-                          {content}
-                        </Link>
-                      ) : (
-                        content
-                      )}
-                    </button>
+                    {/* A row is either a link (navigates) or a button (marks
+                    read only); it is never both, so no interactive element
+                    is ever nested inside another. */}
+                    {resolvedLink ? (
+                      <Link to={resolvedLink} className={rowClassName} onClick={onSelect}>
+                        {content}
+                      </Link>
+                    ) : (
+                      <button type="button" className={rowClassName} onClick={onSelect}>
+                        {content}
+                      </button>
+                    )}
                   </li>
                 )
               })}

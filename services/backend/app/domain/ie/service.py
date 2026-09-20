@@ -226,10 +226,11 @@ async def list_operator_aliases(
 # --------------------------------------------------------------------------
 
 
-async def _average_planned_efficiency(session: AsyncSession, line: Line) -> Decimal:
+async def _average_planned_efficiency(session: AsyncSession, line: Line) -> Decimal | None:
     """Average `planned_efficiency` of ``line``'s next 7 days of capacity
-    slots (today's factory-local date through +6 days); `1` (no adjustment)
-    when no slots are planned in that window."""
+    slots (today's factory-local date through +6 days); `None` when no
+    slots are planned in that window (the caller decides the fallback and
+    must surface it as a limitation, since it is an assumption, not a fact)."""
     factory = await session.get(Factory, line.factory_id)
     today = today_in(factory.timezone) if factory is not None else utcnow().date()
     end = today + timedelta(days=CAPACITY_WINDOW_DAYS - 1)
@@ -240,7 +241,7 @@ async def _average_planned_efficiency(session: AsyncSession, line: Line) -> Deci
             LineCapacitySlot.slot_date <= end,
         )
     )
-    return Decimal(average) if average is not None else Decimal(1)
+    return Decimal(average) if average is not None else None
 
 
 async def _observed_units_per_hour(
@@ -371,7 +372,16 @@ async def line_style_analysis(
     observed_throughput = await _observed_units_per_hour(session, line, style, window_days)
 
     sam_minutes_total = sum((operation.sam_minutes for operation in operations), Decimal(0))
-    planned_efficiency = await _average_planned_efficiency(session, line)
+    planned_efficiency_avg = await _average_planned_efficiency(session, line)
+    if planned_efficiency_avg is None:
+        planned_efficiency = Decimal(1)
+        limitations.append(
+            "No planned capacity slots for this line in the next "
+            f"{CAPACITY_WINDOW_DAYS} days: SAM capacity assumes 100% planned "
+            "efficiency."
+        )
+    else:
+        planned_efficiency = planned_efficiency_avg
     sam_throughput: Decimal | None
     try:
         sam_throughput = sam_capacity_units_per_hour(
