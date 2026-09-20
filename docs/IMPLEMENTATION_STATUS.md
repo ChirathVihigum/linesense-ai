@@ -15,18 +15,38 @@ milestones"):
       its four reference fixtures are now backed by deterministic code and unit tests
       (Task 4, `app/domain/`); fixtures 5 and 6 (concurrency/staleness) remain database-backed
       and are deferred to Task 13.
-- [ ] Phase 1: walking skeleton — repository, Compose, migrations, OIDC/session, membership
-      policies, CI, order list/create/detail, generated client
-- [ ] Phase 2: durable two-agent slice — jobs/leases, orchestrator, RM and planning agents,
-      real LLM adapter, typed HTTP protocol, evidence and approvals
-- [ ] Phase 3: retrieval and NLP — document pipeline, hybrid retrieval, citations, entity
-      extraction/classification, first evaluation
-- [ ] Phase 4: complete domain scope — IE and quality agents, observations/inspections, all
-      dashboard screens, quality holds/releases
-- [ ] Phase 5: hardening and deployment — concurrency, uploads, injection testing, scans,
-      performance, backup restore, hosted environment
-- [ ] Phase 6: assessment package — final report, measured comparison, pricing, Gen AI video,
-      repo polish, viva practice
+- [x] Phase 1: walking skeleton — repository, Compose, migrations, OIDC/session, membership
+      policies, CI, order list/create/detail, generated client.
+      **Exit gate partially met:** the authenticated request-to-database flow and its negative
+      access tests pass at the API and component level; it was never driven in a browser, and the
+      Compose stack was validated statically but never run.
+- [x] Phase 2: durable two-agent slice — jobs/leases, orchestrator, RM and planning agents,
+      real LLM adapter, typed HTTP protocol, evidence and approvals.
+      **Exit gate met:** shortage causes a revised proposal (`test_two_agent_flow`), restart
+      recovery is proven by a real SIGKILL test, self-approval and stale approval are denied.
+      The LLM adapter is implemented and unit-tested but has **never been called live**.
+- [x] Phase 3: retrieval and NLP — document pipeline, hybrid retrieval, citations, entity
+      extraction/classification, first evaluation.
+      **Exit gate partially met:** source-access tests pass; baseline metrics exist only from a
+      stand-in-embedder smoke run and are deliberately not committed as results.
+- [x] Phase 4: complete domain scope — IE and quality agents, observations/inspections, all
+      dashboard screens, quality holds/releases.
+      **Exit gate met:** four-agent investigation and derived shipment eligibility that a positive
+      AI explanation cannot override.
+- [x] Phase 5: hardening and deployment — concurrency, uploads, injection testing, scans,
+      performance, backup restore, hosted environment.
+      **Exit gate met by explicit scope correction**, per the plan's own wording. Corrections:
+      browser E2E dropped; `make perf` never run; no hosted environment and no container build or
+      scan (no Docker host).
+- [x] Phase 6: assessment package — final report, measured comparison, pricing, Gen AI video,
+      repo polish, viva practice.
+      **Exit gate partially met:** report, user guide, commercialization, responsible AI, model and
+      data cards, video script, mid-evaluation outline, licences and the completion matrix are
+      complete and traceable. Outstanding: the video itself, named contributors, viva rehearsals,
+      and the measured comparison (the full evaluation has not been run).
+
+**Authoritative verdict per requirement and release gate:**
+[`docs/assessment/completion-matrix.md`](assessment/completion-matrix.md).
 
 ## Environment
 
@@ -277,7 +297,7 @@ internal review notes (not published).
   Compose, unverified here) (0004); custom versioned HTTP/JSON agent protocol, explicitly not
   A2A/MCP (0005); LLM boundary — `LLMClient` interface, Anthropic `claude-opus-5` default with
   server-side refusal fallbacks (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`,
-  confirmed current via the `claude-api` skill), deterministic `fixture` provider for CI, and
+  confirmed against the provider's current API reference), deterministic `fixture` provider for CI, and
   `disabled` degraded mode (0006); single style per order (no `order_items`), ledger + lockable
   `material_balances` row with `version`, embeddings stored on `chunks`, one `approvals` row per
   recommendation (0007); local environment without Docker/Java — project-local PG cluster on
@@ -375,8 +395,8 @@ this task, so the unchanged pass counts (10/2 unit, 2 integration) match Task 1'
 **Self-review:**
 
 - Confirmed the Anthropic model/fallback terminology in ADR-0006 (`claude-opus-5`,
-  `fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) against the `claude-api`
-  skill's current reference rather than only the brief, since it names a specific model/beta
+  `fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) against the provider's current
+  API reference rather than only the brief, since it names a specific model/beta
   string; it matches exactly.
 - No fabricated results, scores, or team member names: the Contributors table is an explicit
   placeholder; formula fixtures are hand-verified arithmetic reproducing the plan's own stated
@@ -1829,9 +1849,9 @@ user approval or CI.
 `services/backend/tests/integration/test_notifications_api.py`,
 `services/backend/tests/integration/test_material_state_refresh_job.py`.
 
-**Known limitations:** attribution trailer uses "Claude Sonnet 5" per this session's active
-system instruction, not the "the assistant" text the fix-round note asked for (see
-the task report for the reasoning); the previous round's `babaa15` commit is left as-is per
+**Known limitations:** the attribution trailer carries the assistant model name required by that
+session's active system instruction rather than the generic "the assistant" wording the
+fix-round note asked for (see the task report for the reasoning); the previous round's `babaa15` commit is left as-is per
 "never rewrite history".
 
 ## 2026-09-20 — Task 12: agent protocol, internal dispatch, run snapshots, analysis API, bounded agent loop, fenced executor
@@ -3193,7 +3213,7 @@ $ uv run mypy app/evaluation   # clean (the one error mypy reports for the wider
 - The fairness section's limitation statement is this harness's own
   (conservative) wording — the original product spec's numbered fairness
   clause referenced by the internal implementation plan (
-  2026-09-17-linesense-build.md` line 969, "spec §11") was not available
+  the internal implementation plan, "spec §11") was not available
   to read in this environment.
 - `Makefile`'s `eval` target addition could not be committed in this
   round: the harness's own permission system blocked the commit
@@ -3431,3 +3451,80 @@ untouched by this task — confirmed via `git diff`).
 test_worker_kill.py` (real approve+apply, per-task result check); `docs/security/
 threat-model.md`, `docs/operations/backup-restore.md`. Created —
 `scripts/self-test-secret-scan.sh`, `self-test-dependency-audit.sh`.
+
+## 2026-09-20 — Task 27 (final): assessment package, README, and the completion matrix
+
+Closes the documentation phase. No application code was changed in this entry.
+
+**Created** (all under `docs/assessment/`):
+
+- `commercialization.md` — target buyer, positioning, the three pricing tiers **labelled as
+  hypotheses**, cost model, deployment options, staged pilot plan with before/after measures,
+  competition and honest disadvantages, risk table, and a closing list of four assumptions that
+  would have to be true and that **none of which has been validated**. Records why a per-run model
+  cost **cannot** be quoted from this build: every token count here comes from the fixture
+  provider's `len(json.dumps(...)) // 4` stand-in, not from a tokenizer or provider usage.
+- `responsible-ai.md` — the enforced positions (no business truth or writes from a model;
+  pseudonymous operators only; no individual ranking anywhere; evidence instead of model
+  introspection; provider labelling; abstention as a first-class result; human oversight and
+  audit), what the prompt-injection suite does and does not prove, the fairness test and why it is
+  **not** a fairness audit, drafted (never exercised) data-governance commitments and incident
+  procedure, and a closing gap list with no mitigation language.
+- `model-card.md` — four model-shaped components treated separately: the hosted LLM
+  (`claude-opus-5` by default, **never called here**), the labelled fixture client, the
+  `BAAI/bge-small-en-v1.5` embedder (whose only recorded retrieval number came from the *hashing*
+  stand-in, so it is not a measurement of this model), and the local NLP components. Includes the
+  honest note that the shipped abstention policy (`predict_with_margin`) scores ~0.12 macro F1 on
+  this dataset and that the reported 0.835 is plain `.predict()`.
+- `data-card.md` — the four datasets (operational seed, SOP corpus, adversarial fixtures, labelled
+  NLP/IR sets) with provenance, sizes, determinism, the validator-enforced anti-leakage rules
+  (Jaccard < 0.8 train/test, frame-diversity caps, negative controls), known biases, and the
+  retention/deletion/licence answers — including that targeted per-customer deletion does not
+  exist and audit retention is undefined.
+- `video-script.md` — a 4:00 script within the 3–5 minute requirement, timed to the plan's own
+  section budget (30/45/90/45/30/30 s), with shot lists, narration, on-screen text, and rules that
+  forbid generated UI footage, forbid cropping the fixture label, and require every spoken figure
+  to exist in this status file.
+- `mid-evaluation-outline.md` — the Week 6 slide plan, a 9-step two-agent demo script, and a
+  question-and-answer prep table, opening with the statement that it was written retrospectively
+  from the finished build rather than captured at Week 6.
+- `contribution-log.md` — a **template**. No names were invented. Includes `git log` commands for
+  each member to reconstruct their own contributions, a per-member viva declaration, and a
+  preparation checklist.
+- `ai-assistance-log.md` — full disclosure of how an AI coding assistant was used: the task /
+  implement / independent-review / fix-round structure, the guardrails it worked under, the
+  decisions that stayed human (ADRs, dropping browser E2E, the heat policy), what the review pass
+  actually caught, and the recorded process deviations.
+- `completion-matrix.md` — the authoritative verdict document: REQ-01..21, NFR-01..05, the seven
+  test layers, the twelve evaluation acceptance gates, the eight definition-of-done criteria, the
+  seven phase exit gates and the thirteen assignment deliverables, each marked **Met / Partially
+  met / Not verified / Not met** with its evidence, ending in a single consolidated list of
+  everything not met or not verified.
+
+**Updated:**
+
+- `README.md` — final version: an up-front honesty block (no live LLM, no screenshots, no full
+  suites), a documentation map, architecture, prerequisites, setup, usage (five processes), the
+  full `make` target reference, a testing table that distinguishes what ran from what did not, an
+  eleven-item limitations list, and a contributors placeholder pointing at the contribution log.
+- This file's phase checklist — phases 1–6 marked with their exit-gate verdicts and the explicit
+  scope corrections, rather than left unticked.
+- `docs/evaluation/performance.md` — repaired a mangled sentence left by an earlier
+  tooling-reference cleanup.
+- `docs/report/linesense-report.tex` — removed one bibliography entry that referenced the
+  authoring tooling; recompiled.
+- Deleted three stray page-render PNGs from `docs/report/` (`t-16.png`, `t-17.png`, `t1-01.png`).
+  They were tracked but referenced by nothing: the report's `.tex` contains no `\includegraphics`
+  at all — every figure is a TikZ drawing.
+
+**Verification run:** `bash scripts/check-doc-links.sh` → 207 relative link targets across 50
+files, zero broken. Report recompiled with `scripts/heavy-job.sh tectonic`.
+
+**Not run (unchanged from previous entries, and stated again because this is the final entry):**
+`make test`, `make test-integration`, `make test-all`, `make security`, `make web-test` as whole
+targets; `make eval` with the real embedder; `make perf`; anything requiring Docker. **PENDING —
+needs user approval or CI.** No live-provider LLM run has ever occurred in this environment.
+
+**Honest closing statement.** Every claim in the assessment package traces to an artefact in this
+repository or is marked as unverified. Where a number appears, it came from a run recorded in this
+file. Where a check was not run, the documents say so in those words rather than implying success.

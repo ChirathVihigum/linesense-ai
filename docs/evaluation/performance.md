@@ -2,8 +2,9 @@
 
 ## Status: PENDING (needs user approval or CI)
 
-This machine's heat/workload policy (internal review notes (not published)
-implementer-rules.md`) explicitly overrides this task's brief for this one item: **do not run
+This machine's heat/workload policy (recorded in this project's development instructions and its
+internal implementer rules, which are not published in this repository) explicitly overrides this
+task's brief for this one item: **do not run
 `make perf` or any load test locally.** Sustained concurrent load against a real server for 60
 seconds is exactly the class of job that policy exists to prevent on this laptop. The script,
 Makefile target and wiring are complete and were smoke-checked (imports, argument parsing, `ruff`,
