@@ -1,4 +1,4 @@
-# CLAUDE.md
+# Development guide
 
 LineSense AI: a FastAPI + PostgreSQL/pgvector + React decision-support app
 for apparel factory operations (IT 3041 group assignment), built as a
@@ -76,6 +76,5 @@ Protect this MacBook from unnecessary heat and sustained heavy workloads.
 - Do not invent a universal safe temperature or claim the Mac is cool without evidence. If thermal readings are unavailable, say so.
 - Never disable macOS thermal protections or change fan controls.
 - If a required check is too heavy to run safely, report it as pending and suggest running it in CI. Do not claim it passed.
-- Include this policy in every subagent's task.
 
 Keep status updates short: what is running, what was stopped, and what still needs checking.

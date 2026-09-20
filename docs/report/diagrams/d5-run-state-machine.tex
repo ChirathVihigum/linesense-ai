@@ -1,0 +1,84 @@
+% Orchestration state machine: the lifecycle of one analysis_runs row.
+% The happy path is a vertical column at x = 0; the fan-out uses two dedicated
+% vertical corridors (x = 2.2 and x = 2.8); cancellation and the deadline sweep
+% use the left half.  Every connector is orthogonal and every edge label sits
+% on a segment at least 2.2 cm long, so no label can reach a node.
+\begin{tikzpicture}[font=\scriptsize]
+
+  % ---------- main column -------------------------------------------------
+  \node[dot] (start) at (0, 6.4) {};
+  \node[state, text width=2.4cm] (qu)  at (0, 5.0) {\texttt{QUEUED}};
+  \node[state, text width=2.6cm] (run) at (0, 2.2) {\texttt{RUNNING}};
+  \node[state, draw=lsamber, fill=lsamberd, text width=2.6cm, minimum height=1.0cm]
+       (dec) at (0,-0.8) {\textbf{finalize}\\ one transaction};
+
+  % ---------- terminal states (right column) ------------------------------
+  \node[terminal, text width=2.6cm] (aw)   at (6.6, 3.2) {\texttt{AWAITING\_REVIEW}};
+  \node[terminal, text width=2.6cm] (co)   at (6.6, 1.2) {\texttt{COMPLETED}};
+  \node[badstate, text width=2.6cm] (deg)  at (6.6,-2.4) {\texttt{DEGRADED}};
+  \node[badstate, text width=2.6cm] (fail) at (6.6,-4.4) {\texttt{FAILED}};
+
+  % ---------- left column -------------------------------------------------
+  \node[badstate, text width=2.6cm] (canc) at (-6.4, 3.6) {\texttt{CANCELLED}};
+  \node[badstate, text width=2.8cm, minimum height=1.2cm] (dl) at (-6.4, 0.0)
+      {past \texttt{deadline\_at} (120\,s)\\ \normalfont\scriptsize cancel open tasks,
+       \texttt{error\_code = DEADLINE\_EXCEEDED}};
+
+  % ---------- happy path --------------------------------------------------
+  \draw[trans] (start) -- node[lbl, midway, text width=2.6cm, left=1pt]
+      {\texttt{POST /orders/\{id\}/analyses}: run + immutable snapshot, one transaction}
+      (qu.north);
+  \draw[trans] (qu.south) -- node[lbl, midway, text width=3.4cm]
+      {\texttt{run.started} -- RM, IE and quality round 0 dispatched in the
+       \emph{same} advance step} (run.north);
+  \draw[trans] (run.south) -- node[lbl, midway, text width=2.2cm]
+      {every task terminal: the planning chain, the RM round-1 validation and
+       quality} (dec.north);
+
+  % ---------- fan-out -----------------------------------------------------
+  \draw[trans] (dec.east) -- (2.2,-0.8) -- (2.2,3.2) --
+      node[lbl, above, midway, text width=2.4cm] {a recommendation was created}
+      (aw.west);
+  \draw[trans] (dec.east) -- (2.8,-0.8) -- (2.8,1.2) --
+      node[lbl, above, midway, text width=2.4cm]
+      {no proposal; every result \texttt{SUCCEEDED}} (co.west);
+  \draw[badtrans] (dec.east) -- (2.8,-0.8) -- (2.8,-2.4) --
+      node[lbl, above, midway, text width=2.4cm]
+      {no proposal; any result \texttt{DEGRADED} or \texttt{FAILED}} (deg.west);
+  \draw[badtrans] (dec.east) -- (2.2,-0.8) -- (2.2,-4.4) --
+      node[lbl, above, midway, text width=2.4cm]
+      {RM round 0 \emph{and} the final planning task both \texttt{FAILED}}
+      (fail.west);
+
+  % ---------- cancellation ------------------------------------------------
+  \draw[badtrans] (qu.west) -- node[lbl, above, midway, text width=2.8cm]
+      {\texttt{POST /runs/\{id\}/cancel}} (-6.4,5.0) -- (canc.north);
+  \draw[badtrans] (run.west) -- node[lbl, above, midway, text width=2.4cm]
+      {pending tasks cancelled} (-4.0,2.2) -- (-4.0,3.6) -- (canc.east);
+
+  % ---------- deadline sweep ----------------------------------------------
+  \coordinate (rSw) at ($(run.south)!0.96!(run.south west)$);
+  \draw[badtrans] (rSw) -- (rSw |- dl.east) --
+      node[lbl, above, midway, text width=3.0cm]
+      {the reconciliation sweep (every 15\,s) finds a run past its deadline}
+      (dl.east);
+  \draw[badtrans] (dl.south) -- (-6.4,-3.4) --
+      node[lbl, above, midway, text width=3.4cm]
+      {finalized as \texttt{DEGRADED} when a planning result succeeded,
+       otherwise \texttt{FAILED}} (0,-3.4) -- (dec.south);
+
+  \node[note, anchor=north west, text width=15.4cm] at (-8.2,-5.6)
+    {Every \texttt{orchestrator.advance} delivery locks the run row, does exactly
+     one thing (start, dispatch or finalize), commits, and only then makes a
+     network call -- the run lock is never held across the wire.
+     \texttt{AWAITING\_REVIEW} is the only state that hands work to a human; the
+     approval workflow takes over from there.
+     \texttt{POST /api/v1/runs/\{id\}/retry} is accepted on any terminal state and
+     starts a \emph{new} run from a fresh snapshot -- it never resurrects this row.
+     Cancelling also supersedes the run's open recommendations with
+     \texttt{superseded\_reason = "RUN\_CANCELLED"}. A worker that dies mid-task is
+     recovered either by its job lease expiring or by the same reconciliation
+     sweep, which re-enqueues \texttt{orchestrator.advance} for any run quiet for
+     more than 30\,s with no runnable job of its own.};
+
+\end{tikzpicture}

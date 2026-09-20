@@ -1,0 +1,93 @@
+% C4 level 2 -- containers.
+% Explicit grid.  Columns: x = -5.6 | 0 | 5.6.  Rows: y = 5.4 | 2.6 | -3.0 | -6.4.
+% The band around y = -1.1 and the band at y = -5.0 are deliberately empty:
+% they are the horizontal routing corridors used by the worker connectors.
+\begin{tikzpicture}
+
+  % ---------- outside the system boundary ------------------------------
+  \node[person,   text width=3.0cm] (browser) at (-5.6, 5.4)
+    {\textbf{Browser}\\ planner, supervisor, storekeeper,\\ IE, quality, viewer, admin};
+  \node[external, text width=3.4cm] (idp)     at ( 6.2, 5.4)
+    {\textbf{OIDC identity provider}\\ a local development provider here;\\
+     a Keycloak realm for Compose};
+  \node[external, text width=3.4cm] (llm)     at ( 6.2,-6.9)
+    {\textbf{LLM provider}\\ Anthropic SDK 1.6.0\\ (\texttt{fixture} double in this build)};
+
+  % ---------- containers ------------------------------------------------
+  \node[container, text width=3.0cm, minimum height=1.7cm] (web) at (-5.6, 2.6)
+    {\textbf{Web application}\\ React 19.3 $\cdot$ Vite 8.3 $\cdot$\\ TypeScript 6\\ (static assets)};
+  \node[container, text width=4.4cm, minimum height=2.0cm] (api) at ( 0.0, 2.6)
+    {\textbf{API application}\\ FastAPI 0.141 $\cdot$ Python 3.12\\[2pt]
+     \normalfont\scriptsize public \texttt{/api} + \texttt{/auth};\\
+     private \texttt{/internal/v1} (service token)};
+  \node[container, text width=3.4cm, minimum height=2.0cm] (worker) at ( 6.2,-3.0)
+    {\textbf{Worker process}\\ \texttt{python -m app.jobs}\\[2pt]
+     \normalfont\scriptsize orchestrator $\cdot$ agent executor $\cdot$\\
+     document pipeline $\cdot$ maintenance};
+  \node[store, text width=4.0cm, minimum height=1.7cm] (db) at ( 0.0,-3.0)
+    {\textbf{PostgreSQL 16 + pgvector 0.8.6}\\ domain data, job queue, runs,\\
+     audit events, chunks and embeddings};
+  \node[store, text width=3.0cm, minimum height=1.5cm] (docs) at (-5.6,-3.0)
+    {\textbf{Private document store}\\ \texttt{quarantine/} then \texttt{store/};\\
+     keys never derived from filenames};
+
+  % system boundary
+  \begin{scope}[on background layer]
+    \node[boundary, fit=(web)(api)(worker)(db)(docs)] (bnd) {};
+  \end{scope}
+  \node[boundlbl, anchor=north west, text width=8.0cm]
+    at ([shift={(0pt,-3pt)}]bnd.south west)
+    {LineSense AI -- one deployable backend image with two entrypoints
+     (API and worker) plus static web assets};
+
+  % helper anchors so two connectors never share one edge point
+  \coordinate (apiNl) at ($(api.north)!0.60!(api.north west)$);
+  \coordinate (apiSl) at ($(api.south)!0.55!(api.south west)$);
+  \coordinate (apiSr) at ($(api.south)!0.55!(api.south east)$);
+  \coordinate (wkSl)  at ($(worker.south)!0.50!(worker.south west)$);
+
+  % ---------- connectors -------------------------------------------------
+  % browser -> static assets (pure vertical)
+  \draw[flow] (browser.south) -- node[lblw, midway]
+      {HTTPS\\ static assets} (browser.south |- web.north);
+
+  % browser -> API : horizontal along y = 5.4, then vertical down into the API
+  \draw[flow] (browser.east) -| node[lblw, pos=0.28]
+      {\texttt{/api}, \texttt{/auth}\\ cookie + \texttt{X-CSRF-Token}} (apiNl);
+
+  % API <-> identity provider : vertical at x = 3.3, then horizontal
+  \draw[biflow] (api.east) -- ++(1.0,0)
+      |- node[lblw, pos=0.78] {discovery, JWKS,\\ code exchange} (idp.west);
+
+  % API -> database (pure vertical, left half of the API box)
+  \draw[flow] (apiSl) -- node[lblw, pos=0.34]
+      {SQLAlchemy 2.0.54 asyncio;\\ \texttt{linesense\_app} role, DML only}
+      (apiSl |- db.north);
+
+  % worker -> internal dispatch : up, along the empty corridor y = -1.1, then up
+  \draw[flow] (worker.north) -- ++(0,0.9)
+      -| node[lblx, pos=0.30]
+        {\texttt{POST /internal/v1/agent-tasks}\\ bearer service token, run-scope checked}
+      (apiSr);
+
+  % worker <-> database
+  \draw[biflow] (worker.west) -- node[lbl, midway, text width=2.2cm]
+      {claim jobs\\ (\texttt{SKIP LOCKED}),\\ commit results} (db.east);
+
+  % worker -> LLM provider (pure vertical)
+  \draw[flow] (worker.south) -- node[lblw, midway]
+      {redacted messages and tools;\\ per-run call and token budget}
+      (worker.south |- llm.north);
+
+  % API -> document store : left corridor at x = -2.9
+  \draw[flow] (api.west) -- (-2.9, 2.6)
+      -- node[lblw, pos=0.80] {upload, download\\ (scope re-checked)} (-2.9,-3.0)
+      -- (docs.east);
+
+  % worker -> document store : corridor below the database row, y = -5.0
+  \coordinate (wkDown) at (5.3,-5.5);
+  \draw[flow] (wkSl) -- (wkDown)
+      -- node[lblx, midway] {quarantine, extract, chunk, embed, activate}
+         (-5.6,-5.5) -- (docs.south);
+
+\end{tikzpicture}

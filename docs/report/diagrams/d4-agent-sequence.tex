@@ -1,0 +1,106 @@
+% Four-agent analysis run -- UML-style sequence diagram.
+% Lifelines sit on fixed x coordinates; every message is a pure horizontal
+% segment at a fixed y, and every label is a white-filled node at `midway`,
+% so a label can never be struck through by the line it belongs to.
+%
+%   x:  0.0   2.8    6.0     9.0   11.4   13.8   16.4    19.4
+%       UI    API    ORCH    RM    IE     QA     PLAN    DB
+\begin{tikzpicture}[font=\scriptsize]
+
+  % ---------- participants ------------------------------------------------
+  \node[person,    text width=2.0cm, minimum height=0.95cm] (ui)   at ( 0.0,0) {\textbf{Planner}\\(browser)};
+  \node[container, text width=1.8cm, minimum height=0.95cm] (api)  at ( 2.8,0) {\textbf{API}\\FastAPI};
+  \node[container, text width=3.0cm, minimum height=0.95cm] (orch) at ( 6.0,0) {\textbf{Orchestrator}\\\texttt{orchestrator.advance}};
+  \node[component, text width=1.6cm, minimum height=0.95cm] (rm)   at ( 9.0,0) {\textbf{RM}\\agent};
+  \node[component, text width=1.6cm, minimum height=0.95cm] (ie)   at (11.4,0) {\textbf{IE}\\agent};
+  \node[component, text width=1.8cm, minimum height=0.95cm] (qa)   at (13.8,0) {\textbf{Quality}\\agent};
+  \node[component, text width=1.8cm, minimum height=0.95cm] (pl)   at (16.4,0) {\textbf{Planning}\\agent};
+  \node[store,     text width=2.2cm, minimum height=0.95cm] (db)   at (19.4,0) {\textbf{PostgreSQL}};
+
+  % ---------- lifelines ---------------------------------------------------
+  \foreach \x in {0.0,2.8,6.0,9.0,11.4,13.8,16.4,19.4}
+    \draw[lifeline] (\x,-0.55) -- (\x,-18.5);
+
+  % ---------- messages ----------------------------------------------------
+  \draw[flow] (0.0,-1.15) -- node[lbl, above, midway, text width=5.2cm]
+      {\texttt{POST /api/v1/orders/\{id\}/analyses}\\
+       \texttt{Idempotency-Key}, \texttt{expected\_order\_version}} (2.8,-1.15);
+
+  \draw[flow] (2.8,-2.05) -- node[lbl, above, midway, text width=8.6cm]
+      {one transaction: \texttt{analysis\_runs} + immutable \texttt{run\_snapshots} +
+       \texttt{run.created} event + \texttt{orchestrator.advance} job} (19.4,-2.05);
+
+  \draw[reply] (2.8,-2.85) -- node[lbl, above, midway, text width=3.6cm]
+      {\texttt{202 \{run\_id, "QUEUED"\}}} (0.0,-2.85);
+
+  \draw[flow] (19.4,-3.75) -- node[lbl, above, midway, text width=6.4cm]
+      {worker claims the job: \texttt{UPDATE ... FOR UPDATE SKIP LOCKED},
+       lease token; the run row is locked only while its state is read} (6.0,-3.75);
+
+  \draw[flow] (6.0,-4.65) -- node[lbl, above, midway, text width=3.4cm]
+      {\texttt{assess\_material\_readiness} (round 0)} (9.0,-4.65);
+  \draw[flow] (6.0,-5.25) -- node[lbl, above, midway, text width=3.4cm]
+      {\texttt{assess\_line\_capability} (round 0)} (11.4,-5.25);
+  \draw[flow] (6.0,-5.85) -- node[lbl, above, midway, text width=3.4cm]
+      {\texttt{assess\_quality\_status} (round 0)} (13.8,-5.85);
+
+  \node[note, anchor=north west, text width=9.4cm, draw=lsgrey!50, rounded corners=2pt]
+    at (5.6,-6.15)
+    {One advance step dispatches all three: three \texttt{TaskEnvelope}s
+     (\texttt{schema\_version} \texttt{"1.0"}) over
+     \texttt{POST /internal/v1/agent-tasks} with the service token. The run lock is
+     committed \emph{before} any network call, and none of the three depends on
+     another.};
+
+  \draw[flow] (9.0,-7.95) -- node[lbl, above, midway, text width=8.0cm]
+      {deterministic \texttt{assess()} over the snapshot, then a bounded loop:
+       $\le 4$ scoped read tools, each model call reserved against the run budget
+       first} (19.4,-7.95);
+
+  \draw[reply] (9.0,-8.85) -- node[lbl, above, midway, text width=4.4cm]
+      {\texttt{AgentResult}: \texttt{MATERIAL\_SHORTAGE} 160\,m,
+       \texttt{coverable\_units} 873} (6.0,-8.85);
+  \draw[reply] (11.4,-9.65) -- node[lbl, above, midway, text width=4.6cm]
+      {\texttt{AgentResult}: \texttt{BOTTLENECK\_OPERATION} \texttt{OP-04}, 60\,s,
+       $\approx$60 units/h} (6.0,-9.65);
+  \draw[reply] (13.8,-10.45) -- node[lbl, above, midway, text width=5.0cm]
+      {\texttt{AgentResult}: \texttt{ACTIVE\_HOLD} / \texttt{NOT\_INSPECTED},
+       \texttt{shipment\_eligible} = false} (6.0,-10.45);
+
+  \draw[flow] (6.0,-11.35) -- node[lbl, above, midway, text width=5.6cm]
+      {\texttt{propose\_allocation} (round 0);
+       \texttt{input\_refs}: snapshot + RM result + IE result} (16.4,-11.35);
+  \draw[reply] (16.4,-12.25) -- node[lbl, above, midway, text width=5.6cm]
+      {ranked \texttt{ALLOCATION} options: \texttt{FULL\_EARLIEST},
+       \texttt{MATERIAL\_LIMITED}, \texttt{SINGLE\_LINE}} (6.0,-12.25);
+
+  % orchestrator self-message (rectangular loop, orthogonal)
+  \draw[flow] (6.0,-12.95) -- (7.4,-12.95) -- (7.4,-13.45) -- (6.0,-13.45);
+  \node[lbl, anchor=west, text width=7.4cm] at (7.7,-13.2)
+    {\texttt{needs\_replan(...)} $\rightarrow$
+     \texttt{MATERIAL\_SHORTAGE\_CONFLICT: selected plan allocates 1000 units but
+     materials cover 873} -- at most one replan per run};
+
+  \draw[flow] (6.0,-14.15) -- node[lbl, above, midway, text width=5.4cm]
+      {\texttt{revise\_allocation} (round 1);
+       \texttt{parent\_task\_id} = planning round 0} (16.4,-14.15);
+  \draw[reply] (16.4,-15.0) -- node[lbl, above, midway, text width=5.4cm]
+      {\texttt{MATERIAL\_LIMITED} ranked first +
+       \texttt{REVISED\_FOR\_MATERIAL} warning} (6.0,-15.0);
+
+  \draw[flow] (6.0,-15.8) -- node[lbl, above, midway, text width=3.4cm]
+      {\texttt{validate\_plan\_materials} (round 1)} (9.0,-15.8);
+  \draw[reply] (9.0,-16.5) -- node[lbl, above, midway, text width=4.2cm]
+      {\texttt{PLAN\_MATERIAL\_COVERED} + \texttt{RESERVATION} proposal} (6.0,-16.5);
+
+  \draw[flow] (6.0,-17.4) -- node[lbl, above, midway, text width=9.6cm]
+      {finalize, one transaction: \texttt{recommendations} (\texttt{proposal\_hash},
+       \texttt{input\_versions}, \texttt{expires\_at} = now + 24\,h) +
+       \texttt{run.report} + \texttt{run.finalized} + notify supervisors +
+       \texttt{analysis.completed} audit} (19.4,-17.4);
+
+  \draw[flow] (0.0,-18.3) -- node[lbl, above, midway, text width=5.4cm]
+      {\texttt{GET /api/v1/runs/\{id\}} and \texttt{/events},
+       polled every 2\,s while the run is active} (2.8,-18.3);
+
+\end{tikzpicture}

@@ -1,0 +1,101 @@
+% Component view of the backend (C4 level 3, collapsed to its dependency
+% layers).  Layers are stacked wide boxes on a fixed vertical grid; every
+% connector between adjacent layers is a pure vertical segment, and the two
+% connectors that skip a layer use the left (x = -7.1) and right (x = 7.1)
+% routing corridors, outside every box.
+\begin{tikzpicture}[every node/.style={font=\scriptsize}]
+
+  \def\W{11.6cm}
+
+  \node[component, text width=\W, minimum height=1.05cm] (http)  at (0, 6.4)
+    {\textbf{HTTP layer} -- \texttt{app/api/*.py} routers and \texttt{app/api/schemas}\\
+     \normalfont\scriptsize orders $\cdot$ imports $\cdot$ analyses $\cdot$ runs $\cdot$ recommendations $\cdot$
+     inventory $\cdot$ capacity $\cdot$ ie $\cdot$ quality $\cdot$ documents $\cdot$ search $\cdot$ notes $\cdot$
+     summaries $\cdot$ dashboard $\cdot$ admin $\cdot$ audit $\cdot$ notifications $\cdot$ \texttt{internal.py}};
+
+  \node[component, text width=\W, minimum height=1.0cm] (cross) at (0, 4.2)
+    {\textbf{Request cross-cutting} -- \texttt{app/auth} (policy, scope, sessions, oidc, csrf) $\cdot$
+     \texttt{app/idempotency} $\cdot$ \texttt{app/audit} $\cdot$ \texttt{app/api/}\{\texttt{middleware},
+     \texttt{ratelimit}, \texttt{errors}, \texttt{deps}\}};
+
+  \node[component, text width=\W, minimum height=1.0cm] (svc)   at (0, 2.0)
+    {\textbf{Domain command \& query services} --
+     \texttt{app/domain/}\{\texttt{orders}, \texttt{planning}, \texttt{capacity},
+     \texttt{inventory}, \texttt{ie}, \texttt{quality}, \texttt{approvals}\}\\
+     \normalfont\scriptsize the only components that write business rows; deterministic
+     lock order: order row $\rightarrow$ capacity slots $\rightarrow$ material balances};
+
+  \node[component, text width=\W, minimum height=0.95cm] (calc)  at (0,-0.2)
+    {\textbf{Pure calculations} -- \texttt{app/domain/*/calc.py},
+     \texttt{rounding.py}, \texttt{orders/lifecycle.py}, \texttt{vocab.py}\\
+     \normalfont\scriptsize \texttt{Decimal} in, \texttt{Decimal} out; no database access, no I/O, no model};
+
+  \node[component, text width=\W, minimum height=1.0cm] (orch)  at (0,-2.6)
+    {\textbf{Orchestration} -- \texttt{app/orchestration/}\{\texttt{protocol},
+     \texttt{snapshot}, \texttt{dispatch}, \texttt{orchestrator}, \texttt{executor},
+     \texttt{validation}, \texttt{synthesis}, \texttt{recommendations}, \texttt{events}\}\\
+     \normalfont\scriptsize the only component that creates agent tasks};
+
+  \node[component, text width=\W, minimum height=1.0cm] (agents) at (0,-5.0)
+    {\textbf{Agents} -- \texttt{app/agents/base.py} (bounded observe--choose--evaluate loop)
+     + \texttt{rm} $\cdot$ \texttt{ie} $\cdot$ \texttt{quality} $\cdot$ \texttt{planning} + \texttt{prompts/}\\
+     \normalfont\scriptsize $\le 4$ tool calls per invocation, $\le 1$ repair turn,
+     $\le 12$ model calls per run, 120\,s deadline};
+
+  \node[component, text width=3.4cm, minimum height=1.35cm] (llm)  at (-4.0,-7.6)
+    {\textbf{\texttt{app/llm}}\\ \normalfont\scriptsize \texttt{LLMClient} protocol,
+     Anthropic adapter, \texttt{fixture} double, run budget, redaction};
+  \node[component, text width=3.4cm, minimum height=1.35cm] (retr) at ( 0.0,-7.6)
+    {\textbf{\texttt{app/retrieval}}\\ \normalfont\scriptsize storage, extract, chunking,
+     embedder, pipeline, hybrid search, citations, \texttt{search\_documents} tool};
+  \node[component, text width=3.4cm, minimum height=1.35cm] (nlp)  at ( 4.0,-7.6)
+    {\textbf{\texttt{app/nlp}}\\ \normalfont\scriptsize entity ruler over master data,
+     TF-IDF note classifier, grounded summaries};
+
+  \node[component, text width=\W, minimum height=1.0cm] (infra) at (0,-10.2)
+    {\textbf{Infrastructure} -- \texttt{app/jobs} (\texttt{queue}, \texttt{worker},
+     \texttt{handlers}, \texttt{reconcile}) $\cdot$ \texttt{app/db} (50 tables, session factory) $\cdot$
+     \texttt{app/settings} $\cdot$ \texttt{app/logging}};
+
+  \node[external, text width=10.0cm, minimum height=0.8cm] (dev) at (0,-12.6)
+    {\textbf{Development / CI only, never part of the runtime image} --
+     \texttt{app/seed} $\cdot$ \texttt{app/evaluation} $\cdot$ \texttt{devtools/dev\_oidc}};
+
+  % ---- adjacent-layer connectors (pure vertical, anchored on the boxes) --
+  \coordinate (cA) at ($(http.south west)!0.26!(http.south east)$);
+  \coordinate (cB) at ($(cross.south west)!0.76!(cross.south east)$);
+  \coordinate (cC) at ($(svc.south west)!0.50!(svc.south east)$);
+  \coordinate (cD) at ($(calc.south west)!0.26!(calc.south east)$);
+  \coordinate (cE) at ($(orch.south west)!0.50!(orch.south east)$);
+
+  \draw[flow] (cA) -- node[lblw, midway]
+      {authenticate, resolve scope,\\ claim the idempotency key} (cA |- cross.north);
+  \draw[flow] (cB) -- node[lblw, midway]
+      {audit every privileged\\ write and every denial} (cB |- svc.north);
+  \draw[flow] (cC) -- node[lblw, midway]
+      {apply the formulas} (cC |- calc.north);
+  \draw[flow] (cD) -- node[lblw, midway]
+      {build the run snapshot;\\ validate agent results} (cD |- orch.north);
+  \draw[flow] (cE) -- node[lblw, midway]
+      {dispatch, execute,\\ validate, synthesise} (cE |- agents.north);
+  \draw[flow] (llm.north  |- agents.south) -- node[lblw, midway] {bounded model calls} (llm.north);
+  \draw[flow] (retr.north |- agents.south) -- node[lblw, midway] {\texttt{search\_documents}} (retr.north);
+  \draw[flow] (nlp.north  |- agents.south) -- node[lblw, midway] {grounded summaries} (nlp.north);
+  \draw[flow] (retr.south) -- node[lblw, midway] {scoped SQL, embeddings}
+      (retr.south |- infra.north);
+
+  % ---- layer-skipping connectors, routed outside every box --------------
+  % The HTTP layer enqueues jobs directly (analysis creation, document upload).
+  \draw[flow] (http.east) -- (7.1, 6.4) -- node[lblw, pos=0.52]
+      {\texttt{enqueue()} with a\\ \texttt{dedupe\_key}} (7.1,-10.2) -- (infra.east);
+  % The worker runtime invokes the registered orchestration handlers.
+  \draw[flow] (infra.west) -- (-7.1,-10.2) -- node[lblw, pos=0.52]
+      {registered handlers;\\ completion fenced\\ by the lease token} (-7.1,-2.6) -- (orch.west);
+
+  \node[note, anchor=north west, text width=9.0cm] at (-7.1,-11.1)
+    {Dependency rule enforced by review and by \texttt{mypy}'s module graph: a lower
+     layer never imports a higher one. Nothing below the domain layer may write a
+     business row, and \texttt{app/domain/*/calc.py} imports nothing from the rest of
+     the application at all.};
+
+\end{tikzpicture}

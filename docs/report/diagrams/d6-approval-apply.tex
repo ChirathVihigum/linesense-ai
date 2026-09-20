@@ -1,0 +1,101 @@
+% Approval and transactional application of a recommendation.
+% One vertical flow at x = -2.5 (every connector in it is a pure vertical
+% segment); the two failure exits leave horizontally to the right at x = 6.0,
+% each at the y of the step that raises it, so no connector crosses a node.
+\begin{tikzpicture}[font=\scriptsize]
+
+  \node[state, text width=6.2cm, minimum height=1.25cm] (prop) at (-2.5, 7.2)
+    {\texttt{recommendations} row, status \texttt{PROPOSED}\\[2pt]
+     \normalfont\scriptsize \texttt{proposal} $\cdot$ \texttt{proposal\_hash} (sha256 of the
+     canonical JSON) $\cdot$ \texttt{input\_versions} (order, every slot, every balance) $\cdot$
+     \texttt{expires\_at} = created + 24\,h};
+
+  \node[state, draw=lsamber, fill=lsamberd, text width=6.2cm, minimum height=1.6cm]
+    (gd) at (-2.5, 4.8)
+    {\textbf{decide} -- \texttt{POST /recommendations/\{id\}/decision}\\[2pt]
+     \normalfont\scriptsize \texttt{recommendation:decide}, supervisor only $\cdot$
+     no role in the factory $\rightarrow$ \texttt{404} $\cdot$ role without the permission
+     $\rightarrow$ \texttt{403} $\cdot$ \textbf{the proposer} $\rightarrow$ \texttt{403
+     SELF\_APPROVAL\_DENIED} (audited \texttt{DENIED}) $\cdot$ changed hash
+     $\rightarrow$ \texttt{409} $\cdot$ past expiry $\rightarrow$ \texttt{EXPIRED} + \texttt{409}
+     $\cdot$ rejection needs a reason};
+
+  \node[terminal, text width=2.4cm] (appr) at (-4.6, 2.4) {\texttt{APPROVED}};
+  \node[badstate, text width=2.4cm] (rej)  at (-0.4, 2.4) {\texttt{REJECTED}};
+
+  \node[state, draw=lsamber, fill=lsamberd, text width=6.2cm, minimum height=1.4cm]
+    (ga) at (-2.5, 0.2)
+    {\textbf{apply} -- \texttt{POST /recommendations/\{id\}/apply}\\[2pt]
+     \normalfont\scriptsize \texttt{recommendation:apply}, supervisor, not the proposer $\cdot$
+     \texttt{Idempotency-Key} required (a repeat replays the stored body and creates
+     nothing) $\cdot$ a different key against an already \texttt{APPLIED} row
+     $\rightarrow$ \texttt{409}};
+
+  \node[component, text width=6.2cm, minimum height=1.35cm] (s1) at (-2.5,-2.1)
+    {\textbf{1 -- lock, in this order}\\ order row $\rightarrow$ recommendation row
+     $\rightarrow$ every capacity slot (the proposal's \emph{union} the order's past
+     allocations) $\rightarrow$ every material balance (proposal $\cup$ BOM $\cup$ past
+     reservations), each set ascending by id};
+  \node[component, text width=6.2cm, minimum height=1.15cm] (s2) at (-2.5,-4.3)
+    {\textbf{2 -- re-check \texttt{input\_versions} under the locks}\\
+     fails closed: a row that moved, a row that vanished, \emph{and} a row the
+     proposal writes to that the recorded versions do not pin};
+  \node[component, text width=6.2cm, minimum height=1.0cm] (s3) at (-2.5,-6.2)
+    {\textbf{3 -- release} the order's existing \texttt{ACTIVE} allocations and
+     reservations (slot minutes and \texttt{reserved} decremented, versions bumped)};
+  \node[component, text width=6.2cm, minimum height=1.15cm] (s4) at (-2.5,-8.1)
+    {\textbf{4 -- re-validate and apply} each proposed allocation through
+     \texttt{capacity.allocate} and each reservation through
+     \texttt{inventory.reserve\_material}, under the locks held since step~1};
+  \node[component, text width=6.2cm, minimum height=1.25cm] (s5) at (-2.5,-10.2)
+    {\textbf{5 -- commit} order $\rightarrow$ \texttt{PLANNED} with
+     \texttt{material\_state} recomputed and \texttt{version} bumped;
+     recommendation $\rightarrow$ \texttt{APPLIED}; \texttt{recommendation.applied}
+     audit; notifications; a deduped \texttt{maintenance.refresh\_material\_states}
+     job for the \emph{other} orders sharing those materials};
+
+  \begin{scope}[on background layer]
+    \node[boundary, fit=(s1)(s2)(s3)(s4)(s5)] (txn) {};
+  \end{scope}
+  \node[boundlbl, anchor=west, text width=4.8cm]
+    at ([shift={(5pt,0pt)}]txn.north east)
+    {one database transaction -- retried up to 3$\times$ with jittered backoff on
+     SQLSTATE \texttt{40001} / \texttt{40P01} only};
+
+  \node[terminal, text width=6.2cm, minimum height=0.9cm] (done) at (-2.5,-12.7)
+    {\texttt{APPLIED} -- the allocations and reservations now exist; the run's
+     proposal is closed};
+
+  % ---- failure exits (horizontal, at the y of the raising step) ---------
+  \node[badstate, text width=4.8cm, minimum height=1.5cm] (stale) at (6.4,-4.3)
+    {\texttt{409 STALE\_INPUT}\\[2pt]
+     \normalfont\scriptsize recommendation set \texttt{SUPERSEDED}
+     (\texttt{superseded\_reason = "STALE\_INPUT: ..."}) and \textbf{committed},
+     proposer notified, idempotency key released, each changed input listed in
+     \texttt{field\_errors}};
+  \node[badstate, text width=4.8cm, minimum height=1.3cm] (conf) at (6.4,-8.1)
+    {\texttt{409 CONFLICT}\\[2pt]
+     \normalfont\scriptsize one proposed row no longer fits: the \emph{whole}
+     transaction rolls back -- zero partial allocations, zero partial reservations};
+
+  % ---- connectors -------------------------------------------------------
+  \draw[trans] (prop.south) -- node[lbl, midway, text width=3.2cm]
+      {a supervisor opens the approval inbox} (gd.north);
+  \draw[trans] (appr.north |- gd.south) -- node[lbl, midway] {approve} (appr.north);
+  \draw[badtrans] (rej.north |- gd.south) -- node[lbl, midway, text width=2.4cm]
+      {reject, with a reason} (rej.north);
+  \draw[trans] (appr.south) -- node[lbl, midway, text width=3.0cm]
+      {\textbf{approving applies nothing}} (appr.south |- ga.north);
+  \draw[trans] (ga.south) -- (s1.north);
+  \draw[trans] (s1.south) -- (s2.north);
+  \draw[trans] (s2.south) -- node[lbl, midway] {nothing is stale} (s3.north);
+  \draw[trans] (s3.south) -- (s4.north);
+  \draw[trans] (s4.south) -- node[lbl, midway] {every row still fits} (s5.north);
+  \draw[trans] (s5.south) -- (done.north);
+
+  \draw[badtrans] (s2.east) -- node[lbl, midway, text width=1.9cm]
+      {any drift} (stale.west);
+  \draw[badtrans] (s4.east) -- node[lbl, midway, text width=1.9cm]
+      {capacity or stock gone} (conf.west);
+
+\end{tikzpicture}

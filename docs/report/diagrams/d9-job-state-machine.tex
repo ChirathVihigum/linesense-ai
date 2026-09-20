@@ -1,0 +1,59 @@
+% Durable job / lease state machine (app/jobs/queue.py).
+% Three states on one horizontal axis at y = 0 with gaps wide enough for their
+% edge labels; terminal states stacked at x = 7.4; the retry path runs along
+% the empty corridor y = -3.4 and the heartbeat self-transition is a
+% rectangular loop above the LEASED state.
+\begin{tikzpicture}[font=\scriptsize]
+
+  \node[dot] (in) at (-10.2,0) {};
+  \node[state, text width=2.2cm] (ready)  at (-7.2,0) {\texttt{READY}};
+  \node[state, text width=2.2cm] (leased) at (-1.0,0) {\texttt{LEASED}};
+  \node[terminal, text width=2.4cm] (done)   at (7.4, 1.9) {\texttt{DONE}};
+  \node[badstate, text width=2.4cm] (failed) at (7.4,-1.9) {\texttt{FAILED}};
+
+  \draw[trans] (in) -- node[lbl, above, midway, text width=1.4cm]
+      {\texttt{enqueue()}} (ready.west);
+
+  \draw[trans] (ready.east) -- node[lbl, above, midway, text width=3.4cm]
+      {\texttt{claim()}: one \texttt{UPDATE ... WHERE id = (SELECT ... ORDER BY
+       available\_at, created\_at LIMIT 1 FOR UPDATE SKIP LOCKED)}; fresh
+       \texttt{lease\_token}, \texttt{attempt} + 1} (leased.west);
+
+  % retry loop back to READY along the corridor y = -3.4
+  \draw[trans] (leased.south) -- (-1.0,-3.4) --
+      node[lbl, above, midway, text width=5.6cm]
+      {retryable failure with \texttt{attempt < max\_attempts}:
+       \texttt{available\_at = now() + min(2 ** attempt * 2, 60)} seconds plus up to
+       1\,s of jitter} (-7.2,-3.4) -- (ready.south);
+
+  % heartbeat / reclaim self-transition, above LEASED
+  \draw[trans] (-1.9,0.425) -- (-1.9,1.35) -- (-0.1,1.35) -- (-0.1,0.425);
+  \node[lbl, text width=5.6cm] at (-1.4,2.35)
+      {\texttt{heartbeat()} every 10\,s extends \texttt{leased\_until} (the lease
+       lasts 30\,s) and succeeds only while the row is still \texttt{LEASED} under
+       \emph{this} worker's token. An expired lease is reclaimed by another worker
+       with a new token and \texttt{attempt} + 1.};
+
+  \draw[trans] (leased.east) -- (1.5,0) -- (1.5,1.9) --
+      node[lbl, above, midway, text width=3.6cm]
+      {\texttt{complete()}, fenced by \texttt{lease\_token} \emph{and}
+       \texttt{status = 'LEASED'}, in the same transaction as the handler's own
+       writes} (done.west);
+
+  \draw[badtrans] (leased.east) -- (2.1,0) -- (2.1,-1.9) --
+      node[lbl, above, midway, text width=3.6cm]
+      {\texttt{PermanentJobError}, an unregistered job type, or attempts used up;
+       \texttt{on\_exhausted} then runs exactly once} (failed.west);
+
+  \node[note, anchor=north west, text width=18.4cm] at (-10.6,-4.4)
+    {\textbf{Delivery is at least once and is documented as such -- never
+     exactly-once.} A handler can finish work outside the database and then lose
+     its lease before committing. Fencing guarantees that at most one attempt's
+     \emph{database} writes commit; handlers must make any external effect
+     idempotent, and \texttt{enqueue()}'s \texttt{dedupe\_key} guarantees a repeated
+     request creates at most one row. \texttt{CANCELLED} exists in the schema and
+     is set by no code path. A handler that raises \texttt{LeaseLostError} leaves
+     the row to whichever worker now owns it -- the job is never marked failed by
+     the worker that lost it.};
+
+\end{tikzpicture}

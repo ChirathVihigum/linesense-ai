@@ -47,7 +47,7 @@ written / validated only statically" (Compose/Keycloak).
   `linesense_test`.
 - A contributor with Docker/Java can instead use Compose/Keycloak once
   Task 26 has written those artefacts and they are exercised and confirmed
-  in that environment; until then, README/CLAUDE.md must not claim the
+  in that environment; until then, README/docs/development-guide.md must not claim the
   Compose path has been written, let alone run.
 - Production deployment still targets the Compose-based (or equivalent)
   configuration with a real OIDC provider — the dev IdP and project-local
