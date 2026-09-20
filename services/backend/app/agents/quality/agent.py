@@ -42,8 +42,10 @@ from app.orchestration.protocol import (
     RecommendedAction,
 )
 from app.orchestration.snapshot import SnapshotData
+from app.retrieval.agent_tool import make_search_documents_tool
 
 ASSESS_TASK_TYPE = "assess_quality_status"
+DOCUMENT_SEARCH_DEFAULT_QUERY = "quality hold release final inspection policy"
 NOT_INSPECTED_MESSAGE = "Quality pending — no inspection recorded; this is not a pass."
 HOLD_SUGGESTION_NOTE = (
     "Suggestion only — a release requires the quality release command, an explicit "
@@ -299,6 +301,7 @@ class QualityAgent(BaseAgent):
                 input_model=DefectBreakdownInput,
                 handler=_tool_defect_breakdown,
             ),
+            make_search_documents_tool(default_query=DOCUMENT_SEARCH_DEFAULT_QUERY),
         ]
 
 

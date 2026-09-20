@@ -70,8 +70,28 @@ def _parse_acl_roles(raw: str) -> list[str]:
     return roles
 
 
-def _acl_relevant_roles(principal: Principal, document: Document) -> frozenset[str]:
-    """Roles the ACL check is evaluated against for this document's scope."""
+def _acl_relevant_roles(
+    principal: Principal, document: Document, *, factory_id: uuid.UUID | None = None
+) -> frozenset[str]:
+    """Roles the ACL check is evaluated against.
+
+    When the caller is browsing under a specific factory (``factory_id`` —
+    e.g. the URL's factory on ``GET /factories/{f}/documents``), use exactly
+    that factory's roles, regardless of whether the document itself is
+    factory- or org-scoped. This matches ``app.retrieval.search``'s
+    ``RetrievalScope.roles = principal.roles_for(factory_id)`` exactly, so
+    an org-wide, ACL-restricted document's visibility never disagrees
+    between browsing and search: a role held only at another factory never
+    grants access here, just as it never would there.
+
+    Item routes with no factory in the URL (document detail, version
+    detail, download) have no such scope to align to; there, a
+    factory-scoped document is still checked against that factory's roles,
+    and an org-wide document against every factory the caller holds a role
+    in (there is no single "right" factory to pick without one in the URL).
+    """
+    if factory_id is not None:
+        return principal.roles_for(factory_id)
     if document.factory_id is not None:
         return principal.roles_for(document.factory_id)
     everywhere: set[str] = set()
@@ -259,7 +279,10 @@ async def list_documents(
         for document in documents
         if not (
             document.id in acl_by_document
-            and not (_acl_relevant_roles(principal, document) & acl_by_document[document.id])
+            and not (
+                _acl_relevant_roles(principal, document, factory_id=factory_id)
+                & acl_by_document[document.id]
+            )
         )
     ]
 
