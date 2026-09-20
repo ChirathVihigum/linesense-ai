@@ -44,6 +44,76 @@ is_sk_ant_allowlisted() {
   return 1
 }
 
+# --- hardcoded password-looking assignments --------------------------------
+# Runs before the key/AWS-id/private-key patterns below (order is otherwise
+# arbitrary -- either loop aborts the whole script on any file it cannot
+# read) specifically so scripts/self-test-secret-scan.sh's unreadable-file
+# case exercises *this* branch's error handling end to end, since that is
+# the one item-1/round-2 review fixed: an unreadable file is always caught
+# by whichever loop reaches it first, and this is now first.
+# `password\s*=\s*['"][^'"]{8,}`, excluding .env.example/tests/ (documented
+# fixture or dev-default values there) per task-25-brief.md req. 10 -- this
+# is the only pattern the brief itself scopes that exclusion to -- and
+# excluding a matched value that is itself a shell/env variable reference
+# (`"$SOME_VAR"`) rather than a literal -- e.g. this repo's own
+# `PGPASSWORD="$OWNER_PASSWORD"` in scripts/backup.sh/restore.sh, which is
+# exactly the pattern the .env.example/tests exclusion is meant to express
+# for shell scripts (nothing there is a literal secret).
+#
+# This used to be `grep ... | grep -v ...` with the combined pipeline's
+# `$?` checked for "a real error". Under `pipefail`, a pipeline's exit
+# status is only reliably the *first* non-zero stage when every stage
+# *after* it succeeds (exits 0); when a later stage also exits non-zero --
+# exactly what `grep -v` does whenever it excludes every line, including
+# on the empty input a failed first grep produces -- pipefail resolves to
+# that later (rightmost) non-zero status instead, masking the first grep's
+# real error as an ordinary "no match" (verified: `(exit 2) | (exit 1)`
+# under `set -o pipefail` returns 1, not 2). `${PIPESTATUS[@]}` does not
+# help either, because the pipe runs inside a `$(...)` command
+# substitution's own subshell, whose PIPESTATUS is gone once that subshell
+# exits. So there is only one grep call here now; the second stage (drop a
+# `="$VAR"` shell-reference match) is plain bash pattern matching, with
+# nothing left to pipe into and no exit status left to lose.
+SHELL_VAR_VALUE_RE="=[[:space:]]*['\"]\\\$"
+PASSWORD_HAS_HITS=0
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  case "$file" in
+  .env.example | tests/* | */tests/*) continue ;;
+  esac
+  set +e
+  raw_matches="$(grep -nEi -- "password[[:space:]]*=[[:space:]]*['\"][^'\"]{8,}" "$file")"
+  grep_status=$?
+  set -e
+  case "$grep_status" in
+  0 | 1) ;; # 0: matched; 1: no match. Both expected outcomes.
+  *)
+    log "grep failed (exit $grep_status) scanning '$file' for password-looking assignments"
+    exit 2
+    ;;
+  esac
+
+  matches=""
+  if [ "$grep_status" -eq 0 ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      if [[ "$line" =~ $SHELL_VAR_VALUE_RE ]]; then
+        continue # a "...=\"$VAR\"" shell/env reference, not a literal value
+      fi
+      matches="${matches}${line}"$'\n'
+    done <<<"$raw_matches"
+  fi
+
+  if [ -n "$matches" ]; then
+    if [ "$PASSWORD_HAS_HITS" -eq 0 ]; then
+      log "password-looking assignment(s) found outside .env.example/tests:"
+      PASSWORD_HAS_HITS=1
+    fi
+    printf '%s' "$matches" | sed "s#^#  $file:#" >&2
+    FOUND=1
+  fi
+done <<<"$ALL_FILES"
+
 # --- Anthropic keys, AWS access key ids, PEM private key headers ----------
 # Self-note: these three patterns each require several specific literal
 # characters right after their fixed prefix ("AKIA", "sk-ant-", "-----BEGIN
@@ -88,44 +158,6 @@ for pattern in "${PATTERNS[@]}"; do
     esac
   done <<<"$ALL_FILES"
 done
-
-# --- hardcoded password-looking assignments --------------------------------
-# `password\s*=\s*['"][^'"]{8,}`, excluding .env.example/tests/ (documented
-# fixture or dev-default values there) per task-25-brief.md req. 10 -- this
-# is the only pattern the brief itself scopes that exclusion to -- and
-# excluding a matched value that is itself a shell/env variable reference
-# (`"$SOME_VAR"`) rather than a literal -- e.g. this repo's own
-# `PGPASSWORD="$OWNER_PASSWORD"` in scripts/backup.sh/restore.sh, which is
-# exactly the pattern the .env.example/tests exclusion is meant to express
-# for shell scripts (nothing there is a literal secret).
-PASSWORD_HAS_HITS=0
-while IFS= read -r file; do
-  [ -z "$file" ] && continue
-  case "$file" in
-  .env.example | tests/* | */tests/*) continue ;;
-  esac
-  set +e
-  matches="$(
-    grep -nEi -- "password[[:space:]]*=[[:space:]]*['\"][^'\"]{8,}" "$file" 2>/dev/null |
-      grep -vE -- "=[[:space:]]*['\"]\\\$"
-  )"
-  grep_status=$?
-  set -e
-  # grep exits 1 for "no match" through the pipeline; anything else from the
-  # *first* grep (a real read/pattern error) must not be swallowed either.
-  if [ "$grep_status" -ge 2 ]; then
-    log "grep failed (exit $grep_status) scanning '$file' for password-looking assignments"
-    exit 2
-  fi
-  if [ -n "$matches" ]; then
-    if [ "$PASSWORD_HAS_HITS" -eq 0 ]; then
-      log "password-looking assignment(s) found outside .env.example/tests:"
-      PASSWORD_HAS_HITS=1
-    fi
-    echo "$matches" | sed "s#^#  $file:#" >&2
-    FOUND=1
-  fi
-done <<<"$ALL_FILES"
 
 if [ "$FOUND" -ne 0 ]; then
   log "FAILED: high-risk secret pattern(s) found in tracked files"
