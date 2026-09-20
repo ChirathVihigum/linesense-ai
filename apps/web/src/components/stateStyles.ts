@@ -1,7 +1,17 @@
 import { humanizeCode } from '../lib/format'
 import type { IconName } from './Icon'
 
-export type StateVocabulary = 'production' | 'material' | 'quality' | 'analysis' | 'recommendation' | 'reservation'
+export type StateVocabulary =
+  | 'production'
+  | 'material'
+  | 'quality'
+  | 'analysis'
+  | 'agent_result'
+  | 'recommendation'
+  | 'reservation'
+  | 'policy'
+  | 'document_version'
+  | 'audit_outcome'
 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
 
@@ -43,6 +53,11 @@ export const STATE_STYLES: Record<StateVocabulary, Record<string, StateStyle>> =
     FAILED: { label: 'Failed', icon: 'x-circle', tone: 'danger' },
     CANCELLED: { label: 'Cancelled', icon: 'ban', tone: 'muted' },
   },
+  agent_result: {
+    SUCCEEDED: { label: 'Succeeded', icon: 'check-circle', tone: 'success' },
+    DEGRADED: { label: 'Degraded', icon: 'alert', tone: 'warning' },
+    FAILED: { label: 'Failed', icon: 'x-circle', tone: 'danger' },
+  },
   recommendation: {
     DRAFT: { label: 'Draft', icon: 'pencil', tone: 'neutral' },
     PROPOSED: { label: 'Proposed', icon: 'send', tone: 'info' },
@@ -57,6 +72,23 @@ export const STATE_STYLES: Record<StateVocabulary, Record<string, StateStyle>> =
     RELEASED: { label: 'Released', icon: 'unlock', tone: 'success' },
     CONSUMED: { label: 'Consumed', icon: 'check-double', tone: 'muted' },
   },
+  policy: {
+    DRAFT: { label: 'Draft', icon: 'pencil', tone: 'neutral' },
+    ACTIVE: { label: 'Active', icon: 'check-circle', tone: 'success' },
+    RETIRED: { label: 'Retired', icon: 'ban', tone: 'muted' },
+  },
+  document_version: {
+    QUARANTINE: { label: 'Quarantine', icon: 'lock', tone: 'warning' },
+    PROCESSING: { label: 'Processing', icon: 'refresh', tone: 'info' },
+    ACTIVE: { label: 'Active', icon: 'check-circle', tone: 'success' },
+    REJECTED: { label: 'Rejected', icon: 'x-circle', tone: 'danger' },
+    SUPERSEDED: { label: 'Superseded', icon: 'layers', tone: 'muted' },
+  },
+  audit_outcome: {
+    SUCCESS: { label: 'Success', icon: 'check-circle', tone: 'success' },
+    DENIED: { label: 'Denied', icon: 'lock', tone: 'danger' },
+    FAILED: { label: 'Failed', icon: 'x-circle', tone: 'danger' },
+  },
 }
 
 export const VOCABULARY_LABELS: Record<StateVocabulary, string> = {
@@ -64,8 +96,12 @@ export const VOCABULARY_LABELS: Record<StateVocabulary, string> = {
   material: 'Materials',
   quality: 'Quality',
   analysis: 'Analysis',
+  agent_result: 'Agent result',
   recommendation: 'Recommendation',
   reservation: 'Reservation',
+  policy: 'Quality policy',
+  document_version: 'Document version',
+  audit_outcome: 'Outcome',
 }
 
 /** Status tones map to semantic tokens (DESIGN.md); `muted` is for terminal/inactive states. */

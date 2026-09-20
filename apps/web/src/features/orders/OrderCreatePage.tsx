@@ -77,7 +77,7 @@ function OrderCreateForm() {
       idempotency.reset()
       showToast(`Order ${order.external_ref} created.`)
       await queryClient.invalidateQueries({ queryKey: ['orders', factory.id] })
-      await navigate(orderCreatedPath(factory.code))
+      await navigate(orderCreatedPath(factory.code, order.id))
     },
     onError: (error) => {
       if (!(error instanceof ApiError)) return

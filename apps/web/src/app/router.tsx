@@ -7,12 +7,8 @@ import { NoAccessPage } from '../features/auth/NoAccessPage'
 import { Layout } from './Layout'
 import { NotFoundPage } from './NotFoundPage'
 
-/**
- * Landing section inside a factory. The brief's target is `overview`, whose
- * screen is built in Task 22; until then the landing section is `orders` so the
- * home redirect never lands on a missing route. Task 22 switches this constant.
- */
-export const DEFAULT_FACTORY_SECTION = 'orders'
+/** Landing section inside a factory: the operations overview (Task 22). */
+export const DEFAULT_FACTORY_SECTION = 'overview'
 
 function HomeRedirect() {
   const me = useMe()
@@ -51,6 +47,12 @@ export const routes: RouteObject[] = [
           { index: true, element: <Navigate to={DEFAULT_FACTORY_SECTION} replace /> },
           // Feature screens are split into their own chunks and loaded on first visit.
           {
+            path: 'overview',
+            lazy: async () => ({
+              Component: (await import('../features/overview/OverviewPage')).OverviewPage,
+            }),
+          },
+          {
             path: 'orders',
             lazy: async () => ({ Component: (await import('../features/orders/OrdersPage')).OrdersPage }),
           },
@@ -64,6 +66,28 @@ export const routes: RouteObject[] = [
             path: 'orders/import',
             lazy: async () => ({
               Component: (await import('../features/orders/OrderImportPage')).OrderImportPage,
+            }),
+          },
+          {
+            path: 'orders/:orderId',
+            lazy: async () => ({
+              Component: (await import('../features/orders/OrderDetailPage')).OrderDetailPage,
+            }),
+          },
+          {
+            path: 'runs/:runId',
+            lazy: async () => ({ Component: (await import('../features/runs/RunPage')).RunPage }),
+          },
+          {
+            path: 'approvals',
+            lazy: async () => ({
+              Component: (await import('../features/approvals/ApprovalInboxPage')).ApprovalInboxPage,
+            }),
+          },
+          {
+            path: 'approvals/:recId',
+            lazy: async () => ({
+              Component: (await import('../features/approvals/RecommendationPage')).RecommendationPage,
             }),
           },
           {
@@ -87,6 +111,20 @@ export const routes: RouteObject[] = [
             lazy: async () => ({
               Component: (await import('../features/quality/QualityPage')).QualityPage,
             }),
+          },
+          {
+            path: 'notes',
+            lazy: async () => ({ Component: (await import('../features/notes/NotesPage')).NotesPage }),
+          },
+          {
+            path: 'knowledge',
+            lazy: async () => ({
+              Component: (await import('../features/knowledge/KnowledgePage')).KnowledgePage,
+            }),
+          },
+          {
+            path: 'admin',
+            lazy: async () => ({ Component: (await import('../features/admin/AdminPage')).AdminPage }),
           },
           { path: '*', element: <NotFoundPage /> },
         ],

@@ -12,6 +12,7 @@ import { ApiError, api, unwrap } from '../../lib/api'
 import { useCan, useFactory } from '../../lib/factory'
 import { CapacityGrid } from './CapacityGrid'
 import { addDaysIso, isoDateInTimeZone, rangeError } from './dateRange'
+import { RecommendationCompareSection } from './RecommendationCompareSection'
 
 function PlanningBoard() {
   const factory = useFactory()
@@ -90,14 +91,14 @@ function PlanningBoard() {
           />
         </FormField>
       </form>
-      {/*
-       * Compare PROPOSED recommendations panel (see RecommendationCompare.tsx): omitted here.
-       * The recommendation routes it needs (GET .../recommendations, Task 14) do not exist yet
-       * in the backend or in src/generated/api.ts, so there is nothing real to fetch. Per the
-       * brief this panel is shown only once the route exists in the generated types; until then
-       * no placeholder or mock data is rendered.
-       */}
       <div aria-busy={query.isFetching}>{body}</div>
+
+      <section aria-labelledby="planning-compare">
+        <h2 id="planning-compare" className="mb-3 text-base font-semibold">
+          Proposed recommendations
+        </h2>
+        <RecommendationCompareSection />
+      </section>
     </div>
   )
 }
