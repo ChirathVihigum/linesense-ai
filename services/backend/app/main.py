@@ -5,9 +5,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.api.admin import router as admin_router
 from app.api.analyses import router as analyses_router
 from app.api.audit import router as audit_router
 from app.api.capacity import router as capacity_router
+from app.api.dashboard import router as dashboard_router
+from app.api.documents import router as documents_router
 from app.api.errors import register_exception_handlers
 from app.api.health import router as health_router
 from app.api.ie import router as ie_router
@@ -16,12 +19,15 @@ from app.api.internal import router as internal_router
 from app.api.inventory import router as inventory_router
 from app.api.me import router as me_router
 from app.api.middleware import SecurityHeadersMiddleware, TraceIdMiddleware
+from app.api.notes import router as notes_router
 from app.api.notifications import router as notifications_router
 from app.api.orders import router as orders_router
 from app.api.quality import router as quality_router
 from app.api.recommendations import router as recommendations_router
 from app.api.reference import router as reference_router
 from app.api.runs import router as runs_router
+from app.api.search import router as search_router
+from app.api.summaries import router as summaries_router
 from app.auth.csrf import CsrfMiddleware
 from app.auth.oidc import build_oauth
 from app.auth.routes import router as auth_router
@@ -66,6 +72,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(me_router)
     app.include_router(orders_router)
     app.include_router(imports_router)
+    app.include_router(documents_router)
+    app.include_router(search_router)
     app.include_router(audit_router)
     app.include_router(notifications_router)
     app.include_router(reference_router)
@@ -76,6 +84,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(analyses_router)
     app.include_router(runs_router)
     app.include_router(recommendations_router)
+    app.include_router(notes_router)
+    app.include_router(summaries_router)
+    app.include_router(dashboard_router)
+    app.include_router(admin_router)
     app.include_router(internal_router)
 
     return app
