@@ -12,7 +12,14 @@ import pytest
 from app.agents.base import Assessment, ToolError
 from app.agents.planning import PlanningAgent
 from app.orchestration.protocol import AgentResult
-from app.orchestration.snapshot import SnapshotLine, SnapshotSlot
+from app.orchestration.snapshot import (
+    SnapshotBom,
+    SnapshotBomLine,
+    SnapshotLine,
+    SnapshotMaterial,
+    SnapshotReceipt,
+    SnapshotSlot,
+)
 from tests.helpers.agents import AS_OF, DUE_DATE, agent_context, snapshot_data
 
 LINE_A = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000001")
@@ -22,6 +29,53 @@ IE_TASK_ID = uuid.UUID("dddddddd-0000-4000-8000-000000000004")
 PLANNING_R0_TASK_ID = uuid.UUID("eeeeeeee-0000-4000-8000-000000000005")
 
 SAM_TOTAL = Decimal("6.7")
+
+SHORT_MATERIAL_ID = uuid.UUID("f0000000-0000-4000-8000-00000000000a")
+SPARE_MATERIAL_ID = uuid.UUID("f0000000-0000-4000-8000-00000000000b")
+SHORT_RECEIPT_DATE = DUE_DATE + timedelta(days=4)
+SPARE_RECEIPT_DATE = AS_OF + timedelta(days=1)
+
+
+def _bom_line(material_id: uuid.UUID, code: str) -> SnapshotBomLine:
+    return SnapshotBomLine(
+        bom_line_id=uuid.uuid4(),
+        material_id=material_id,
+        material_code=code,
+        material_name=f"Material {code}",
+        material_unit="m",
+        bom_unit="m",
+        quantity_per_unit=Decimal("1.2"),
+        wastage_fraction=Decimal("0.05"),
+        safety_stock=Decimal("0"),
+        lead_time_days=3,
+        pack_size=None,
+    )
+
+
+def _material(receipt_date) -> SnapshotMaterial:  # noqa: ANN001
+    return SnapshotMaterial(
+        balance_id=uuid.uuid4(),
+        balance_version=1,
+        on_hand_accepted=Decimal("1500"),
+        reserved=Decimal("400"),
+        open_receipts=[
+            SnapshotReceipt(id=uuid.uuid4(), quantity=Decimal("500"), expected_date=receipt_date)
+        ],
+        issues_14d=[],
+    )
+
+
+def _two_material_snapshot():  # noqa: ANN202
+    """A BOM where the material that is NOT short has the earlier receipt."""
+    short_line = _bom_line(SHORT_MATERIAL_ID, "M01")
+    spare_line = _bom_line(SPARE_MATERIAL_ID, "M99")
+    return _snapshot(
+        bom=SnapshotBom(bom_version_id=uuid.uuid4(), version_no=1, lines=[short_line, spare_line]),
+        materials={
+            str(SHORT_MATERIAL_ID): _material(SHORT_RECEIPT_DATE),
+            str(SPARE_MATERIAL_ID): _material(SPARE_RECEIPT_DATE),
+        },
+    )
 
 
 def _line(line_id: uuid.UUID, code: str, *, compatible: bool = True) -> SnapshotLine:
@@ -196,10 +250,16 @@ async def test_round_zero_ranks_full_earliest_first_when_capacity_suffices() -> 
         ref.kind == "record" and ref.record_type == "agent_result" and ref.record_id == RM_TASK_ID
         for ref in cited.values()
     )
-    metrics = {metric.name: metric.value for metric in assessment.metrics}
-    assert metrics["required_standard_minutes"] == Decimal("6700")
-    assert metrics["allocated_units"] == Decimal("1000")
-    assert metrics["unscheduled_units"] == Decimal("0")
+    metrics = {metric.name: metric for metric in assessment.metrics}
+    assert metrics["required_standard_minutes"].value == Decimal("6700")
+    assert metrics["allocated_units"].value == Decimal("1000")
+    assert metrics["unscheduled_units"].value == Decimal("0")
+    # The model may rerank the actions, so the numbers say which option they
+    # describe.
+    assert metrics["allocated_units"].note == (
+        "For the deterministically ranked-first option FULL_EARLIEST."
+    )
+    assert metrics["unscheduled_units"].note == metrics["allocated_units"].note
 
 
 async def test_round_one_ranks_the_material_limited_option_first() -> None:
@@ -224,6 +284,69 @@ async def test_round_one_ranks_the_material_limited_option_first() -> None:
         ref.record_type == "agent_result" and ref.record_id == PLANNING_R0_TASK_ID
         for ref in assessment.evidence_refs
     )
+
+
+async def test_revision_quotes_the_short_material_s_receipt_not_another_s() -> None:
+    """A healthy material's earlier receipt must never stand in for the short one."""
+    rm = _agent_result(
+        "rm",
+        RM_TASK_ID,
+        findings=[
+            {
+                "finding_id": "rm-shortage-M01",
+                "severity": "critical",
+                "code": "MATERIAL_SHORTAGE",
+                "message": "M01 is short 160 m.",
+                "evidence_ids": ["ev-bal-M01"],
+                "source": "deterministic",
+            }
+        ],
+        metrics=[
+            {"name": "coverable_units", "value": "873", "unit": "units"},
+            {"name": "shortage:M01", "value": "160", "unit": "m"},
+            {"name": "shortage:M99", "value": "0", "unit": "m"},
+        ],
+        summary="M01 is short 160 m.",
+    )
+    assessment = await _assess(
+        round=1,
+        task_type="revise_allocation",
+        snapshot=_two_material_snapshot(),
+        dependency_results={
+            "rm": rm,
+            "planning_r0": _agent_result("planning", PLANNING_R0_TASK_ID),
+        },
+    )
+
+    revised = next(f for f in assessment.findings if f.code == "REVISED_FOR_MATERIAL")
+    assert SHORT_RECEIPT_DATE.isoformat() in revised.message
+    assert SPARE_RECEIPT_DATE.isoformat() not in revised.message
+    assert "M99" not in revised.message
+    assert "first open receipt of M01" in revised.message
+    assert "after the due date" in revised.message
+
+
+async def test_revision_says_so_when_the_short_material_has_no_receipt() -> None:
+    snapshot = _two_material_snapshot()
+    snapshot.materials[str(SHORT_MATERIAL_ID)].open_receipts = []
+    rm = _agent_result(
+        "rm",
+        RM_TASK_ID,
+        metrics=[
+            {"name": "coverable_units", "value": "873", "unit": "units"},
+            {"name": "shortage:M01", "value": "160", "unit": "m"},
+        ],
+    )
+    assessment = await _assess(
+        round=1,
+        task_type="revise_allocation",
+        snapshot=snapshot,
+        dependency_results={"rm": rm},
+    )
+
+    revised = next(f for f in assessment.findings if f.code == "REVISED_FOR_MATERIAL")
+    assert "No open receipt is expected for the short material(s) (M01)." in revised.message
+    assert SPARE_RECEIPT_DATE.isoformat() not in revised.message
 
 
 async def test_no_compatible_line_is_critical_and_proposes_nothing() -> None:
@@ -316,6 +439,8 @@ async def test_line_overcommitted_warns_per_slot_above_the_threshold() -> None:
     )
 
     assert "LINE_OVERCOMMITTED" in _codes(assessment)
+    overcommit = next(f for f in assessment.findings if f.code == "LINE_OVERCOMMITTED")
+    assert overcommit.message.startswith("Under option FULL_EARLIEST, line L1 ")
 
 
 # --------------------------------------------------------------------------
@@ -348,7 +473,16 @@ async def test_simulation_adds_a_selectable_candidate_action() -> None:
     assert added.rank == before
     assert added.payload["allocated_units"] == "500"
     assert result.data["action_id"] == added.action_id
+    # The action cites only evidence already in the assessment, so a degraded
+    # outcome (which drops tool evidence) can never leave a dangling citation.
     assert set(added.evidence_ids) <= {ref.evidence_id for ref in ctx.assessment.evidence_refs}
+    # What the simulation discovered comes back as tool evidence, which the
+    # loop registers so the model may cite it.
+    returned = {ref.evidence_id for ref in result.evidence}
+    assert returned
+    assert returned.isdisjoint({ref.evidence_id for ref in ctx.assessment.evidence_refs})
+    assert set(result.data["new_evidence_ids"]) == returned
+    assert any(ref.evidence_id.startswith("ev-plan-SIMULATED-") for ref in result.evidence)
 
 
 async def test_simulation_with_an_unknown_line_code_is_a_tool_error() -> None:

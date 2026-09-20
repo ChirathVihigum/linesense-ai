@@ -635,5 +635,132 @@ async def test_a_crashed_worker_leaves_exactly_one_result_per_task(
 # --------------------------------------------------------------------------
 
 
-def test_needs_replan_is_none_without_both_results() -> None:
+def _result_for(
+    agent: str,
+    *,
+    status: str = "SUCCEEDED",
+    metrics: list[dict[str, Any]] | None = None,
+    actions: list[dict[str, Any]] | None = None,
+) -> AgentResult:
+    stamp = "2026-09-17T00:00:00+00:00"
+    return AgentResult.model_validate(
+        {
+            "schema_version": "1.0",
+            "task_id": str(uuid.uuid4()),
+            "agent": agent,
+            "status": status,
+            "summary": f"{agent} summary.",
+            "summary_source": "deterministic",
+            "findings": [],
+            "metrics": metrics or [],
+            "recommended_actions": actions or [],
+            "evidence_refs": [],
+            "warnings": [],
+            "input_versions": {},
+            "data_quality": {"complete": True, "missing": [], "notes": []},
+            "execution_metadata": {
+                "provider": "fixture",
+                "model": "fixture-scripted-v1",
+                "model_calls": 1,
+                "tool_calls": [],
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "prompt_version": f"{agent}-v1",
+                "degraded": False,
+                "degraded_reason": None,
+                "started_at": stamp,
+                "completed_at": stamp,
+            },
+            "error_code": None,
+        }
+    )
+
+
+def _allocation(allocated_units: str, *, rank: int = 0, kind: str = "ALLOCATION") -> dict[str, Any]:
+    return {
+        "action_id": f"act-{rank}",
+        "kind": kind,
+        "summary": f"Allocate {allocated_units} units.",
+        "payload": {
+            "option_code": "FULL_EARLIEST",
+            "allocations": [],
+            "allocated_units": allocated_units,
+            "unscheduled_units": "0",
+            "unscheduled_reason": None,
+            "finish_date": None,
+        },
+        "evidence_ids": [],
+        "rank": rank,
+        "source": "deterministic",
+    }
+
+
+def _coverable(value: str) -> list[dict[str, Any]]:
+    return [{"name": "coverable_units", "value": value, "unit": "units"}]
+
+
+def test_needs_replan_fires_only_when_the_plan_outruns_the_materials() -> None:
+    planning = _result_for("planning", actions=[_allocation("1000")])
+    assert needs_replan(planning, _result_for("rm", metrics=_coverable("873"))) == (
+        "MATERIAL_SHORTAGE_CONFLICT: selected plan allocates 1000 units but materials cover 873"
+    )
+    # Exactly at the limit, and below it, are not conflicts.
+    assert needs_replan(planning, _result_for("rm", metrics=_coverable("1000"))) is None
+    assert needs_replan(planning, _result_for("rm", metrics=_coverable("1200"))) is None
+
+
+def test_needs_replan_is_none_when_a_result_is_missing_or_failed() -> None:
+    planning = _result_for("planning", actions=[_allocation("1000")])
+    rm = _result_for("rm", metrics=_coverable("873"))
+
     assert needs_replan(None, None) is None
+    assert needs_replan(planning, None) is None
+    assert needs_replan(None, rm) is None
+    assert (
+        needs_replan(_result_for("planning", status="FAILED", actions=[_allocation("1000")]), rm)
+        is None
+    )
+    assert (
+        needs_replan(planning, _result_for("rm", status="FAILED", metrics=_coverable("873")))
+        is None
+    )
+
+
+def test_needs_replan_is_none_without_a_coverable_metric_or_an_allocation() -> None:
+    planning = _result_for("planning", actions=[_allocation("1000")])
+    # RM reported no coverable_units at all (e.g. it degraded before computing one).
+    assert needs_replan(planning, _result_for("rm")) is None
+    assert (
+        needs_replan(
+            planning,
+            _result_for("rm", metrics=[{"name": "shortage:M01", "value": "160", "unit": "m"}]),
+        )
+        is None
+    )
+    # A null metric value is "unknown", never "zero".
+    assert (
+        needs_replan(
+            planning,
+            _result_for(
+                "rm", metrics=[{"name": "coverable_units", "value": None, "unit": "units"}]
+            ),
+        )
+        is None
+    )
+
+    rm = _result_for("rm", metrics=_coverable("873"))
+    # No ALLOCATION action to compare against.
+    assert needs_replan(_result_for("planning"), rm) is None
+    assert (
+        needs_replan(_result_for("planning", actions=[_allocation("1000", kind="RESERVATION")]), rm)
+        is None
+    )
+
+
+def test_needs_replan_reads_the_rank_zero_allocation() -> None:
+    rm = _result_for("rm", metrics=_coverable("873"))
+    # The rank-1 option would conflict; only the selected (rank-0) one counts.
+    planning = _result_for(
+        "planning", actions=[_allocation("1000", rank=1), _allocation("800", rank=0)]
+    )
+    assert needs_replan(planning, rm) is None

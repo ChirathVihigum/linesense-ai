@@ -272,8 +272,13 @@ class PlanningAgent(BaseAgent):
         builder.add_options(options)
 
         best = options[0]
-        builder.metric("allocated_units", best.plan.allocated_units, _UNITS)
-        builder.metric("unscheduled_units", best.plan.unscheduled_units, _UNITS)
+        # These describe the deterministically best option. The model may move
+        # a different candidate to rank 0 in submit_assessment, which reranks
+        # the actions but never rewrites a payload or a metric, so the note
+        # names the option the numbers belong to.
+        best_note = f"For the deterministically ranked-first option {best.code}."
+        builder.metric("allocated_units", best.plan.allocated_units, _UNITS, note=best_note)
+        builder.metric("unscheduled_units", best.plan.unscheduled_units, _UNITS, note=best_note)
         builder.overcommitted(best)
         if all(option.plan.unscheduled_units > 0 for option in options):
             builder.unscheduled(best)
@@ -435,8 +440,10 @@ class _PlanningAssessment:
             )
         )
 
-    def metric(self, name: str, value: Decimal | None, unit: str) -> None:
-        self.metrics.append(Metric(name=name, value=value, unit=unit))
+    def metric(
+        self, name: str, value: Decimal | None, unit: str, *, note: str | None = None
+    ) -> None:
+        self.metrics.append(Metric(name=name, value=value, unit=unit, note=note))
 
     # ----------------------------------------------------------------- pieces
 
@@ -517,11 +524,12 @@ class _PlanningAssessment:
             if ratio is None or ratio <= OVERCOMMIT_THRESHOLD:
                 continue
             self.finding(
-                finding_id=f"planning-overcommit-{slot.slot_id}",
+                finding_id=f"planning-overcommit-{option.code.lower()}-{slot.slot_id}",
                 severity="warning",
                 code="LINE_OVERCOMMITTED",
                 message=(
-                    f"Line {slot.line_code} on {slot.slot_date.isoformat()} shift "
+                    f"Under option {option.code}, line {slot.line_code} on "
+                    f"{slot.slot_date.isoformat()} shift "
                     f"{slot.shift_code} would reach "
                     f"{decimal_str(ratio * 100)}% utilization "
                     f"({decimal_str(slot.allocated_standard_minutes + allocation.standard_minutes)}"
@@ -639,21 +647,13 @@ class _PlanningAssessment:
                     )
                 )
             )
+        short_codes = _short_material_codes(rm)
         shortages = "; ".join(
             f"{metric.name.split(':', 1)[1]} short {decimal_str(metric.value)} {metric.unit}"
             for metric in rm.metrics
             if metric.name.startswith("shortage:") and metric.value is not None and metric.value > 0
         )
-        receipt = _first_open_receipt(self.data)
-        if receipt is None:
-            receipt_note = "No open receipt is expected for the short material(s)."
-        elif receipt[0] > self.data.order.due_date:
-            receipt_note = (
-                f"The first open receipt is expected on {receipt[0].isoformat()}, after "
-                f"the due date {self.data.order.due_date.isoformat()}."
-            )
-        else:
-            receipt_note = f"The first open receipt is expected on {receipt[0].isoformat()}."
+        receipt_note = self._receipt_note(short_codes)
         self.finding(
             finding_id="planning-revised",
             severity="warning",
@@ -666,6 +666,29 @@ class _PlanningAssessment:
             ),
             evidence_ids=evidence_ids,
         )
+
+    def _receipt_note(self, short_codes: set[str]) -> str:
+        """What the *short* materials' first open receipt says about the due date.
+
+        A material that is not short must never supply this date: an early
+        receipt of some other material would otherwise read as reassurance
+        about the one that is actually holding the order back.
+        """
+        if not short_codes:
+            return "No material was reported short."
+        receipt = _first_open_receipt(self.data, short_codes)
+        if receipt is None:
+            return (
+                "No open receipt is expected for the short material(s) "
+                f"({', '.join(sorted(short_codes))})."
+            )
+        when, code = receipt
+        if when > self.data.order.due_date:
+            return (
+                f"The first open receipt of {code} is expected on {when.isoformat()}, after "
+                f"the due date {self.data.order.due_date.isoformat()}."
+            )
+        return f"The first open receipt of {code} is expected on {when.isoformat()}."
 
     def build(self) -> Assessment:
         return Assessment(
@@ -683,12 +706,24 @@ class _PlanningAssessment:
         )
 
 
-def _first_open_receipt(data: SnapshotData) -> tuple[date, Decimal] | None:
-    receipts = [
-        (receipt.expected_date, receipt.quantity)
-        for material in data.materials.values()
-        for receipt in material.open_receipts
-    ]
+def _short_material_codes(rm: AgentResult) -> set[str]:
+    """Material codes the RM agent reported a positive ``shortage:<code>`` for."""
+    return {
+        metric.name.split(":", 1)[1]
+        for metric in rm.metrics
+        if metric.name.startswith("shortage:") and metric.value is not None and metric.value > 0
+    }
+
+
+def _first_open_receipt(data: SnapshotData, codes: set[str]) -> tuple[date, str] | None:
+    """The earliest open receipt among ``codes``, with the material it belongs to."""
+    by_material = {str(line.material_id): line.material_code for line in data.bom.lines}
+    receipts: list[tuple[date, str]] = []
+    for material_id, material in data.materials.items():
+        code = by_material.get(material_id)
+        if code is None or code not in codes:
+            continue
+        receipts.extend((receipt.expected_date, code) for receipt in material.open_receipts)
     return min(receipts) if receipts else None
 
 
@@ -906,6 +941,11 @@ async def _tool_simulate_allocation(ctx: AgentContext, arguments: Any) -> ToolRe
     )
     option.action_id = f"act-sim-{index}"
 
+    # Evidence the simulation *discovers* is returned as tool evidence, which
+    # the loop registers so the model may cite it. The action itself cites only
+    # evidence already in the assessment, because a degraded outcome (budget,
+    # refusal, rejected output) keeps the assessment and drops tool evidence —
+    # an action citing a tool-only id would then be rejected as invalid.
     by_id = {slot.slot_id: slot for slot in data.slots}
     existing = {ref.evidence_id for ref in assessment.evidence_refs}
     evidence_ids = ["ev-order"]
@@ -918,17 +958,15 @@ async def _tool_simulate_allocation(ctx: AgentContext, arguments: Any) -> ToolRe
             continue
         # A slot no other option used gets a simulation-scoped id, so an
         # investigative tool called later can never emit the same id twice.
-        ref = ref.model_copy(update={"evidence_id": f"ev-sim{index}-slot-{slot.slot_id}"})
-        existing.add(ref.evidence_id)
-        evidence_ids.append(ref.evidence_id)
-        new_refs.append(ref)
-    plan_ref = _plan_evidence_ref(option, data).model_copy(
-        update={"evidence_id": f"ev-plan-{SIMULATED}-{index}"}
+        new_refs.append(
+            ref.model_copy(update={"evidence_id": f"ev-sim{index}-slot-{slot.slot_id}"})
+        )
+    new_refs.append(
+        _plan_evidence_ref(option, data).model_copy(
+            update={"evidence_id": f"ev-plan-{SIMULATED}-{index}"}
+        )
     )
-    evidence_ids.append(plan_ref.evidence_id)
-    new_refs.append(plan_ref)
 
-    assessment.evidence_refs.extend(new_refs)
     assessment.recommended_actions.append(
         RecommendedAction(
             action_id=option.action_id,
@@ -948,9 +986,10 @@ async def _tool_simulate_allocation(ctx: AgentContext, arguments: Any) -> ToolRe
         data={
             "action_id": option.action_id,
             "option_code": SIMULATED,
+            "new_evidence_ids": [ref.evidence_id for ref in new_refs],
             **allocation_payload(SIMULATED, plan, data),
         },
-        evidence=[],
+        evidence=new_refs,
     )
 
 

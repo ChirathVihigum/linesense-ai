@@ -364,3 +364,112 @@ async def test_agent_task_and_versions_must_match(db_session: AsyncSession) -> N
     problems = await validate_result(db_session, run, snapshot, stale)
     assert any("input_versions" in problem for problem in problems)
     assert other_run.id != run.id and other_snapshot.id != snapshot.id
+
+
+# --------------------------------------------------------------------------
+# bom_line evidence resolves its organization through its BOM version
+# --------------------------------------------------------------------------
+
+
+async def _bom_line_of(session: AsyncSession, run: AnalysisRun) -> Any:
+    from sqlalchemy import select
+
+    from app.db.models import BomLine, Order
+
+    bom_version_id = await session.scalar(
+        select(Order.bom_version_id).where(Order.id == run.order_id)
+    )
+    line = await session.scalar(select(BomLine).where(BomLine.bom_version_id == bom_version_id))
+    assert line is not None
+    return line
+
+
+def _bom_evidence(record_id: uuid.UUID) -> EvidenceRef:
+    return EvidenceRef(
+        evidence_id="ev-bom",
+        kind="record",
+        record_type="bom_line",
+        record_id=record_id,
+        description="BOM line for M01",
+    )
+
+
+async def test_bom_line_evidence_of_the_run_s_own_order_is_accepted(
+    db_session: AsyncSession,
+) -> None:
+    run, snapshot, task, _balance = await _fixture(db_session)
+    line = await _bom_line_of(db_session, run)
+
+    result = _result(task, snapshot, evidence_refs=[_bom_evidence(line.id)])
+    assert await validate_result(db_session, run, snapshot, result) == []
+
+
+async def test_bom_line_evidence_from_another_organization_is_rejected(
+    db_session: AsyncSession,
+) -> None:
+    from app.db.models import BomLine, BomVersion
+    from tests.factories import make_material, make_style_with_operations
+
+    run, snapshot, task, _balance = await _fixture(db_session)
+
+    # A BOM line whose *style* (and therefore organization) is somebody else's.
+    other_org = await make_org(db_session)
+    other_style = await make_style_with_operations(db_session, organization=other_org)
+    other_material = await make_material(db_session, organization=other_org)
+    other_version = BomVersion(style_id=other_style.id, version_no=1, is_active=True)
+    db_session.add(other_version)
+    await db_session.flush()
+    foreign_line = BomLine(
+        bom_version_id=other_version.id,
+        material_id=other_material.id,
+        quantity_per_unit=Decimal("1"),
+        unit=other_material.unit,
+        wastage_fraction=Decimal("0"),
+    )
+    db_session.add(foreign_line)
+    await db_session.flush()
+
+    result = _result(task, snapshot, evidence_refs=[_bom_evidence(foreign_line.id)])
+    problems = await validate_result(db_session, run, snapshot, result)
+    assert any("unknown or out of scope" in problem for problem in problems)
+
+
+async def test_unknown_bom_line_evidence_is_rejected(db_session: AsyncSession) -> None:
+    run, snapshot, task, _balance = await _fixture(db_session)
+
+    result = _result(task, snapshot, evidence_refs=[_bom_evidence(uuid.uuid4())])
+    problems = await validate_result(db_session, run, snapshot, result)
+    assert any("unknown or out of scope" in problem for problem in problems)
+
+
+async def test_bom_line_with_an_unresolvable_bom_version_is_rejected(
+    db_session: AsyncSession,
+) -> None:
+    """A BOM line whose ``BomVersion`` cannot be loaded resolves to no style.
+
+    A foreign key makes this unreachable through the database, so the branch is
+    exercised directly: before the Task 13 fix this whole code path raised
+    ``AttributeError`` (``BomLine`` has no ``style_id``) instead of returning a
+    verdict, which killed the agent job rather than rejecting the evidence.
+    """
+    from app.db.models import BomLine
+    from app.orchestration.validation import _record_exists_in_scope
+
+    run, _snapshot, _task, _balance = await _fixture(db_session)
+    orphan = BomLine(
+        id=uuid.uuid4(),
+        bom_version_id=uuid.uuid4(),  # no such BOM version
+        material_id=uuid.uuid4(),
+        quantity_per_unit=Decimal("1"),
+        unit="m",
+        wastage_fraction=Decimal("0"),
+    )
+
+    class _StubSession:
+        """Returns ``orphan`` for the BOM line and ``None`` for anything else."""
+
+        async def get(self, model: Any, record_id: uuid.UUID) -> Any:
+            return orphan if model is BomLine else None
+
+    stub: Any = _StubSession()
+    assert await _record_exists_in_scope(stub, run, "bom_line", orphan.id) is False
