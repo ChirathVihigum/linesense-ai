@@ -1,8 +1,9 @@
-"""The whole two-agent vertical slice, driven through the public API.
+"""The whole vertical slice, driven through the public API.
 
 A planner asks for an analysis of the seeded demo order; the worker runs the
-orchestrator and both agents; the planner then sees the run, its events and
-the recommendation that is waiting for review.
+orchestrator and all four agents; the planner then sees the run, its events and
+the recommendation that is waiting for review. The four-agent graph itself is
+covered by ``test_four_agent_flow.py``; this test guards the planner's journey.
 """
 
 from __future__ import annotations
@@ -33,15 +34,21 @@ pytestmark = pytest.mark.integration
 EXPECTED_EVENT_SEQUENCE = [
     "run.created",
     "run.started",
+    # RM, IE and quality round 0 are dispatched together when the run starts.
+    "task.dispatched",
+    "task.dispatched",
     "task.dispatched",
     "task.completed",
-    "task.dispatched",
+    "task.completed",
+    "task.completed",
+    "task.dispatched",  # planning round 0, once RM and IE are terminal
     "task.completed",
     "orchestrator.replan",
-    "task.dispatched",
+    "task.dispatched",  # planning round 1
     "task.completed",
-    "task.dispatched",
+    "task.dispatched",  # RM round 1
     "task.completed",
+    "run.report",
     "run.finalized",
 ]
 
@@ -85,6 +92,8 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
     assert body["order"]["external_ref"] == DEMO_ORDER_REF
     assert [(task["recipient"], task["round"]) for task in body["tasks"]] == [
         ("rm", 0),
+        ("ie", 0),
+        ("quality", 0),
         ("planning", 0),
         ("planning", 1),
         ("rm", 1),
@@ -110,7 +119,11 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
         assert record is not None
         result = AgentResult.model_validate(record.payload)
         assert "REVISED_FOR_MATERIAL" in [finding.code for finding in result.findings]
-        assert result.summary_source == "model"
+        # Six agent tasks share the run's 12 model calls, and the four round-0
+        # and round-0-dependent tasks spend them: the revision falls back to its
+        # deterministic assessment (BUDGET_EXCEEDED) rather than skipping work.
+        assert result.summary_source == "deterministic"
+        assert result.execution_metadata.degraded_reason == "BUDGET_EXCEEDED"
 
         # Task 14 adds GET /factories/{code}/recommendations; until then the
         # PROPOSED row itself is the contract.
@@ -127,7 +140,7 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
         assert recommendation.run_id == run_id
         assert recommendation.order_id == order_id
         assert recommendation.kind == "ALLOCATION_AND_RESERVATION"
-        assert recommendation.generated_by == "model"
+        assert recommendation.generated_by == "deterministic"
         allocated = sum(
             (Decimal(row["units"]) for row in recommendation.proposal["allocations"]), Decimal(0)
         )
@@ -142,5 +155,10 @@ async def test_planner_requests_an_analysis_and_gets_a_recommendation(
     assert [row["status"] for row in body["recommendations"]] == [
         RecommendationStatus.PROPOSED.value
     ]
-    assert body["recommendations"][0]["generated_by"] == "model"
+    assert body["recommendations"][0]["generated_by"] == "deterministic"
     assert body["replan_count"] == 1
+
+    report = body["report"]
+    assert report is not None
+    assert report["order"]["external_ref"] == DEMO_ORDER_REF
+    assert report["recommendation"]["id"] == body["recommendations"][0]["id"]

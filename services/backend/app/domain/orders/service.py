@@ -51,6 +51,8 @@ from app.db.models import (
     QualityHold,
     QualityRelease,
     Reservation,
+    RunEvent,
+    RunSnapshot,
     Style,
     StyleOperation,
 )
@@ -73,6 +75,7 @@ from app.domain.vocab import (
     Role,
 )
 from app.jobs.queue import enqueue
+from app.orchestration.synthesis import REPORT_EVENT_TYPE as ORDER_REPORT_EVENT_TYPE
 
 # The job type the cancellation path enqueues (app.jobs.handlers registers the
 # handler under this same literal string; kept as a constant here too so a
@@ -128,6 +131,7 @@ class OrderDetailData:
     inspections: list[Inspection]
     holds: list[QualityHold]
     latest_run: AnalysisRun | None
+    latest_report: dict[str, Any] | None
     shipment: ShipmentEligibility
     allowed_transitions: list[str]
 
@@ -701,6 +705,33 @@ def _allowed_transitions(principal: Principal, order: Order) -> list[str]:
     return sorted(allowed)
 
 
+async def _latest_report(session: AsyncSession, order: Order) -> dict[str, Any] | None:
+    """The newest finalized run's order report, with a ``stale`` flag.
+
+    ``stale`` is true when the order has changed since the snapshot the report
+    was reasoned about, so the UI can say "this was true at version N".
+    """
+    row = (
+        await session.execute(
+            select(RunEvent.payload, RunSnapshot.input_versions)
+            .join(AnalysisRun, AnalysisRun.id == RunEvent.run_id)
+            .join(RunSnapshot, RunSnapshot.id == AnalysisRun.snapshot_id)
+            .where(
+                AnalysisRun.order_id == order.id,
+                RunEvent.event_type == ORDER_REPORT_EVENT_TYPE,
+            )
+            .order_by(RunEvent.id.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    payload, input_versions = row
+    versions = input_versions.get("order") if isinstance(input_versions, dict) else None
+    snapshot_version = versions.get(str(order.id)) if isinstance(versions, dict) else None
+    return {**payload, "stale": snapshot_version != order.version}
+
+
 async def order_detail(
     session: AsyncSession, principal: Principal, order_id: uuid.UUID
 ) -> OrderDetailData:
@@ -773,6 +804,7 @@ async def order_detail(
         .order_by(AnalysisRun.created_at.desc())
         .limit(1)
     )
+    latest_report = await _latest_report(session, order)
     shipment = await compute_shipment(session, order)
     allowed_transitions = _allowed_transitions(principal, order)
 
@@ -789,6 +821,7 @@ async def order_detail(
         inspections=inspections,
         holds=holds,
         latest_run=latest_run,
+        latest_report=latest_report,
         shipment=shipment,
         allowed_transitions=allowed_transitions,
     )

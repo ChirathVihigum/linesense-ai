@@ -10,7 +10,7 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import AgentContext
-from app.db.models import AnalysisRun, Order, RunSnapshot, User
+from app.db.models import AgentTask, AnalysisRun, Order, RunSnapshot, User
 from app.llm import LLMClient
 from app.orchestration.snapshot import (
     SnapshotBom,
@@ -93,6 +93,47 @@ def agent_context(
     }
     defaults.update(overrides)
     return AgentContext(**defaults)
+
+
+def run_row(**overrides: Any) -> AnalysisRun:
+    """An in-memory ``AnalysisRun`` (never added to a session)."""
+    defaults: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "organization_id": uuid.uuid4(),
+        "factory_id": uuid.uuid4(),
+        "order_id": uuid.uuid4(),
+        "status": "AWAITING_REVIEW",
+        "requested_by": uuid.uuid4(),
+        "llm_provider": "fixture",
+        "llm_model": "fixture-scripted-v1",
+        "replan_count": 0,
+        "trace_id": "trace-test",
+    }
+    defaults.update(overrides)
+    return AnalysisRun(**defaults)
+
+
+def task_row(
+    *, recipient: str = "rm", round_: int = 0, status: str = "SUCCEEDED", **overrides: Any
+) -> AgentTask:
+    """An in-memory ``AgentTask`` (never added to a session)."""
+    defaults: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "run_id": uuid.uuid4(),
+        "organization_id": uuid.uuid4(),
+        "factory_id": uuid.uuid4(),
+        "message_id": uuid.uuid4(),
+        "sender": "orchestrator",
+        "recipient": recipient,
+        "task_type": f"{recipient}_task",
+        "round": round_,
+        "idempotency_key": f"{recipient}-{round_}-{uuid.uuid4()}",
+        "status": status,
+        "envelope": {},
+        "deadline_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+    }
+    defaults.update(overrides)
+    return AgentTask(**defaults)
 
 
 async def make_run_with_snapshot(

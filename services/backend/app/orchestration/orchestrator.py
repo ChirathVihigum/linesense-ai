@@ -7,9 +7,12 @@ finalize — and is safe to deliver twice: the run row is locked only while
 state is read and written, dispatch is idempotent on the protocol's
 ``idempotency_key``, and finalization is guarded by the run's own status.
 
-Tasks never create tasks. The graph (RM round 0 -> planning round 0 ->
-optional targeted replan -> RM round 1 -> finalize) lives here and nowhere
-else; see ``docs/architecture/agent-protocol.md``.
+Tasks never create tasks. The graph lives here and nowhere else (see
+``docs/architecture/agent-protocol.md``): RM, IE and quality round 0 are
+dispatched together when the run starts; planning round 0 waits for RM *and*
+IE; one targeted replan may follow, then RM round 1 validates the selected
+plan; quality is independent of the planning chain but must be terminal
+before the run is finalized.
 """
 
 from __future__ import annotations
@@ -48,6 +51,8 @@ from app.orchestration.dispatch import AgentDispatchClient, DispatchError, make_
 from app.orchestration.events import append_event
 from app.orchestration.protocol import AgentErrorCode, AgentResult, InputRef, TaskEnvelope
 from app.orchestration.recommendations import create_recommendation
+from app.orchestration.snapshot import SnapshotData
+from app.orchestration.synthesis import REPORT_EVENT_TYPE, build_order_report
 
 logger = structlog.get_logger("app.orchestration")
 
@@ -63,6 +68,15 @@ RM_ASSESS = "assess_material_readiness"
 RM_VALIDATE = "validate_plan_materials"
 PLANNING_PROPOSE = "propose_allocation"
 PLANNING_REVISE = "revise_allocation"
+IE_ASSESS = "assess_line_capability"
+QUALITY_ASSESS = "assess_quality_status"
+# Dispatched together the moment the run starts: none of the three depends on
+# another, and planning must not wait for them one after the other.
+ROUND_ZERO: tuple[tuple[str, str], ...] = (
+    ("rm", RM_ASSESS),
+    ("ie", IE_ASSESS),
+    ("quality", QUALITY_ASSESS),
+)
 
 _TERMINAL_RUN_STATUSES = (
     RunStatus.AWAITING_REVIEW.value,
@@ -78,6 +92,8 @@ _TERMINAL_TASK_STATUSES = (
 )
 _ACTIVE_TASK_STATUSES = (TaskStatus.PENDING.value, TaskStatus.RUNNING.value)
 _SUPERSEDABLE = (RecommendationStatus.PROPOSED.value, RecommendationStatus.APPROVED.value)
+# A DEGRADED result still carries the agent's deterministic content.
+_USABLE_RESULT_STATUSES = ("SUCCEEDED", "DEGRADED")
 
 
 # --------------------------------------------------------------------------
@@ -198,14 +214,15 @@ def _envelope(
 # --------------------------------------------------------------------------
 
 
-async def _decide(session: AsyncSession, run: AnalysisRun) -> TaskEnvelope | None:
-    """Advance ``run`` by one step, returning the task to dispatch (if any).
+async def _decide(session: AsyncSession, run: AnalysisRun) -> list[TaskEnvelope]:
+    """Advance ``run`` by one step, returning the tasks to dispatch (if any).
 
     ``run`` is locked; every write here happens in the caller's transaction,
-    which commits *before* any HTTP dispatch.
+    which commits *before* any HTTP dispatch. Only the run's start returns
+    more than one envelope: the three independent round-0 tasks.
     """
     if run.status in _TERMINAL_RUN_STATUSES:
-        return None
+        return []
     if run.snapshot_id is None:  # pragma: no cover - runs are created with a snapshot
         raise PermanentJobError(f"run {run.id} has no snapshot to reason about")
 
@@ -215,7 +232,7 @@ async def _decide(session: AsyncSession, run: AnalysisRun) -> TaskEnvelope | Non
 
     if utcnow() >= run.deadline_at:
         await _finalize_deadline(session, run, tasks, results)
-        return None
+        return []
 
     if run.status == RunStatus.QUEUED.value:
         run.status = RunStatus.RUNNING.value
@@ -230,34 +247,50 @@ async def _decide(session: AsyncSession, run: AnalysisRun) -> TaskEnvelope | Non
         )
 
     rm0 = _task(tasks, "rm", 0)
+    ie0 = _task(tasks, "ie", 0)
+    quality0 = _task(tasks, "quality", 0)
     planning0 = _task(tasks, "planning", 0)
     planning1 = _task(tasks, "planning", 1)
     rm1 = _task(tasks, "rm", 1)
 
-    if rm0 is None:
-        return _envelope(
+    # The run's start: RM, IE and quality go out together. A delivery that
+    # found only some of them created (a dispatch that failed mid-way) sends
+    # the rest; dispatch is idempotent on the protocol's idempotency key.
+    missing = [
+        _envelope(
             run,
-            recipient="rm",
-            task_type=RM_ASSESS,
+            recipient=recipient,
+            task_type=task_type,
             round_=0,
             parent_task_id=None,
             input_refs=[snapshot_ref],
         )
-    if not _terminal(rm0):
-        return None
+        for recipient, task_type in ROUND_ZERO
+        if _task(tasks, recipient, 0) is None
+    ]
+    if missing:
+        return missing
+    assert rm0 is not None and ie0 is not None and quality0 is not None  # noqa: S101
+
+    # Planning needs both material and line capability; quality runs beside them.
+    if not _terminal(rm0) or not _terminal(ie0):
+        return []
     rm_refs = [InputRef(type="agent_result", id=rm0.id)] if rm0.id in results else []
+    ie_refs = [InputRef(type="agent_result", id=ie0.id)] if ie0.id in results else []
 
     if planning0 is None:
-        return _envelope(
-            run,
-            recipient="planning",
-            task_type=PLANNING_PROPOSE,
-            round_=0,
-            parent_task_id=None,
-            input_refs=[snapshot_ref, *rm_refs],
-        )
+        return [
+            _envelope(
+                run,
+                recipient="planning",
+                task_type=PLANNING_PROPOSE,
+                round_=0,
+                parent_task_id=None,
+                input_refs=[snapshot_ref, *rm_refs, *ie_refs],
+            )
+        ]
     if not _terminal(planning0):
-        return None
+        return []
 
     if planning1 is None:
         reason = needs_replan(results.get(planning0.id), results.get(rm0.id))
@@ -270,38 +303,56 @@ async def _decide(session: AsyncSession, run: AnalysisRun) -> TaskEnvelope | Non
                 await append_event(
                     session, run.id, REPLAN_EVENT, ORCHESTRATOR_ACTOR, {"reason": reason}
                 )
-            return _envelope(
-                run,
-                recipient="planning",
-                task_type=PLANNING_REVISE,
-                round_=1,
-                parent_task_id=planning0.id,
-                input_refs=[*rm_refs, InputRef(type="agent_result", id=planning0.id)],
-            )
+            return [
+                _envelope(
+                    run,
+                    recipient="planning",
+                    task_type=PLANNING_REVISE,
+                    round_=1,
+                    parent_task_id=planning0.id,
+                    input_refs=[
+                        *rm_refs,
+                        *ie_refs,
+                        InputRef(type="agent_result", id=planning0.id),
+                    ],
+                )
+            ]
 
     final_planning = planning1 or planning0
     if not _terminal(final_planning):
-        return None
+        return []
     final_result = results.get(final_planning.id)
 
     if rm1 is None and _allocates_units(final_result):
-        return _envelope(
-            run,
-            recipient="rm",
-            task_type=RM_VALIDATE,
-            round_=1,
-            parent_task_id=final_planning.id,
-            input_refs=[snapshot_ref, InputRef(type="agent_result", id=final_planning.id)],
-        )
+        return [
+            _envelope(
+                run,
+                recipient="rm",
+                task_type=RM_VALIDATE,
+                round_=1,
+                parent_task_id=final_planning.id,
+                input_refs=[snapshot_ref, InputRef(type="agent_result", id=final_planning.id)],
+            )
+        ]
     if rm1 is not None and not _terminal(rm1):
-        return None
+        return []
+    # Quality is independent of the planning chain, but the report cannot be
+    # written without it.
+    if not _terminal(quality0):
+        return []
 
     await _finalize(session, run, tasks, results)
-    return None
+    return []
 
 
 def _allocates_units(result: AgentResult | None) -> bool:
-    if result is None or result.status != "SUCCEEDED":
+    """Whether the selected plan commits units that RM must still validate.
+
+    A DEGRADED plan counts: its allocation is deterministic, and
+    ``create_recommendation`` will propose it, so its materials must be
+    validated before a human is asked to approve it.
+    """
+    if result is None or result.status not in _USABLE_RESULT_STATUSES:
         return False
     action = _top_allocation(result)
     if action is None:
@@ -465,6 +516,8 @@ async def _finalize(
     else:
         status = RunStatus.DEGRADED.value
 
+    run.status = status
+    await _append_report(session, run, tasks, results, snapshot, recommendation)
     await _close_run(
         session,
         run,
@@ -473,6 +526,38 @@ async def _finalize(
         error_code=error_code,
         recommendation_id=recommendation.id if recommendation is not None else None,
         completed_at=utcnow(),
+    )
+
+
+async def _append_report(
+    session: AsyncSession,
+    run: AnalysisRun,
+    tasks: list[AgentTask],
+    results: dict[uuid.UUID, AgentResult],
+    snapshot: RunSnapshot | None,
+    recommendation: Recommendation | None,
+) -> None:
+    """Write the run's canonical order report as a ``run.report`` event.
+
+    ``run.status`` is already the status the run is closing with, so the
+    report's ``states.analysis`` matches what the API will return.
+    """
+    if snapshot is None:  # pragma: no cover - runs are created with a snapshot
+        logger.warning("orchestrator.report_skipped", run_id=str(run.id), reason="no snapshot")
+        return
+    report = build_order_report(
+        run,
+        SnapshotData.model_validate(snapshot.data),
+        results,
+        recommendation,
+        tasks=tasks,
+    )
+    await append_event(
+        session,
+        run.id,
+        REPORT_EVENT_TYPE,
+        ORCHESTRATOR_ACTOR,
+        report.model_dump(mode="json"),
     )
 
 
@@ -508,14 +593,24 @@ async def _finalize_deadline(
         )
         .execution_options(synchronize_session=False)
     )
+    for task in tasks:
+        # The rows were just cancelled in SQL; keep the loaded copies in step so
+        # the report describes the tasks as they now are.
+        if task.status in _ACTIVE_TASK_STATUSES:
+            task.status = TaskStatus.CANCELLED.value
     planning_succeeded = any(
         result.agent == "planning" and result.status == "SUCCEEDED" for result in results.values()
     )
     reasons = _degraded_reasons(results, tasks)
+    status = RunStatus.DEGRADED.value if planning_succeeded else RunStatus.FAILED.value
+    run.status = status
+    await _append_report(
+        session, run, tasks, results, await session.get(RunSnapshot, run.snapshot_id), None
+    )
     await _close_run(
         session,
         run,
-        status=RunStatus.DEGRADED.value if planning_succeeded else RunStatus.FAILED.value,
+        status=status,
         degraded_reason=", ".join(reasons) if reasons else AgentErrorCode.DEADLINE_EXCEEDED.value,
         error_code=AgentErrorCode.DEADLINE_EXCEEDED.value,
         recommendation_id=None,
@@ -546,9 +641,9 @@ async def advance_run(ctx: JobContext) -> None:
             logger.warning("orchestrator.unknown_run", run_id=str(run_id))
             await finish_in_transaction(ctx, session)
             return
-        envelope = await _decide(session, run)
+        envelopes = await _decide(session, run)
 
-    if envelope is not None:
+    for envelope in envelopes:
         try:
             receipt = await _dispatch_client(ctx).submit(envelope)
         except DispatchError as exc:

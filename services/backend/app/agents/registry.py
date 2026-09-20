@@ -1,7 +1,6 @@
 """The agents the executor may run, keyed by protocol recipient.
 
-The RM and planning agents are registered here at import time; the IE and
-quality agents join them in a later task. Tests register fakes through
+All four agents are registered here at import time. Tests register fakes through
 :func:`register_agent` (or :func:`temporary_agent`) and restore the registry
 afterwards.
 """
@@ -12,12 +11,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from app.agents.base import BaseAgent
+from app.agents.ie import IEAgent
 from app.agents.planning import PlanningAgent
+from app.agents.quality import QualityAgent
 from app.agents.rm import RMAgent
 
 AGENTS: dict[str, type[BaseAgent]] = {
     RMAgent.name: RMAgent,
     PlanningAgent.name: PlanningAgent,
+    IEAgent.name: IEAgent,
+    QualityAgent.name: QualityAgent,
 }
 
 

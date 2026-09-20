@@ -370,6 +370,9 @@ async def _quality(session: AsyncSession, order: Order) -> SnapshotQuality:
     inspections = await quality_service.list_inspections(session, order.id)
     holds = await quality_service.order_holds(session, order.id)
     releases = await quality_service.list_releases(session, order.id)
+    defects = await quality_service.defects_by_inspection(
+        session, [inspection.id for inspection in inspections]
+    )
     eligibility = shipment_eligibility(await quality_service.shipment_facts(session, order))
     return SnapshotQuality(
         policy=(
@@ -393,6 +396,17 @@ async def _quality(session: AsyncSession, order: Order) -> SnapshotQuality:
                 "policy_version_id": str(inspection.policy_version_id),
                 "line_id": str(inspection.line_id) if inspection.line_id else None,
                 "inspected_at": inspection.inspected_at.isoformat(),
+                # Defects belong to an operation and an inspection; no observation
+                # carries an operator, so the quality agent can never see one.
+                "defects": [
+                    {
+                        "defect_code": defect.defect_code,
+                        "severity": defect.severity,
+                        "count": defect.count,
+                        "operation_id": (str(defect.operation_id) if defect.operation_id else None),
+                    }
+                    for defect in defects.get(inspection.id, [])
+                ],
             }
             for inspection in inspections
         ],

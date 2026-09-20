@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -132,6 +133,9 @@ class OrderDetail(OrderSummary):
     inspections: list[InspectionOut]
     holds: list[HoldOut]
     latest_run: LatestRunOut | None
+    # The latest finalized run's canonical order report (``run.report``), with a
+    # ``stale`` flag when the order has changed since that run's snapshot.
+    latest_report: dict[str, Any] | None
     allowed_transitions: list[str]
 
 
