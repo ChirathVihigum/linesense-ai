@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import unicodedata
 
 from app.llm.redaction import REDACTED, redact_payload, redact_text
 
@@ -35,6 +36,23 @@ def test_operator_aliases_are_not_redacted() -> None:
     # Pseudonymous alias codes (backend-contracts.md section 2) must survive.
     text = "operator KTN-OP-017 recorded the cycle"
     assert redact_text(text) == text
+
+
+def test_redacts_nfd_decomposed_email_local_part() -> None:
+    # "josé@example.com" with the "é" as NFD (base "e" + combining acute
+    # accent U+0301) rather than the precomposed NFC codepoint. A word-char
+    # scan limited to `str.isalnum()` stops at the combining mark, one
+    # character short of "@", and previously dropped the whole match.
+    nfd_email = unicodedata.normalize("NFD", "josé@example.com")
+    assert nfd_email != "josé@example.com"  # sanity: decomposition actually happened
+    assert redact_text(f"contact {nfd_email} for details") == f"contact {REDACTED} for details"
+
+
+def test_redacts_nfd_decomposed_email_domain_label() -> None:
+    # The accent lands in the domain's final label instead of the local part.
+    nfd_email = unicodedata.normalize("NFD", "contact@café.example")
+    assert nfd_email != "contact@café.example"
+    assert redact_text(f"see {nfd_email} now") == f"see {REDACTED} now"
 
 
 def test_redact_payload_recurses_through_nested_structures() -> None:

@@ -23,6 +23,7 @@ from app.api.notes import router as notes_router
 from app.api.notifications import router as notifications_router
 from app.api.orders import router as orders_router
 from app.api.quality import router as quality_router
+from app.api.ratelimit import RateLimitMiddleware
 from app.api.recommendations import router as recommendations_router
 from app.api.reference import router as reference_router
 from app.api.runs import router as runs_router
@@ -48,7 +49,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Starlette runs the most recently added middleware first, so the
     # effective order (outermost first) is: trace id -> security headers ->
-    # OIDC handshake cookie -> CSRF -> routes.
+    # OIDC handshake cookie -> CSRF -> rate limiting -> routes. Rate limiting
+    # is added before CSRF (so it ends up innermost, right before the route)
+    # to reuse the session CSRF already resolved for unsafe `/api/...`
+    # requests (see RateLimitMiddleware's docstring).
+    app.add_middleware(RateLimitMiddleware, settings=resolved_settings)
     app.add_middleware(CsrfMiddleware, settings=resolved_settings)
     # The signed session cookie is used only for the OIDC handshake (state,
     # nonce, PKCE verifier, post-login path); application sessions are the
@@ -62,7 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         same_site="lax",
         https_only=resolved_settings.environment == "production",
     )
-    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(
+        SecurityHeadersMiddleware, https_only=resolved_settings.environment == "production"
+    )
     app.add_middleware(TraceIdMiddleware)
 
     register_exception_handlers(app)

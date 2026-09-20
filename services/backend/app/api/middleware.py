@@ -66,24 +66,49 @@ _BASE_SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
 )
 _NO_STORE_PREFIXES = ("/api", "/auth")
 
+# task-25-brief.md req. 1: every JSON API response is not a document that
+# could ever legitimately load a script, style, image or frame of its own,
+# so it gets the strictest possible policy rather than the web app's
+# (apps/web/vite.config.ts / index.html) `'self'`-scoped one.
+_API_CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'"
+# No API response needs any browser feature; deny every one this browser
+# supports gating (keeping the list short and explicit rather than `()` for
+# every feature UAs might add is a deliberate, documented minimum).
+_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
+_HSTS_VALUE = "max-age=63072000; includeSubDomains"
 
-def security_headers_for(path: str) -> dict[str, str]:
-    """The security headers every response to ``path`` carries."""
+
+def security_headers_for(path: str, *, https_only: bool = False) -> dict[str, str]:
+    """The security headers every response to ``path`` carries.
+
+    ``https_only`` should be ``True`` only when ``LS_ENVIRONMENT=production``
+    (backend-contracts.md: HSTS only makes sense once the app is actually
+    served over HTTPS; sending it in development, where the dev server is
+    plain HTTP, would just be ignored by the browser at best).
+    """
     headers = {
         name.decode("latin-1"): value.decode("latin-1") for name, value in _BASE_SECURITY_HEADERS
     }
+    headers["permissions-policy"] = _PERMISSIONS_POLICY
     if path.startswith(_NO_STORE_PREFIXES):
         headers["cache-control"] = "no-store"
+        headers["content-security-policy"] = _API_CONTENT_SECURITY_POLICY
+    if https_only:
+        headers["strict-transport-security"] = _HSTS_VALUE
     return headers
 
 
 class SecurityHeadersMiddleware:
-    """Adds ``X-Content-Type-Options``, ``Referrer-Policy`` and ``X-Frame-Options``
-    to every HTTP response, and ``Cache-Control: no-store`` under ``/api`` and
-    ``/auth`` (replacing any value set by the handler)."""
+    """Adds ``X-Content-Type-Options``, ``Referrer-Policy``, ``X-Frame-Options``
+    and ``Permissions-Policy`` to every HTTP response; ``Cache-Control:
+    no-store`` and ``Content-Security-Policy`` under ``/api`` and ``/auth``
+    (replacing any value set by the handler); and ``Strict-Transport-Security``
+    everywhere when ``settings.environment == "production"``.
+    """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, https_only: bool = False) -> None:
         self.app = app
+        self.https_only = https_only
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -92,7 +117,9 @@ class SecurityHeadersMiddleware:
 
         extra = [
             (name.encode("latin-1"), value.encode("latin-1"))
-            for name, value in security_headers_for(scope["path"]).items()
+            for name, value in security_headers_for(
+                scope["path"], https_only=self.https_only
+            ).items()
         ]
         names = {name for name, _ in extra}
 

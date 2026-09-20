@@ -154,7 +154,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     # already reset that context variable by the time this handler runs (see
     # `_trace_id_for`'s docstring), so the processor would see it empty.
     logger.exception("unhandled_exception", trace_id=trace_id, exc_info=exc)
-    headers = security_headers_for(request.url.path)
+    settings = getattr(request.app.state, "settings", None)
+    https_only = getattr(settings, "environment", None) == "production"
+    headers = security_headers_for(request.url.path, https_only=https_only)
     if trace_id:
         headers["X-Request-Id"] = trace_id
     return JSONResponse(
