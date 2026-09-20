@@ -38,7 +38,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -473,15 +473,12 @@ async def _run_four_agent_flow(
     material_conflict_pred = coverable is not None and coverable < Decimal(QUANTITY)
 
     respects_material_coverage: bool | None = None
+    respects_material_coverage_error: str | None = None
     if recommendation is not None and coverable is not None:
         proposal = recommendation[0] if isinstance(recommendation[0], dict) else {}
-        allocated = proposal.get("allocated_units")
-        try:
-            respects_material_coverage = (
-                allocated is not None and Decimal(str(allocated)) <= coverable
-            )
-        except Exception:  # noqa: BLE001 - a malformed proposal is reported, never crashes the run
-            respects_material_coverage = None
+        respects_material_coverage, respects_material_coverage_error = _respects_material_coverage(
+            proposal.get("allocated_units"), coverable
+        )
 
     total_model_calls = sum(r.execution_metadata.model_calls for r in results.values())
     evidence_per_blocker = _evidence_per_blocker(results.values())
@@ -490,6 +487,7 @@ async def _run_four_agent_flow(
         "material_conflict_pred": material_conflict_pred,
         "capacity_sufficient_pred": _capacity_sufficient_predicted(planning_result),
         "respects_material_coverage": respects_material_coverage,
+        "respects_material_coverage_error": respects_material_coverage_error,
         "recommendation_created": recommendation is not None,
         "evidence_refs_per_blocker": evidence_per_blocker,
         "citation_valid": citation_valid,
@@ -517,6 +515,25 @@ async def _load_results(session: AsyncSession, run_id: uuid.UUID) -> dict[str, A
     for recipient, _round, payload in rows:
         results[recipient] = AgentResult.model_validate(payload)
     return results
+
+
+def _respects_material_coverage(
+    allocated: Any, coverable: Decimal
+) -> tuple[bool | None, str | None]:
+    """Whether a recommendation's `allocated_units` stays within the
+    material `coverable` for this scenario.
+
+    Returns `(result, error)`: `result` is `None` when `allocated` is
+    missing (no proposal value to check) or when it could not be converted
+    to a `Decimal` (a malformed eval-harness fixture, not a real-run
+    concern -- reported honestly via `error` rather than crashing the run).
+    """
+    if allocated is None:
+        return None, None
+    try:
+        return Decimal(str(allocated)) <= coverable, None
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        return None, f"{type(exc).__name__}: {exc}"
 
 
 def _evidence_per_blocker(results: Any) -> float | None:

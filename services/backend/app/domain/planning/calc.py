@@ -157,9 +157,12 @@ def plan_earliest_slots(
         if remaining_target <= 0:
             break
         required_minutes_for_remaining = remaining_target * sam_minutes_per_unit
+        # `take_minutes` is always > 0 here: `remaining_target > 0` (the loop
+        # would have broken above otherwise), `sam_minutes_per_unit > 0`
+        # (validated at entry), and `slot.remaining_standard_minutes > 0`
+        # (the `eligible` filter above excludes exhausted slots) — so
+        # `min()` of two positives is always positive.
         take_minutes = min(required_minutes_for_remaining, slot.remaining_standard_minutes)
-        if take_minutes <= 0:
-            continue
         take_units = take_minutes / sam_minutes_per_unit
         allocations.append(
             SlotAllocation(
