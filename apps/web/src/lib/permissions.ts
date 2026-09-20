@@ -25,6 +25,19 @@ export type Permission =
   | 'audit:read'
   | 'admin:manage'
 
+/** Role names from backend-contracts.md §4 (`app/auth/policy.py`). */
+export const ROLES = [
+  'org_admin',
+  'supervisor',
+  'planner',
+  'storekeeper',
+  'ie_engineer',
+  'quality_manager',
+  'viewer',
+] as const
+
+export type Role = (typeof ROLES)[number]
+
 /**
  * Whether the signed-in user holds `permission` in a factory. The server is the
  * authority (it re-checks every request); this only decides what the UI offers.

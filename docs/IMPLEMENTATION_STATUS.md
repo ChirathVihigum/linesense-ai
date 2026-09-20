@@ -2819,3 +2819,116 @@ there concurrently.
   OrderCreatePage,OrderCreatePage.test}.tsx`, `apps/web/src/features/planning/PlanningBoardPage.tsx`,
   `apps/web/src/components/{stateStyles.ts,StateBadge.test.tsx}`, `apps/web/src/test/server.ts`,
   `apps/web/src/generated/api.ts`, `contracts/openapi.json`.
+
+## 2026-09-20 — Task 22: operations dashboard, notifications, notes, knowledge base, administration
+
+- **Built (backend):** `GET /api/v1/factories/{factory_id}/dashboard` (`order:read`): computed
+  entirely in deterministic SQL (no LLM) in exactly 6 statements per request (a query-count-bound
+  integration test proves this, netting out the fixed `resolve_session`/`load_principal` auth
+  overhead every route pays so the assertion is about the dashboard's own budget) —
+  `orders_at_risk` merged with the independent `pending_approvals` scalar via a `json_agg`
+  aggregate (an aggregate query with no `GROUP BY` always returns exactly one row, so the count is
+  never lost even with zero at-risk orders; `orders_at_risk` has no `Decimal` fields, so folding it
+  into JSON loses no precision), `material_shortages` (demand from open VALIDATED/PLANNED orders'
+  BOM lines vs. available_now, or below a reorder point derived from 14-day issue consumption),
+  active `quality_holds`, `active_runs`, and `capacity_next_7_days` per-line utilization —
+  `material_shortages`/`capacity_next_7_days` keep `Decimal` end to end (never routed through
+  JSON). `app/api/admin.py` (`admin:manage`, org_admin only, not factory-scoped —
+  `Principal.has_anywhere`): `GET /admin/memberships` (users + role assignments), `POST
+  /admin/memberships/{id}/roles` (idempotent grant: an existing identical assignment is a no-op,
+  not a duplicate), `DELETE /admin/role-assignments/{id}` (409 on the organization's last
+  `org_admin` assignment), `POST /admin/memberships/{id}/deactivate` (409 on self), `GET
+  /admin/policies`, `GET /admin/settings` (read-only effective run limits, reusing
+  `app.api.analyses.llm_identity`'s fixture/anthropic label logic). Every membership/role
+  write revokes every active session of the affected user (a bulk `UPDATE sessions ...
+  WHERE user_id = :uid`, not just the caller's own session) and is audited with before/after;
+  denied privileged writes audit `DENIED` via the `app.api.orders` idempotency/audit-denial
+  helpers already shared by `inventory.py`/`notes.py`.
+- **Built (frontend):** `OverviewPage` (cards per dashboard section, "as of" freshness from
+  `generated_at`, a neutral utilization mini-bar with numeric text, links only to screens that
+  exist — orders/materials/quality/planning — never a fabricated destination for
+  `active_runs`/`pending_approvals`, which have no screen yet). `NotificationsMenu` (mounted in
+  `Layout`'s header next to `UserMenu`): unread badge from the fetched page, list, mark-read,
+  and a `resolveNotificationLink` that maps the backend's pre-existing `/orders/{id}` and
+  `/recommendations/{id}` links onto the real `/f/:code/orders/:id` and `/f/:code/approvals/:id`
+  routes now that they exist, leaving anything else as plain text rather than a dead link.
+  `NotesPage`: textarea (2,000 max, mirrored client-side), submit shows classification +
+  classifier version, resolved entities as chips (`ORDER` links to the order detail route using
+  its `resolved_id`; `LINE`/`MATERIAL` link to the planning board/materials page; every other
+  label a plain chip, matching that `note.entities` only ever contains resolved mentions),
+  unresolved order references listed as text, the exact contractual `notice` string, and a
+  classification-filtered, paginated recent-notes list. `features/knowledge/{KnowledgePage,
+  UploadForm,DocumentVersions,SearchPanel}`: document list with `document_version` status badges
+  (a new `stateStyles` vocabulary, alongside `policy`/`audit_outcome` also added here) and
+  rejection reasons; `UploadForm` uses a hand-rolled `XMLHttpRequest`-in-a-promise (not the
+  generated `fetch`-based client) so upload progress is observable, with client-side size
+  (10 MB)/extension (`.pdf`/`.md`/`.txt`) checks, CSRF + Idempotency-Key headers, and an
+  org-wide-scope option gated on the caller's own `org_admin`/`supervisor` roles;
+  `DocumentVersions` polls (`refetchInterval`) while any version is `QUARANTINE`/`PROCESSING`;
+  `SearchPanel` (mode selector, results with a literal-text excerpt, "open citation" fetching
+  `GET /citations/{chunk_id}`). `features/admin/{AdminPage,AuditLogTable,MembershipTable,
+  PolicyList,BudgetSettings}`: tabs (Audit log reusing the existing factory-scoped audit-events
+  route with filters+pagination; Memberships with `ConfirmDialog`-gated grant/revoke/deactivate,
+  each disabling the server call until confirmed and revoking only after the server responds;
+  Quality policies with a demo-policy pill; Settings as a read-only definition list). Router:
+  `DEFAULT_FACTORY_SECTION` switched from `orders` to `overview`; new routes `overview`, `notes`,
+  `knowledge`, `admin`. `Layout`: new nav sections (Overview, Notes, Knowledge base,
+  Administration — the last gated on `admin:manage`, hidden for everyone else) and the
+  notifications menu in the header. Two icons/vocab additions needed by these screens (`bell`,
+  `chat-text`, `file-text`, `gear`, `shield-check`, `users` in `Icon.tsx`; `ROLES` added to
+  `lib/permissions.ts` for the grant-role/ACL-roles selects).
+- **Concurrency note:** `app/api/{dashboard.py,schemas/dashboard.py}`,
+  `apps/web/src/app/router.tsx`, `apps/web/src/components/stateStyles.ts`, and
+  `apps/web/src/test/server.ts` were edited here but landed in *other* tasks' commits (the shared
+  working tree swept this task's uncommitted changes to those files into their commits, including
+  a mid-task rename this task built (`DashboardQualityHoldOut`, avoiding an OpenAPI name collision
+  with `app.api.schemas.quality.QualityHoldOut`) that another agent's automated pass finished);
+  `git diff HEAD` against them is empty, so nothing from this task was lost, only mis-attributed by
+  commit message. `app/main.py`'s two router registrations landed the same way, in the security
+  task's commit. This task's own commit therefore carries only the files pathspec'd below.
+- **Tests:**
+  ```
+  $ LS_TEST_DATABASE_URL=...test_d LS_TEST_MIGRATION_DATABASE_URL=...test_d \
+      scripts/heavy-job.sh uv run pytest tests/integration/test_dashboard_api.py \
+      tests/integration/test_admin_api.py -q
+      # 13 passed (3 dashboard: content across all 6 sections, 404 for an inaccessible factory,
+      # the 6-statement query-count bound; 10 admin: grant + idempotent re-grant, supervisor
+      # forbidden with a DENIED audit row, last-org_admin 409, revoke-role and deactivate each
+      # revoke the target's live session (a fresh client with the old cookie gets 401 from
+      # /api/v1/me), self-deactivate 409, list/settings/policies permission and shape checks)
+  $ scripts/heavy-job.sh uv run ruff check app/api/dashboard.py app/api/admin.py \
+      app/api/schemas/dashboard.py app/api/schemas/admin.py app/main.py \
+      tests/integration/test_dashboard_api.py tests/integration/test_admin_api.py   # clean
+  $ scripts/heavy-job.sh uv run ruff format --check <same files>                    # clean
+  $ scripts/heavy-job.sh uv run mypy app/api/dashboard.py app/api/admin.py \
+      app/api/schemas/dashboard.py app/api/schemas/admin.py app/main.py             # clean
+  $ scripts/heavy-job.sh npx vitest run   # whole web suite: 34 files, 123 passed
+  $ scripts/heavy-job.sh npx eslint . --max-warnings=0   # whole web app: clean
+  $ scripts/heavy-job.sh npx tsc -b                      # whole web app: clean
+  $ scripts/heavy-job.sh make build                      # backend import check + vite build: OK
+  ```
+- **Limitations:** full suites (`make test`, `make test-integration`) remain **PENDING (needs user
+  approval or CI)** per the heat policy; only the two new integration test files were run against
+  the database. `make contracts-check` was not run: it diffs the exported OpenAPI document and
+  generated client against the working tree via `git diff --exit-code`, which is not meaningful
+  while several agents' changes are uncommitted in the same tree; `make contracts` was run and
+  `contracts/openapi.json`/`apps/web/src/generated/api.ts` are current for every route that exists
+  as of this task (already committed by another task, per the concurrency note above). The
+  knowledge-base UI's "open citation" and the notes UI's order/line/material links depend on
+  Task 17/18 routes that landed mid-task; both existed by the time this task finished and are
+  exercised by the screens above.
+- **Files changed:** new — `services/backend/app/api/{dashboard,admin}.py`,
+  `services/backend/app/api/schemas/{dashboard,admin}.py`,
+  `services/backend/tests/integration/test_{dashboard,admin}_api.py`,
+  `apps/web/src/features/overview/{OverviewPage,OverviewPage.test}.tsx`,
+  `apps/web/src/features/notifications/{NotificationsMenu,NotificationsMenu.test}.tsx`,
+  `apps/web/src/features/notes/{NotesPage,NotesPage.test}.tsx`,
+  `apps/web/src/features/knowledge/{KnowledgePage,UploadForm,UploadForm.test,DocumentVersions,
+  SearchPanel,SearchPanel.test}.tsx`,
+  `apps/web/src/features/admin/{AdminPage,AdminPage.test,AuditLogTable,MembershipTable,
+  MembershipTable.test,PolicyList,BudgetSettings}.tsx`. Modified —
+  `services/backend/app/main.py` (router registration; landed in another task's commit, see
+  concurrency note), `apps/web/src/app/{router.tsx,Layout.tsx}` (landed in another task's commit),
+  `apps/web/src/app/Layout.test.tsx`, `apps/web/src/components/{Icon.tsx,stateStyles.ts}`
+  (`stateStyles.ts` landed in another task's commit), `apps/web/src/lib/permissions.ts`,
+  `apps/web/src/test/server.ts` (landed in another task's commit).
