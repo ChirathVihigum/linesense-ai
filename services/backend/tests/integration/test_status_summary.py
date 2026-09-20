@@ -166,6 +166,103 @@ async def test_summary_is_stale_when_order_version_moved_past_the_snapshot(
     assert response.json()["stale"] is True
 
 
+async def test_status_summary_agrees_with_order_detail_latest_report_when_absent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    """`GET /orders/{id}` and `GET /orders/{id}/status-summary` share
+    `app.domain.orders.service.latest_order_report` (fix round 1) and must
+    always agree on whether a report exists for the same order.
+    """
+    ktn = identity.factories["KTN"]
+    order = await make_order(db_session, organization=identity.organization, factory=ktn)
+    await db_session.commit()
+
+    planner = await login_as(client, session_factory, "planner@demo.test")
+    detail = await planner.get(f"/api/v1/orders/{order.id}")
+    summary = await planner.get(f"/api/v1/orders/{order.id}/status-summary")
+
+    assert detail.status_code == 200
+    assert detail.json()["latest_report"] is None
+    assert summary.status_code == 409
+
+
+async def test_status_summary_agrees_with_order_detail_latest_report_when_fresh(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    ktn = identity.factories["KTN"]
+    order = await make_order(db_session, organization=identity.organization, factory=ktn)
+    run = await _completed_run_with_report(db_session, order)
+    snapshot = RunSnapshot(
+        run_id=run.id,
+        organization_id=order.organization_id,
+        factory_id=order.factory_id,
+        order_id=order.id,
+        input_versions={"order": {str(order.id): order.version}},
+        data={},
+    )
+    db_session.add(snapshot)
+    await db_session.flush()
+    run.snapshot_id = snapshot.id
+    await db_session.commit()
+
+    planner = await login_as(client, session_factory, "planner@demo.test")
+    detail = await planner.get(f"/api/v1/orders/{order.id}")
+    summary = await planner.get(f"/api/v1/orders/{order.id}/status-summary")
+
+    assert detail.status_code == 200
+    detail_body = detail.json()
+    assert detail_body["latest_report"] is not None
+    assert detail_body["latest_report"]["stale"] is False
+    assert detail_body["latest_run"]["id"] == str(run.id)
+
+    assert summary.status_code == 200
+    summary_body = summary.json()
+    assert summary_body["stale"] is False
+    assert summary_body["report_run_id"] == str(run.id)
+
+
+async def test_status_summary_agrees_with_order_detail_latest_report_when_stale(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityFixture,
+) -> None:
+    ktn = identity.factories["KTN"]
+    order = await make_order(db_session, organization=identity.organization, factory=ktn)
+    run = await _completed_run_with_report(db_session, order)
+    snapshot = RunSnapshot(
+        run_id=run.id,
+        organization_id=order.organization_id,
+        factory_id=order.factory_id,
+        order_id=order.id,
+        input_versions={"order": {str(order.id): order.version}},
+        data={},
+    )
+    db_session.add(snapshot)
+    await db_session.flush()
+    run.snapshot_id = snapshot.id
+    order.version = order.version + 1
+    await db_session.commit()
+
+    planner = await login_as(client, session_factory, "planner@demo.test")
+    detail = await planner.get(f"/api/v1/orders/{order.id}")
+    summary = await planner.get(f"/api/v1/orders/{order.id}/status-summary")
+
+    assert detail.status_code == 200
+    detail_body = detail.json()
+    assert detail_body["latest_report"] is not None
+    assert detail_body["latest_report"]["stale"] is True
+
+    assert summary.status_code == 200
+    assert summary.json()["stale"] is True
+
+
 async def test_unknown_order_returns_not_found(
     client: AsyncClient,
     db_session: AsyncSession,
