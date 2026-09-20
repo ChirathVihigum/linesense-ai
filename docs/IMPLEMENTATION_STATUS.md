@@ -3376,3 +3376,58 @@ Fixed 9 of the 10 items in the polish batch (`.superpowers/sdd/2026-09-17-linese
 `services/backend/tests/unit/test_import_csv.py`;
 `apps/web/src/features/notifications/NotificationsMenu.test.tsx`. Created —
 `services/backend/tests/unit/test_validate_infra.py`, `test_agent_eval.py`.
+
+## 2026-09-20: Task 25 fix round 1 (security review)
+
+Full detail: `.superpowers/sdd/2026-09-17-linesense-build/task-25-report.md`'s "Fix round 1"
+section. Summary of what changed and why (superseding a few claims in the original Task 25 entry
+above, which is left as-is rather than rewritten):
+
+- **Critical**: `scripts/secret-scan.sh`'s PEM-header pattern (`-----BEGIN ...`) was parsed by
+  `grep` as an option because it starts with `-`, and the swallowed exit status (`|| true`) made
+  that check silently fail open — it never actually ran. Fixed with an explicit `-e` and real
+  exit-status handling that aborts the script on a grep error instead of treating it as "no match".
+- **Important**: narrowed the `tests/`-wide exclusion for the key/AWS-id/private-key patterns down
+  to an explicit allowlist of the 3 reviewed `sk-ant` fixture files (a real secret under `tests/`
+  is caught again); added planted-pattern self-tests for both scanners
+  (`scripts/self-test-secret-scan.sh`, `self-test-dependency-audit.sh`); **the "RM is the only
+  document-using agent" framing was wrong as of this review — IE and quality both wire
+  `search_documents` now** — extended `tests/security/test_prompt_injection.py` to drive all
+  three (payload-override stays RM-only, documented why), and corrected
+  `app/retrieval/agent_tool.py`'s docstring and `docs/security/threat-model.md` to match;
+  `scripts/restore.sh`'s ledger check used an INNER JOIN that silently dropped a balance row with
+  zero accepted lots from verification entirely — now LEFT JOIN; corrected
+  `docs/operations/backup-restore.md`'s false claim that `test_document_tool.py`/
+  `test_prompt_injection.py` exercise `restore.sh`'s storage-key check (they don't call
+  `restore.sh` at all — recorded as an honest open gap instead); `backup.sh`/`restore.sh` no
+  longer put the passphrase in the process table (`-pass env:...` not `-pass pass:$VAR`);
+  `scripts/perf_smoke.py` no longer counts a 4xx as "ok", and fetches each order's real version
+  instead of hardcoding `1`; `tests/resilience/test_worker_kill.py`'s "no duplicate allocations"
+  assertion was vacuous (nothing was ever applied) — it now drives the recovered run's
+  recommendation through a real approve + apply, asserts exactly one allocation/reservation set
+  resulted, that re-applying is rejected (409) and writes nothing further, and that *every* task
+  in the run (not just the killed one) has exactly one stored result.
+- **Minor**: `TokenBucketLimiter` is now bounded (50,000 entries, LRU eviction) instead of able to
+  grow forever under many distinct IPs; the reveal-keys check's `LS_*` forbidden-value list is now
+  filtered to secret-shaped names (`SECRET`/`TOKEN`/`PASSWORD`/`KEY`) of length >= 8, not every
+  `LS_*` value; `make restore-check` now times both steps; `docs/operations/backup-restore.md`'s
+  transcript is one real, single, back-to-back run (the previous version stitched two runs
+  together with inconsistent timestamps).
+
+**Commands and results** (DB letter `b`, via `scripts/heavy-job.sh`): `uv run pytest
+tests/security/test_headers_and_limits.py tests/security/test_prompt_injection.py
+tests/resilience/test_worker_kill.py -q` → 27 passed; `bash scripts/self-test-secret-scan.sh` and
+`self-test-dependency-audit.sh` → both pass; `bash scripts/secret-scan.sh` → OK, 531 files; one
+real `bash scripts/backup.sh linesense_dev` + `bash scripts/restore.sh` cycle (0.877s / 1.507s,
+verbatim transcript in `backup-restore.md`); `ruff check`/`ruff format --check` on every touched
+file clean; `mypy app` clean (the one pre-existing, unrelated `tests/helpers/worker.py` error is
+untouched by this task — confirmed via `git diff`).
+
+**Files changed** (fix round 1): modified — `scripts/secret-scan.sh`, `backup.sh`, `restore.sh`,
+`perf_smoke.py`; `Makefile` (`restore-check` timing); `services/backend/app/api/ratelimit.py`
+(bounded limiter); `services/backend/app/retrieval/agent_tool.py` (docstring);
+`services/backend/tests/security/test_prompt_injection.py` (extended to IE/quality),
+`test_headers_and_limits.py` (eviction test); `services/backend/tests/resilience/
+test_worker_kill.py` (real approve+apply, per-task result check); `docs/security/
+threat-model.md`, `docs/operations/backup-restore.md`. Created —
+`scripts/self-test-secret-scan.sh`, `self-test-dependency-audit.sh`.
