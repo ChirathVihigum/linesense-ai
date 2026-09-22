@@ -139,7 +139,18 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv)
     anchor_date = args.anchor_date or _default_anchor_date()
-    summary, documents_summary = asyncio.run(_run(anchor_date, with_documents=args.with_documents))
+    if sys.platform == "win32":
+        import selectors
+        loop = asyncio.SelectorEventLoop(selectors.SelectSelector())
+        asyncio.set_event_loop(loop)
+        try:
+            summary, documents_summary = loop.run_until_complete(
+                _run(anchor_date, with_documents=args.with_documents)
+            )
+        finally:
+            loop.close()
+    else:
+        summary, documents_summary = asyncio.run(_run(anchor_date, with_documents=args.with_documents))
     payload = _summary_to_json(summary)
     if documents_summary is not None:
         payload["documents"] = documents_summary
