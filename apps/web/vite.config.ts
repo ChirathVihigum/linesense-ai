@@ -34,6 +34,7 @@ export default defineConfig({
     host: 'localhost',
     port: 5173,
     strictPort: true,
+    hmr: false,
     proxy: {
       '/api': { target: BACKEND_URL },
       '/auth': { target: BACKEND_URL },

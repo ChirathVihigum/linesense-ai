@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import selectors
 import signal
+import sys
 from collections.abc import Sequence
 
 from app.db.session import get_engine, get_session_factory
@@ -70,8 +72,17 @@ async def _main(args: argparse.Namespace) -> None:
     )
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
+    if sys.platform == "win32":
+        # Windows: loop.add_signal_handler is not available.
+        # Use signal.signal with a thread-safe call into the loop.
+        def _win_handler(signum: int, frame: object) -> None:
+            loop.call_soon_threadsafe(stop_event.set)
+
+        signal.signal(signal.SIGINT, _win_handler)
+        signal.signal(signal.SIGTERM, _win_handler)
+    else:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop_event.set)
     try:
         await worker.run(stop_event)
     finally:
@@ -79,7 +90,15 @@ async def _main(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    asyncio.run(_main(_parse_args(argv)))
+    if sys.platform == "win32":
+        loop = asyncio.SelectorEventLoop(selectors.SelectSelector())
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_main(_parse_args(argv)))
+        finally:
+            loop.close()
+    else:
+        asyncio.run(_main(_parse_args(argv)))
 
 
 if __name__ == "__main__":

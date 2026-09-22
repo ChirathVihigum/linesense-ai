@@ -80,4 +80,18 @@ async def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    import sys
+    import selectors
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(
+            asyncio.DefaultEventLoopPolicy()
+        )
+        loop = asyncio.SelectorEventLoop(selectors.SelectSelector())
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(run_migrations_online())
+        finally:
+            loop.close()
+    else:
+        asyncio.run(run_migrations_online())
