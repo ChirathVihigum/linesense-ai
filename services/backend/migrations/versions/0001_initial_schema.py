@@ -63,9 +63,22 @@ def _create_extensions() -> None:
 
 def _grant_app_role_privileges() -> None:
     role = _app_role()
-    op.execute(f'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "{role}"')
-    op.execute(f'REVOKE UPDATE, DELETE ON audit_events FROM "{role}"')
-    op.execute(f'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{role}"')
+    if role in ("postgres", "supabase_admin"):
+        return
+    op.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
+                EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES '
+                    'IN SCHEMA public TO "{role}"';
+                EXECUTE 'REVOKE UPDATE, DELETE ON audit_events FROM "{role}"';
+                EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{role}"';
+            END IF;
+        END
+        $$;
+        """
+    )
 
 
 def upgrade() -> None:

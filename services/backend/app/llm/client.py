@@ -41,7 +41,7 @@ class LLMResponse(BaseModel):
 
 
 class LLMClient(Protocol):
-    provider: str  # "anthropic" | "fixture"
+    provider: str  # "anthropic" | "gemini" | "fixture"
     model: str
 
     async def complete(

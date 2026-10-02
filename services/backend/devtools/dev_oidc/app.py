@@ -138,7 +138,7 @@ button {{ margin-top: 1.25rem; padding: .5rem 1rem; }}
             "Cache-Control": "no-store",
             "X-Frame-Options": "DENY",
             "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
-            "form-action 'self'",
+            "form-action 'self' http://localhost:* http://127.0.0.1:*",
         },
     )
 

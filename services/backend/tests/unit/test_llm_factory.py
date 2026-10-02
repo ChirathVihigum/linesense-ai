@@ -8,6 +8,7 @@ from pydantic import SecretStr
 from app.llm.anthropic_client import AnthropicLLMClient
 from app.llm.factory import build_llm_client
 from app.llm.fixture_client import FixtureLLMClient
+from app.llm.gemini_client import GeminiLLMClient
 from app.settings import Settings
 
 
@@ -61,3 +62,23 @@ def test_anthropic_with_key_returns_configured_model() -> None:
     assert isinstance(client, AnthropicLLMClient)
     assert client.model == "claude-opus-5"
     assert client.provider == "anthropic"
+
+
+def test_gemini_without_key_raises() -> None:
+    settings = Settings(_env_file=None, environment="test", llm_provider="gemini")
+    with pytest.raises(ValueError, match="gemini_api_key"):
+        build_llm_client(settings)
+
+
+def test_gemini_with_key_returns_configured_model() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        llm_provider="gemini",
+        gemini_api_key=SecretStr("gemini-test-key-not-real"),
+        gemini_model="gemini-2.5-flash",
+    )
+    client = build_llm_client(settings)
+    assert isinstance(client, GeminiLLMClient)
+    assert client.model == "gemini-2.5-flash"
+    assert client.provider == "gemini"

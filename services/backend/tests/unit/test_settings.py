@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.settings import Settings
+from app.db.session import _ensure_supabase_sslmode, engine_connect_args
+from app.settings import Settings, normalize_database_url
 
 
 def _prod_kwargs(**overrides: object) -> dict[str, object]:
@@ -45,3 +46,18 @@ def test_development_defaults_load() -> None:
     assert settings.session_max_age_seconds == 28800
     assert settings.run_deadline_seconds == 120
     assert settings.max_upload_bytes == 10_485_760
+
+
+def test_supabase_database_url_normalizes_and_configures_pooler() -> None:
+    raw_url = (
+        "postgresql://postgres.myref:secret@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
+    )
+    settings = Settings(_env_file=None, database_url=raw_url)
+    assert settings.database_url.startswith("postgresql+psycopg://")
+    # Migration URL automatically follows database_url when not overridden
+    assert settings.migration_database_url == settings.database_url
+    assert engine_connect_args(settings.database_url) == {"prepare_threshold": None}
+    assert "sslmode=require" in _ensure_supabase_sslmode(settings.database_url)
+    assert normalize_database_url("postgres://u:p@db.ref.supabase.co:5432/postgres").startswith(
+        "postgresql+psycopg://"
+    )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.llm.anthropic_client import AnthropicLLMClient
 from app.llm.client import LLMClient
 from app.llm.fixture_client import FixtureLLMClient
+from app.llm.gemini_client import GeminiLLMClient
 from app.settings import Settings
 
 
@@ -27,5 +28,11 @@ def build_llm_client(settings: Settings) -> LLMClient | None:
         if not api_key:
             raise ValueError("anthropic_api_key is required when llm_provider is 'anthropic'")
         return AnthropicLLMClient(api_key=api_key, model=settings.anthropic_model)
+
+    if settings.llm_provider == "gemini":
+        api_key = settings.gemini_api_key.get_secret_value()
+        if not api_key:
+            raise ValueError("gemini_api_key is required when llm_provider is 'gemini'")
+        return GeminiLLMClient(api_key=api_key, model=settings.gemini_model)
 
     raise ValueError(f"unknown llm_provider {settings.llm_provider!r}")

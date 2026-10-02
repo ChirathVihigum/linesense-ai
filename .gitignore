@@ -23,3 +23,7 @@ apps/web/playwright-report/
 .DS_Store
 .idea/
 .vscode/
+
+# Individual assignment inputs (not for redistribution)
+Individual Assignment Brief irwa.pdf
+PHOTO-*.jpg

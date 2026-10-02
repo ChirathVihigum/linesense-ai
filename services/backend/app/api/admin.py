@@ -434,6 +434,8 @@ async def get_settings_view(
         provider, model = "disabled", "disabled"
     elif settings.llm_provider == "fixture":
         provider, model = FixtureLLMClient.provider, FixtureLLMClient.model
+    elif settings.llm_provider == "gemini":
+        provider, model = "gemini", settings.gemini_model
     else:
         provider, model = settings.llm_provider, settings.anthropic_model
     return SettingsOut(

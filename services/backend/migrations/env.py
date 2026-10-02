@@ -23,7 +23,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.db.base import Base
-from app.settings import get_settings
+from app.db.session import engine_connect_args
+from app.settings import get_settings, normalize_database_url
 
 if importlib.util.find_spec("app.db.models") is not None:
     importlib.import_module("app.db.models")
@@ -39,8 +40,8 @@ target_metadata = Base.metadata
 def _resolve_db_url() -> str:
     cli_url = context.get_x_argument(as_dictionary=True).get("db_url")
     if cli_url:
-        return cli_url
-    return get_settings().migration_database_url
+        return normalize_database_url(cli_url)
+    return normalize_database_url(get_settings().migration_database_url)
 
 
 def run_migrations_offline() -> None:
@@ -64,11 +65,13 @@ def _do_run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = _resolve_db_url()
+    resolved_url = _resolve_db_url()
+    configuration["sqlalchemy.url"] = resolved_url
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=engine_connect_args(resolved_url),
     )
 
     async with connectable.connect() as connection:
@@ -80,4 +83,18 @@ async def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    import sys
+    import selectors
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(
+            asyncio.DefaultEventLoopPolicy()
+        )
+        loop = asyncio.SelectorEventLoop(selectors.SelectSelector())
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(run_migrations_online())
+        finally:
+            loop.close()
+    else:
+        asyncio.run(run_migrations_online())

@@ -19,7 +19,26 @@ _BACKEND_ROOT = _APP_DIR.parent
 _REPO_ROOT = _BACKEND_ROOT.parent.parent
 
 Environment = Literal["development", "test", "production"]
-LLMProvider = Literal["anthropic", "fixture", "disabled"]
+LLMProvider = Literal["anthropic", "gemini", "fixture", "disabled"]
+
+_DEFAULT_DEV_DB_URL = (
+    "postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_dev"
+)
+_DEFAULT_DEV_MIGRATION_DB_URL = (
+    "postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_dev"
+)
+
+
+def normalize_database_url(url: str) -> str:
+    """Convert raw ``postgres://`` or ``postgresql://`` URLs (e.g. from Supabase)
+    to ``postgresql+psycopg://`` so SQLAlchemy's async engine uses ``psycopg`` v3.
+    """
+    stripped = url.strip()
+    if stripped.startswith("postgres://"):
+        return "postgresql+psycopg://" + stripped[len("postgres://") :]
+    if stripped.startswith("postgresql://"):
+        return "postgresql+psycopg://" + stripped[len("postgresql://") :]
+    return stripped
 
 
 class Settings(BaseSettings):
@@ -33,12 +52,8 @@ class Settings(BaseSettings):
 
     environment: Environment = "development"
 
-    database_url: str = (
-        "postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_dev"
-    )
-    migration_database_url: str = (
-        "postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_dev"
-    )
+    database_url: str = _DEFAULT_DEV_DB_URL
+    migration_database_url: str = _DEFAULT_DEV_MIGRATION_DB_URL
     test_database_url: str = (
         "postgresql+psycopg://linesense_app:dev-app-only@127.0.0.1:55432/linesense_test"
     )
@@ -46,6 +61,11 @@ class Settings(BaseSettings):
         "postgresql+psycopg://linesense_owner:dev-owner-only@127.0.0.1:55432/linesense_test"
     )
     app_db_role: str = "linesense_app"
+
+    # Optional Supabase project settings (when using hosted Supabase Postgres).
+    supabase_url: str = ""
+    supabase_anon_key: SecretStr = SecretStr("")
+    supabase_service_role_key: SecretStr = SecretStr("")
 
     session_secret: SecretStr = SecretStr("dev-session-secret-change-me-0123456789abcdef")
     service_token: SecretStr = SecretStr("dev-service-token-change-me-0123456789")
@@ -61,6 +81,8 @@ class Settings(BaseSettings):
     llm_provider: LLMProvider = "fixture"
     anthropic_api_key: SecretStr = SecretStr("")
     anthropic_model: str = "claude-opus-5"
+    gemini_api_key: SecretStr = SecretStr("")
+    gemini_model: str = "gemini-2.5-flash"
 
     document_storage_dir: str = "../../.local/documents"
     # Directory for worker liveness files (non-production only); relative
@@ -82,6 +104,21 @@ class Settings(BaseSettings):
     # ordinary test runs never trip it; `True`/`False` are explicit overrides
     # for a test (or a deployment) that wants a fixed answer either way.
     rate_limit_enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def _normalize_db_urls(self) -> Settings:
+        self.database_url = normalize_database_url(self.database_url)
+        self.migration_database_url = normalize_database_url(self.migration_database_url)
+        self.test_database_url = normalize_database_url(self.test_database_url)
+        self.test_migration_database_url = normalize_database_url(self.test_migration_database_url)
+        # If the user pointed `LS_DATABASE_URL` at Supabase (or another external DB)
+        # without separately overriding `LS_MIGRATION_DATABASE_URL`, reuse `database_url`.
+        if (
+            self.database_url != _DEFAULT_DEV_DB_URL
+            and self.migration_database_url == _DEFAULT_DEV_MIGRATION_DB_URL
+        ):
+            self.migration_database_url = self.database_url
+        return self
 
     @model_validator(mode="after")
     def _validate_production_hardening(self) -> Settings:
@@ -119,6 +156,11 @@ class Settings(BaseSettings):
         if self.llm_provider == "anthropic" and not self.anthropic_api_key.get_secret_value():
             errors.append(
                 "anthropic_api_key is required when llm_provider is 'anthropic' and "
+                "LS_ENVIRONMENT=production"
+            )
+        if self.llm_provider == "gemini" and not self.gemini_api_key.get_secret_value():
+            errors.append(
+                "gemini_api_key is required when llm_provider is 'gemini' and "
                 "LS_ENVIRONMENT=production"
             )
 

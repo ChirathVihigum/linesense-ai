@@ -48,21 +48,21 @@ $ export LS_BACKUP_PASSPHRASE=***
 $ time bash scripts/backup.sh linesense_dev
 [backup] dumping database 'linesense_dev'
 [backup] recording table row counts
-[backup] archiving document storage (/Users/samitha/Projects/chirath/.local/documents)
-[backup] encrypting into /Users/samitha/Projects/chirath/.local/backups/20260920T080449Z.tar.enc
-[backup] done: /Users/samitha/Projects/chirath/.local/backups/20260920T080449Z.tar.enc
-/Users/samitha/Projects/chirath/.local/backups/20260920T080449Z.tar.enc
+[backup] archiving document storage (<repo>/.local/documents)
+[backup] encrypting into <repo>/.local/backups/20260920T080449Z.tar.enc
+[backup] done: <repo>/.local/backups/20260920T080449Z.tar.enc
+<repo>/.local/backups/20260920T080449Z.tar.enc
 bash scripts/backup.sh linesense_dev  0.43s user 0.19s system 70% cpu 0.877 total
 
 $ time bash scripts/restore.sh .local/backups/20260920T080449Z.tar.enc
 [restore] decrypting .local/backups/20260920T080449Z.tar.enc
-[restore] extracting documents into /Users/samitha/Projects/chirath/.local/restore-documents/20260920T080450Z
+[restore] extracting documents into <repo>/.local/restore-documents/20260920T080450Z
 [restore] recreating database linesense_restore
 [restore] restoring dump into linesense_restore
 [restore] verifying row counts against the backup manifest
 [restore] verifying document_versions.storage_key files exist
 [restore] verifying material_balances against the movement ledger
-[restore] verification passed. Restored database: linesense_restore; documents: /Users/samitha/Projects/chirath/.local/restore-documents/20260920T080450Z
+[restore] verification passed. Restored database: linesense_restore; documents: <repo>/.local/restore-documents/20260920T080450Z
 bash scripts/restore.sh "$latest"  0.48s user 0.22s system 46% cpu 1.507 total
 ```
 

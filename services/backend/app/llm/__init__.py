@@ -27,6 +27,7 @@ from app.llm.fixture_client import (
     FixtureScript,
     default_fixture_script,
 )
+from app.llm.gemini_client import GeminiLLMClient
 from app.llm.redaction import redact_payload, redact_text
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "FixtureLLMClient",
     "FixtureRequest",
     "FixtureScript",
+    "GeminiLLMClient",
     "LLMClient",
     "LLMDisabledError",
     "LLMError",

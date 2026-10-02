@@ -63,7 +63,7 @@ REDACTED = "[REDACTED]"
 # decomposed grapheme cluster inside the local/domain run.
 _EMAIL_LOCAL_PUNCT = frozenset("._%+-")
 _EMAIL_DOMAIN_PUNCT = frozenset(".-")
-_API_KEY_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
+_API_KEY_RE = re.compile(r"(?:sk-ant-[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]{20,})")
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 
 # ISO 8601 dates and datetimes: 2026-09-17, 2026-09-17T08:30:00Z,

@@ -67,6 +67,8 @@ def llm_identity(settings: Settings) -> tuple[str, str]:
         return ("disabled", "disabled")
     if settings.llm_provider == "fixture":
         return (FixtureLLMClient.provider, FixtureLLMClient.model)
+    if settings.llm_provider == "gemini":
+        return ("gemini", settings.gemini_model)
     return (settings.llm_provider, settings.anthropic_model)
 
 
