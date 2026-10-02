@@ -250,10 +250,10 @@ record and the viva declaration.
 
 | Name | Role / focus area | Contact |
 |---|---|---|
-| _TBD_ | _TBD_ | _TBD_ |
-| _TBD_ | _TBD_ | _TBD_ |
-| _TBD_ | _TBD_ | _TBD_ |
-| _TBD_ | _TBD_ | _TBD_ |
+| _Member 1_ | Prompt Injection and Jailbreak Analysis | _TBD_ |
+| _Member 2_ | Privacy and Data Leakage Assessment | _TBD_ |
+| _Member 3_ | Responsible AI and Bias Assessment | _TBD_ |
+| _Member 4_ | Information Retrieval and Security Assessment | _TBD_ |
 
 An AI coding assistant was used extensively in building this project, under human direction and
 review. That is disclosed in full in
