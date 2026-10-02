@@ -204,7 +204,7 @@ class GeminiLLMClient:
         self,
         *,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.5-flash",
         base_url: str = GEMINI_API_BASE_URL,
         client: httpx.AsyncClient | None = None,
     ) -> None:

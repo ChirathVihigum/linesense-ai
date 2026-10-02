@@ -12,9 +12,12 @@ before anything is applied.
 
 > **Read this before believing anything else in this repository.**
 >
-> - **No live LLM has ever run here.** No API key is configured. Every recorded run used the
->   deterministic `fixture` provider, labelled *"Test fixture — not a live AI model"* wherever a
->   provider label appears.
+> - **Live LLM runs use Google Gemini.** With `LS_LLM_PROVIDER=gemini` and a key in
+>   `LS_GEMINI_API_KEY`, a full four-agent analysis has been run against `gemini-3.5-flash`
+>   (provider label `gemini`, 12/12 model calls). The free tier allows only 20 requests per day,
+>   so runs degrade to deterministic results (clearly labelled) once the quota is exhausted.
+>   Automated tests and CI use the deterministic `fixture` provider, labelled
+>   *"Test fixture — not a live AI model"*.
 > - **There are no screenshots.** Browser end-to-end testing was dropped from scope.
 > - **Full test suites, the full evaluation and the load test have never been run** (a machine
 >   heat and workload policy forbade them). Per-task focused test runs *were* recorded, with exact
@@ -129,7 +132,8 @@ Settings you may want to change in `.env`:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LS_LLM_PROVIDER` | `fixture` | `fixture` = deterministic test double, no network call. `anthropic` = real provider (needs `LS_ANTHROPIC_API_KEY`). `disabled` = deterministic only |
+| `LS_LLM_PROVIDER` | `fixture` | `fixture` = deterministic test double, no network call. `gemini` = Google Gemini (needs `LS_GEMINI_API_KEY`). `anthropic` = Anthropic API (needs `LS_ANTHROPIC_API_KEY`). `disabled` = deterministic only |
+| `LS_GEMINI_MODEL` | `gemini-3.5-flash` | Used when the provider is `gemini` (`gemini-2.5-flash` is retired for new keys) |
 | `LS_ANTHROPIC_MODEL` | `claude-opus-5` | Used only when the provider is `anthropic` |
 | `LS_EMBEDDER` | `fastembed` | `fastembed` (real, downloads a model) or `hashing` (test stand-in) |
 | `LS_DEV_IDP_PASSWORD` | `demo-password` | Shared password for the ten demo identities in the development identity provider |
@@ -218,8 +222,10 @@ The full list, with verdicts and evidence, is
 [`docs/assessment/completion-matrix.md`](docs/assessment/completion-matrix.md) §8. The ones that
 matter most:
 
-- **No live LLM run, ever.** No API key exists in this environment. The Anthropic adapter is
-  unit-tested against stub SDK objects only.
+- **Live LLM coverage is limited by the Gemini free tier** (20 requests/day; 429/503 responses
+  are common). Known issues from live runs: the Gemini tool-schema converter rejects the RM
+  agent's integer `enum`, so RM always degrades on Gemini; failed/retried provider calls count
+  against the 12-call run budget. The Anthropic adapter is unit-tested against stub SDK objects only.
 - **No screenshots and no browser end-to-end coverage.** UI behaviour is verified by component
   tests against real endpoints, not by a browser.
 - **No measured performance.** `make perf` was never run, so this project has no latency figure.

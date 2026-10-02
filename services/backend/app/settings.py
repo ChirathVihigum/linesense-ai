@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = SecretStr("")
     anthropic_model: str = "claude-opus-5"
     gemini_api_key: SecretStr = SecretStr("")
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash"
 
     document_storage_dir: str = "../../.local/documents"
     # Directory for worker liveness files (non-production only); relative

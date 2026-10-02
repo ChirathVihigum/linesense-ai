@@ -180,7 +180,7 @@ Each agent operates on a **frozen snapshot** of the order data (guaranteeing rep
 
 ### 6.1 Supported Providers
 The LLM gateway (`app/llm/`) abstracts model providers behind a unified protocol:
-1. **Google Gemini (`gemini`)**: Integrated via direct REST communication using `httpx` (e.g. `gemini-2.5-flash`), supporting Google AI Studio API keys.
+1. **Google Gemini (`gemini`)**: Integrated via direct REST communication using `httpx` (e.g. `gemini-3.5-flash`), supporting Google AI Studio API keys.
 2. **Anthropic Claude (`anthropic`)**: Integrated via the official `anthropic` SDK (e.g. `claude-opus-5` or `claude-3-7-sonnet`).
 3. **Fixture Double (`fixture`)**: A deterministic, offline test double that reproduces realistic tool-calling conversations without internet or API keys.
 4. **Disabled (`disabled`)**: Disables AI inference entirely; returns pure deterministic findings.
